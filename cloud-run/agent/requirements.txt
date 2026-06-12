@@ -1,0 +1,23 @@
+# ailiveX realtime agent dependencies
+# LiveKit 版本全部鎖 ==1.5.1（版本不一致會 ChunkedStream crash，ailive 血淚教訓）
+
+livekit>=1.0.0,<2.0.0
+livekit-agents==1.5.1
+livekit-plugins-silero==1.5.1
+livekit-plugins-anthropic==1.5.1
+livekit-plugins-soniox==1.5.1
+
+# MiniMax TTS：自訂 wrapper，直打 REST API
+aiohttp>=3.9.0
+
+# Firestore
+firebase-admin>=6.5.0
+
+# env
+python-dotenv>=1.0.0
+
+# LLM SDK（cleanup 的 _extract_and_save_memory 同步呼叫用）
+anthropic>=0.78.0
+
+# HTTP（備用）
+httpx>=0.26.0

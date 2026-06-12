@@ -1,0 +1,46 @@
+# dependencies
+/node_modules
+node_modules/
+**/node_modules/
+/.pnp
+.pnp.*
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files
+.env*
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# backups
+*.bak
+
+# python (agent/ 子專案)
+__pycache__/
+*.pyc
+*.pyo
+.venv/

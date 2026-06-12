@@ -1,0 +1,36 @@
+{
+  "name": "ailivex-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@google-cloud/tasks": "^6.2.2",
+    "@livekit/components-react": "^2.9.9",
+    "@livekit/protocol": "^1.39.3",
+    "@sparticuz/chromium": "^149.0.0",
+    "firebase-admin": "^13.7.0",
+    "google-auth-library": "^10.6.1",
+    "livekit-client": "^2.18.6",
+    "livekit-server-sdk": "^2.15.1",
+    "marked": "^18.0.5",
+    "next": "16.1.6",
+    "pptxgenjs": "^4.0.1",
+    "puppeteer-core": "^25.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "typescript": "^5"
+  }
+}

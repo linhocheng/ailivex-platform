@@ -1,0 +1,42 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent:$COMMIT_SHA
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent:latest
+      - .
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - --all-tags
+      - us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ailivex-realtime-agent
+      - --image=us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent:$COMMIT_SHA
+      - --region=us-central1
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --min-instances=1
+      - --max-instances=3
+      - --memory=1Gi
+      - --cpu=1
+      - --concurrency=10
+      - --timeout=3600
+      - --service-account=ailivex-app@$PROJECT_ID.iam.gserviceaccount.com
+      - --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID,BRIDGE_URL=https://bridge.soul-polaroid.work,LIVEKIT_URL=wss://ailive-nfobc27q.livekit.cloud
+      - >-
+        --set-secrets=FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,SONIOX_API_KEY=SONIOX_API_KEY:latest,MINIMAX_API_KEY=MINIMAX_API_KEY:latest,MINIMAX_GROUP_ID=MINIMAX_GROUP_ID:latest,MINIMAX_DEFAULT_VOICE_ID=MINIMAX_DEFAULT_VOICE_ID:latest,BRIDGE_SECRET=BRIDGE_SECRET:latest,LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent:$COMMIT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/ailivex/realtime-agent:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
