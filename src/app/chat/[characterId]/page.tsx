@@ -95,6 +95,12 @@ export default function ChatPage() {
                   background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
                 <Icon name="phone" size={15} />3.0
               </Link>
+              <Link href={`/realtime-v4/${characterId}`} title="單機群聊（多人辨識）實驗版"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
+                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
+                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
+                <Icon name="phone" size={15} />4.0
+              </Link>
             </div>
           )}
         </header>
