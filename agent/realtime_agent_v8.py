@@ -79,25 +79,20 @@ class AilivexAgentV8(Agent):
             return
 
         # B. 交棒第三方 → 閉嘴讓位（正常回話擋掉 + 進讓位窗讓 3a 也閉嘴）
+        #    只 raise StopResponse + 設旗標（與 v5/v6 gate 同款，安全）。
         if is_floor_handoff(text, self._agent_names):
             self.yield_until = time.time() + YIELD_SECS
             logger.info(f"v8 讓位窗 {YIELD_SECS:.0f}s：交棒第三方，回話+3a 閉嘴 {text[:50]!r}")
             raise StopResponse
 
-        # A. 被點名 → 抓麥克風：用不可打斷的回話，一路講完（順帶免疫自己回音）
+        # A. 被點名 → 解除讓位、讓框架正常回話。
+        #    「抓麥克風不可打斷」原本在這手動 generate_reply + StopResponse →
+        #    會卡死框架回話迴圈（已實測凍結）。改用 session 中斷門檻達成防回音，不在這動。
         if is_addressed_to_me(text, self._agent_names):
-            self.yield_until = 0.0  # 我要講話，解除任何殘留讓位
-            try:
-                self.session.generate_reply(allow_interruptions=False)
-                logger.info(f"v8 抓麥克風（不可打斷）：被點名 {text[:50]!r}")
-                raise StopResponse   # 擋掉框架預設的可打斷回話，改用我這個
-            except StopResponse:
-                raise
-            except Exception as e:
-                logger.error(f"v8 抓麥克風 generate_reply failed: {e}")
-                return  # 退回框架預設回話
+            self.yield_until = 0.0
+            logger.info(f"v8 被點名：解除讓位，正常回話 {text[:50]!r}")
 
-        # 其他 → 框架預設回話（可打斷）
+        # 其他 → 框架預設回話
 
 
 async def entrypoint(ctx: JobContext):
