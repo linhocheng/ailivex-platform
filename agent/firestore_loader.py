@@ -50,6 +50,7 @@ class CharacterContext:
     voice_id_minimax: str
     voice_settings: dict = field(default_factory=dict)
     conv_settings: dict = field(default_factory=dict)   # 對話手感：responseSpeed/interruptSensitivity/imThreshold/interruptThreshold
+    aliases: list = field(default_factory=list)         # 角色別名（v5 圓桌點名用，如 簡報王→[福哥,王永福]）；v1-v4 不讀
 
 
 @dataclass
@@ -102,6 +103,7 @@ def load_character(character_id: str) -> CharacterContext:
         voice_id_minimax=d.get("voiceIdMinimax", ""),
         voice_settings=d.get("voiceSettings") or {},
         conv_settings=d.get("convSettings") or {},
+        aliases=d.get("aliases") or [],
     )
 
 
