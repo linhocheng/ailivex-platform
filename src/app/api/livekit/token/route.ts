@@ -23,6 +23,7 @@ const AGENT_NAME_V4 = 'ailivex-realtime-v4';  // 即時語音 4.0（單機群聊
 const AGENT_NAME_V5 = 'ailivex-realtime-v5';  // 即時語音 5.0（v4 + 發話對象偵測：把棒子交給第三方時 AI 靜默讓位）
 const AGENT_NAME_V6 = 'ailivex-realtime-v6';  // 即時語音 6.0（v5 + 背景思考層 + 主動搶話：判斷腦 Haiku／開口腦 Sonnet）
 const AGENT_NAME_V8 = 'ailivex-realtime-v8';  // 即時語音 8.0（v6 + 發言權控制：被點名抓麥克風／交棒第三方就閉嘴）
+const AGENT_NAME_V9 = 'ailivex-realtime-v9';  // 即時語音 9.0（v8 + LLM floor-gate：多人情境發言權判斷改 Haiku）
 
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -35,10 +36,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'LIVEKIT_* env 未設定' }, { status: 500 });
   }
 
-  const body = await req.json().catch(() => null) as { characterId?: string; v2?: boolean; v3?: boolean; v4?: boolean; v5?: boolean; v6?: boolean; v8?: boolean } | null;
+  const body = await req.json().catch(() => null) as { characterId?: string; v2?: boolean; v3?: boolean; v4?: boolean; v5?: boolean; v6?: boolean; v8?: boolean; v9?: boolean } | null;
   const characterId = body?.characterId?.trim();
   if (!characterId) return NextResponse.json({ error: 'characterId 必填' }, { status: 400 });
-  const agentName = body?.v8 ? AGENT_NAME_V8 : body?.v6 ? AGENT_NAME_V6 : body?.v5 ? AGENT_NAME_V5 : body?.v4 ? AGENT_NAME_V4 : body?.v3 ? AGENT_NAME_V3 : body?.v2 ? AGENT_NAME_V2 : AGENT_NAME;
+  const agentName = body?.v9 ? AGENT_NAME_V9 : body?.v8 ? AGENT_NAME_V8 : body?.v6 ? AGENT_NAME_V6 : body?.v5 ? AGENT_NAME_V5 : body?.v4 ? AGENT_NAME_V4 : body?.v3 ? AGENT_NAME_V3 : body?.v2 ? AGENT_NAME_V2 : AGENT_NAME;
 
   const db = getFirestore();
   if (user.role !== 'admin' && !(await hasAccess(db, user.uid, characterId))) {
