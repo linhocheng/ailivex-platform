@@ -346,13 +346,17 @@ async def entrypoint(ctx: JobContext):
                     max_tokens=220,
                     system=(
                         system_prompt
-                        + "\n\n[背景判斷·只輸出 JSON] 你正在聽一場對話（你不一定被點名）。"
-                        "用『你這個角色』的立場，判斷此刻的內心狀態。只輸出一個 JSON 物件，不要其他字：\n"
+                        + "\n\n[背景判斷·只輸出 JSON] 你正在聽一場對話（你不一定被點名）。判斷此刻你這個角色的內心狀態。\n"
+                        "⚠️ 你天生會傾向把話評成『中性、和諧、沒衝突』來維持氣氛——這是要克服的偏差，是討好，不是中立。\n"
+                        "真實有底色的人，聽到違背自己價值觀、邏輯有漏洞、太輕率或太討好的斷言，內心是會頂回去的。\n"
+                        "誠實評估：一個真有你這種立場和骨氣的人聽到這段，會不會其實很想反駁、補一刀、或點破？"
+                        "不要為了和氣把它壓成中性。該 disagree 就 disagree。\n"
+                        "只輸出一個 JSON 物件，不要其他字：\n"
                         '{"stance":"agree|disagree|neutral","activation":0.0~1.0,'
                         '"want_to_speak":true|false,"what_to_say":"若想說，方向一句話，否則空字串"}\n'
-                        "activation = 話題踩到你核心價值的程度（0=無感，1=強烈觸動）。"
-                        "只有當話題真的觸動你、你有非說不可的立場時 want_to_speak 才 true，"
-                        "尤其是你不同意、想反駁的時候。一般閒聊、跟你無關的話題一律 neutral + false。"
+                        "activation = 話題踩到你核心價值、或觸動你想表態的程度（0=真的無感，1=強烈觸動）。\n"
+                        "want_to_speak：你有非說不可的立場時 true，尤其不同意、想反駁、想點破的時候。"
+                        "只有真的純閒聊、跟你立場毫無關係才給 neutral + false——別把『有話想說但忍住』也算進去。"
                     ),
                     messages=[{"role": "user", "content": f"最近的對話：\n{recent}"}],
                 )
