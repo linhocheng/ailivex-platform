@@ -21,6 +21,7 @@ import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
 import { upsertRelationship } from '@/lib/relationship';
 import { trackCost } from '@/lib/cost-tracker';
+import { readUrlsForContext } from '@/lib/url-reader';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -61,13 +62,18 @@ export async function POST(req: Request) {
   const memoryBlock = await loadMemoryBlock(db, user.uid, characterId, message);
   const history = await loadHistory(db, user.uid, characterId);
 
+  // 連結閱讀：用戶訊息有 URL → 抓網頁正文，附到這一輪的 context（歷史只存原訊息，不存正文）
+  const linkContext = await readUrlsForContext(message);
+
   const system = `${soul}${memoryBlock}${TOOL_INSTRUCTIONS}
 
-你正在跟「${user.name}」對話。用你的靈魂，自然地回應。`;
+你正在跟「${user.name}」對話。用你的靈魂，自然地回應。${linkContext ? `
+
+若訊息後附了【用戶分享的連結內容】，那是對方貼的連結正文，自然讀完、用你的角度回應，別逐字複述；若是【連結讀取失敗】就坦白說你打不開。` : ''}`;
 
   const messages: Anthropic.MessageParam[] = [
     ...history.map(m => ({ role: m.role, content: m.content }) as Anthropic.MessageParam),
-    { role: 'user', content: message },
+    { role: 'user', content: message + linkContext },
   ];
 
   const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '', { bridgeTimeoutMs: 110_000 });
