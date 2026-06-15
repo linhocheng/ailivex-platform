@@ -91,10 +91,9 @@ class AilivexAgentV9(Agent):
         """Haiku 判斷這句的發言權歸屬。回 {'addressed': bool, 'handoff': bool}，失敗回 None。"""
         try:
             from anthropic import AsyncAnthropic
-            _bu = os.environ.get("BRIDGE_URL", "")
-            _bs = os.environ.get("BRIDGE_SECRET", "")
-            client = AsyncAnthropic(api_key=_bs, base_url=_bu) if (_bu and _bs) \
-                else AsyncAnthropic(api_key=self._anthropic_key)
+            # gate 在關鍵路徑、要快又穩 → 直連付費 key（realtime 本就用直連）。
+            # 不走 bridge：實測 bridge round-trip + Haiku 撐不過 2s timeout，每次超時 → 全部 fallback。
+            client = AsyncAnthropic(api_key=self._anthropic_key)
             recent = "\n".join(f"{t['role']}: {t['content']}" for t in self._transcript[-6:])
             names = "、".join(self._agent_names) or "（未命名）"
             resp = await asyncio.wait_for(client.messages.create(
@@ -122,6 +121,16 @@ class AilivexAgentV9(Agent):
             logger.warning(f"v9 floor-gate LLM failed: {e}")
             return None
 
+    def _remember(self, new_message, text: str) -> None:
+        """靜默時也要記住：把這句寫進兩個腦（Sonnet chat_ctx + 3a transcript）。
+        只在『不回話』時呼叫 —— 回話時框架自己會 commit，別重複。
+        對抗 StopResponse 的失憶（安靜≠耳聾），跟框架 skip_reply 同款寫法。"""
+        try:
+            self._chat_ctx.items.append(new_message)
+        except Exception as e:
+            logger.warning(f"v9 remember chat_ctx failed: {e}")
+        self._transcript.append({"role": "user", "content": text})
+
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         text = (new_message.text_content or "").strip() if new_message else ""
         if not text:
@@ -131,27 +140,29 @@ class AilivexAgentV9(Agent):
         if not self._ctx_flags.get("multi_person"):
             return
 
-        # 多人情境 → LLM floor-gate（Haiku）。失敗 → regex fallback。
+        # 多人情境 → LLM floor-gate（Haiku 直連）。失敗 → regex fallback（保守，不亂回）。
         decision = await self._floor_gate_llm(text)
         if decision is not None:
             handoff, addressed = decision["handoff"], decision["addressed"]
             src = "LLM"
         else:
-            # fallback：退回 v8 regex；都不中 → 當作正常回話（絕不凍）
+            # fallback：退回 regex；只有 regex 明確判被點名才回，否則靜默（不亂回話）
             handoff = is_floor_handoff(text, self._agent_names)
             addressed = (not handoff) and is_addressed_to_me(text, self._agent_names)
             src = "regex-fallback"
 
         if handoff:
             self.yield_until = time.time() + YIELD_SECS
-            logger.info(f"v9 gate[{src}]：交棒第三方 → 讓位窗{YIELD_SECS:.0f}s {text[:46]!r}")
+            self._remember(new_message, text)   # 安靜但記得
+            logger.info(f"v9 gate[{src}]：交棒第三方 → 讓位窗{YIELD_SECS:.0f}s（記住）{text[:42]!r}")
             raise StopResponse
         if addressed:
             self.yield_until = 0.0
             logger.info(f"v9 gate[{src}]：被點名 → 正常回話 {text[:46]!r}")
-            return
-        # 都不是：多人彼此聊，沒在跟我說 → 靜默不插嘴（不進讓位窗，搶話另走背景判斷）
-        logger.info(f"v9 gate[{src}]：非對我（多人彼此聊）→ 靜默 {text[:46]!r}")
+            return   # 框架會回話 + 自己 commit，不用 _remember
+        # 都不是：多人彼此聊，沒在跟我說 → 靜默不插嘴，但聽進去記住（安靜≠耳聾）
+        self._remember(new_message, text)
+        logger.info(f"v9 gate[{src}]：非對我（多人彼此聊）→ 靜默但記住 {text[:42]!r}")
         raise StopResponse
 
 
