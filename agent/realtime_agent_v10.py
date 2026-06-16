@@ -89,6 +89,7 @@ class AilivexAgentV10(Agent):
         self._roster = roster                # 引用：{speaker_label: name}
         self._self_norms = self_norms        # 引用：deque[(ts, norm)] 角色近期輸出（回音比對）
         self.yield_until = 0.0
+        self.on_turn = None                  # entrypoint 設：每個（含靜默）user turn 後觸發判斷腦
 
     def _recent_self_norms(self, window: float = 25.0) -> list:
         now = time.time()
@@ -168,13 +169,17 @@ class AilivexAgentV10(Agent):
         if handoff:
             self.yield_until = time.time() + YIELD_SECS
             self._remember(new_message, speaker, text)
+            if self.on_turn:
+                self.on_turn()   # 靜默也要動腦：對話流過時持續重評「我有貨要加嗎」
             logger.info(f"v10 gate[{src}]：交棒第三方 → 讓位窗{YIELD_SECS:.0f}s（記住）{text[:40]!r}")
             raise StopResponse
         if addressed:
             self.yield_until = 0.0
             logger.info(f"v10 gate[{src}]：被點名 → 正常回話 {text[:44]!r}")
-            return
+            return   # 框架會 commit → _on_item_added 那邊觸發判斷腦
         self._remember(new_message, speaker, text)
+        if self.on_turn:
+            self.on_turn()
         logger.info(f"v10 gate[{src}]：非對我（多人彼此聊）→ 靜默但記住 {text[:40]!r}")
         raise StopResponse
 
@@ -378,6 +383,7 @@ async def entrypoint(ctx: JobContext):
     call_start = time.time()
     _finalize_lock = asyncio.Lock()
     _finalized = {"done": False}
+    _stopped = {"v": False}   # ⑤ 斷線/收尾旗標：讓自我重排的 3a 計時器停手，不再空轉/對死 session 開火
 
     # ── v6 背景思考層：判斷腦（Haiku）持續更新內部狀態 + 觸發搶話 ──
     _inner = {"stance": "neutral", "activation": 0.0, "want_to_speak": False, "what_to_say": ""}
@@ -471,9 +477,11 @@ async def entrypoint(ctx: JobContext):
                     names = (json.loads(m.group(0)).get("names") or {}) if m else {}
                     for k, v in names.items():
                         k = str(k).strip()
-                        if k.startswith("#") and isinstance(v, str) and v.strip() and not roster.get(k):
-                            roster[k] = v.strip()
-                            logger.info(f"v10 名冊學到 {k}={v.strip()}")
+                        # 清雜訊：剝括號註解（待確認/可能…）、問號；不確定的就不學
+                        name = re.sub(r"[（(].*?[)）]", "", str(v)).strip(" ？?…。.") if isinstance(v, str) else ""
+                        if k.startswith("#") and name and len(name) <= 12 and not roster.get(k):
+                            roster[k] = name
+                            logger.info(f"v10 名冊學到 {k}={name}")
                 except Exception:
                     pass
                 logger.info(f"v10 inner: stance={_inner['stance']} act={_inner['activation']:.2f} "
@@ -487,6 +495,17 @@ async def entrypoint(ctx: JobContext):
     def _self_norms_recent(window: float = 25.0) -> list:
         now = time.time()
         return [n for (ts, n) in self_norms if now - ts <= window]
+
+    def _notify_turn():
+        """每個（含靜默）user turn 後：累計 + 每 INNER_EVERY 句重跑判斷腦。
+        關鍵：多人時 Tracy 大多被判靜默、不提交 → 靠這個讓判斷腦跟著對話流動重跑，
+        她才會持續重評『我現在有貨要加嗎』，不會卡在舊的 want_to_speak=False 變啞巴。"""
+        _user_turns["count"] += 1
+        # 判斷腦在跑就不疊新的（多人快節奏下避免 Haiku call 堆積）；下一次 turn 會補上
+        if _user_turns["count"] % INNER_EVERY == 0 and not _inner_lock.locked():
+            asyncio.create_task(_run_inner_judgment())
+
+    agent.on_turn = _notify_turn   # 靜默 turn 由 agent 在 on_user_turn_completed 觸發
 
     @session.on("conversation_item_added")
     def _on_item_added(event):
@@ -510,9 +529,7 @@ async def entrypoint(ctx: JobContext):
             if is_echo(raw, _self_norms_recent()):   # 防禦：回音漏到這就跳過（一般已被 gate 丟）
                 return
             transcript.append({"role": "user", "content": clean, "speaker": speaker})
-            _user_turns["count"] += 1
-            if _user_turns["count"] % INNER_EVERY == 0:
-                asyncio.create_task(_run_inner_judgment())
+            _notify_turn()   # 已提交（被點名/回話）的 turn 也累計 + 觸發判斷腦
 
     _seen_speakers: set = set()
 
@@ -533,6 +550,7 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"v10 STT speaker_id={sid!r} → {txt[:60]!r}")
 
     async def _finalize(reason: str = "") -> None:
+        _stopped["v"] = True   # ⑤ shutdown 也停 3a（涵蓋沒走 room disconnected 的關閉路徑）
         async with _finalize_lock:
             if _finalized["done"]:
                 return
@@ -575,6 +593,11 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("disconnected")
     def on_disconnected():
+        _stopped["v"] = True   # ⑤ 斷線即停 3a：取消 timer + 讓 _maybe_interject 直接退出（不再空轉）
+        try:
+            _cancel_timer()
+        except Exception:
+            pass
         duration = time.time() - call_start
         logger.info(f"Room disconnected after {duration:.1f}s, messages={len(transcript)}")
 
@@ -619,6 +642,8 @@ async def entrypoint(ctx: JobContext):
 
     async def _maybe_interject():
         _itj["timer"] = None
+        if _stopped["v"]:   # ⑤ 斷線/收尾 → 不再重排，3a 迴圈到此終止
+            return
         # v10 讓位窗：剛把棒子交給第三方 → 3a 閉嘴，讓那個人講（不報幕）
         if time.time() < agent.yield_until:
             _arm(max(2.0, agent.yield_until - time.time()))
