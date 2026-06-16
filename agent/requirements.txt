@@ -25,5 +25,6 @@ httpx>=0.26.0
 torch==2.2.2
 torchaudio==2.2.2
 speechbrain==1.0.2
+huggingface-hub==0.21.3   # speechbrain 1.0.2 用 use_auth_token，0.22+ 已移除此參數
 soxr>=0.3.7
 scipy>=1.11
