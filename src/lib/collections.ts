@@ -52,6 +52,7 @@ export interface CharacterDoc {
   voiceIdMinimax?: string; // 即時語音用
   voiceSettings?: VoiceSettings;
   convSettings?: ConvSettings;  // 對話手感旋鈕
+  aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }

@@ -23,6 +23,7 @@ export async function GET(_req: Request, { params }: Params) {
     voiceIdMinimax: c.voiceIdMinimax || '',
     voiceSettings: c.voiceSettings || {},
     convSettings: c.convSettings || {},
+    aliases: c.aliases || [],
     avatarUrl: c.avatarUrl || '',
     status: c.status,
   });
@@ -34,7 +35,7 @@ export async function PATCH(req: Request, { params }: Params) {
   const body = await req.json().catch(() => null) as {
     name?: string; soul?: string; soulCore?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings;
-    convSettings?: ConvSettings;
+    convSettings?: ConvSettings; aliases?: string[];
     avatarBase64?: string; avatarContentType?: string;
     reEnhance?: boolean;
   } | null;
@@ -57,6 +58,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (body?.voiceIdMinimax !== undefined) updates.voiceIdMinimax = body.voiceIdMinimax.trim();
   if (body?.voiceSettings !== undefined) updates.voiceSettings = sanitizeVoiceSettings(body.voiceSettings);
   if (body?.convSettings !== undefined) updates.convSettings = sanitizeConvSettings(body.convSettings);
+  if (Array.isArray(body?.aliases)) updates.aliases = body.aliases.map(s => s.trim()).filter(Boolean);
 
   // 重新提煉 soulCore
   if (body?.soulCore?.trim()) {

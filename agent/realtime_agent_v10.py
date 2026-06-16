@@ -1,5 +1,14 @@
 """
-ailivex-realtime-agent v10 — v9 + 多人房三補強（回音過濾 / 講者身份 / 3a 收斂）
+ailivex-realtime-agent v10.0.3 — deterministic target resolver（天條補強）
+
+v10.0.3 改動（2026-06-16）：
+  floor-gate 插入 Layer 1 判別式點名偵測。我的別名出現在話語裡 → 直接回話，跳過 LLM。
+  修根因：LLM 無法區分「交棒給我」vs「交棒給他人」，判別式確定性保證 100% 不漏接。
+  LLM gate 降格為 Layer 2，只處理代詞/間接點名/群體問話等真正模糊的情境。
+
+v10.0.2 改動（disable 3a in multi-person）繼承。
+
+原始 v10 — v9 + 多人房三補強（回音過濾 / 講者身份 / 3a 收斂）
 
 承 v9 的 LLM floor-gate。針對「一個焦點 AI 在一群真人裡像真人參與」補三件：
 
@@ -95,8 +104,18 @@ class AilivexAgentV10(Agent):
         now = time.time()
         return [n for (ts, n) in self._self_norms if now - ts <= window]
 
+    def _deterministic_addressed_check(self, text: str) -> bool:
+        """Layer 1 判別式：我的別名出現在這句話裡 → 確定被叫到，不用問 LLM。
+        天條：確定性工作用程式保證，不丟 LLM（根治「聖嚴被叫到卻讓位」的根因）。"""
+        norm = text.casefold()
+        for alias in self._agent_names:
+            if alias and alias.casefold() in norm:
+                return True
+        return False
+
     async def _floor_gate_llm(self, text: str) -> dict | None:
-        """Haiku 判斷這句的發言權歸屬。回 {'addressed': bool, 'handoff': bool}，失敗回 None。"""
+        """Layer 2 Haiku gate：處理模糊情境（代詞/間接點名/群體問話）。
+        回 {'addressed': bool, 'handoff': bool}，失敗回 None。"""
         try:
             from anthropic import AsyncAnthropic
             # gate 在關鍵路徑、要快又穩 → 直連付費 key（realtime 本就用直連）。
@@ -109,13 +128,12 @@ class AilivexAgentV10(Agent):
                 max_tokens=60,
                 system=(
                     f"你是「{names}」，在一個有多個真人的語音房間裡聽大家說話。{who}\n"
-                    "判斷【最後這句話】的發言權歸屬，只輸出一個 JSON，不要其他字：\n"
+                    "核心問題：【這句話期待『你』開口嗎？】只輸出一個 JSON，不要其他字：\n"
                     '{"addressed": true/false, "handoff": true/false}\n'
-                    "addressed=true：這句在跟『你』說話、問你、邀請你開口——"
-                    "即使用的是你名字的變體、暱稱、稱謂（法師/大師/老師/簡稱、簡繁體不同）也算。\n"
-                    "handoff=true：明確把發言權交給『另一個人』（不是你）去說，例如點名別人講、請別人先說。\n"
-                    "兩者都 false：他們在彼此對話，這句沒在跟你說、也沒交棒給特定的人。\n"
-                    "你被叫到 → addressed=true、handoff=false。"
+                    "addressed=true：這句話期待你開口——代詞「你/您」指的是你、或語境上邀請你說話。\n"
+                    "handoff=true：明確把發言權交給『另一個人』（不是你）去說，你應該讓位。\n"
+                    "兩者都 false：他們在彼此對話，不需要你開口，也沒叫別人接。\n"
+                    "注意：名字匹配已在上游程式處理，你只需判斷代詞/語境/群體問話等模糊情形。"
                 ),
                 messages=[{"role": "user", "content": f"最近對話：\n{recent}\n\n最後這句：{text}"}],
             ), timeout=GATE_TIMEOUT)
@@ -156,7 +174,13 @@ class AilivexAgentV10(Agent):
         if not self._ctx_flags.get("multi_person"):
             return
 
-        # 多人情境 → LLM floor-gate（Haiku 直連）。失敗 → regex fallback（保守，不亂回）。
+        # 多人情境 → Layer 1: 判別式點名偵測（天條：確定性工作不丟 LLM）
+        if self._deterministic_addressed_check(text):
+            self.yield_until = 0.0
+            logger.info(f"v10 gate[det]：別名命中 → 直接回話 {text[:44]!r}")
+            return   # addressed，框架 commit → 正常回話
+
+        # Layer 2: LLM gate（代詞/間接點名/群體問話等模糊情境）。失敗 → regex fallback。
         decision = await self._floor_gate_llm(text)
         if decision is not None:
             handoff, addressed = decision["handoff"], decision["addressed"]

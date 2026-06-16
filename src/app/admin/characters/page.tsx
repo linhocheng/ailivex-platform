@@ -12,6 +12,7 @@ interface Char {
 type EditState = {
   id: string; name: string; soul: string; soulCore: string;
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
+  aliases: string[];
   avatar: { b64: string; type: string } | null;
 };
 
@@ -182,6 +183,7 @@ export default function AdminCharacters() {
     payload.voiceIdMinimax = editing.voiceId;
     payload.voiceSettings = editing.voiceSettings;
     payload.convSettings = editing.convSettings;
+    payload.aliases = editing.aliases.filter(a => a.trim());
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
     const r = await fetch(`/api/admin/characters/${editing.id}`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -254,9 +256,9 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -328,6 +330,12 @@ export default function AdminCharacters() {
             maxHeight:'90vh', overflowY:'auto', boxShadow:'0 24px 60px -20px rgba(0,0,0,0.35)' }}>
             <div style={{ fontSize:16, fontWeight:600, marginBottom:2 }}>編輯角色 — {editing.name}</div>
             <Field label="角色名"><TextInput value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})} /></Field>
+            <Field label="別名（每行一個，多人房點名用）">
+              <textarea style={{ ...inputBase, minHeight:80, resize:'vertical', fontFamily:'inherit', fontSize:13 }}
+                placeholder={'聖嚴\n聖嚴法師\n圣严\n法師'}
+                value={editing.aliases.join('\n')}
+                onChange={e=>setEditing({...editing, aliases: e.target.value.split('\n')})} />
+            </Field>
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}
                 placeholder="靈魂（留空不更新）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />
