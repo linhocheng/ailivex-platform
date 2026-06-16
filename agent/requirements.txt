@@ -16,5 +16,14 @@ opencc-python-reimplemented>=0.1.7
 firebase-admin>=6.5.0
 
 python-dotenv>=1.0.0
-numpy>=1.24.0
+numpy>=1.24.0,<2          # torch 2.2 CPU 需 numpy<2；對 v1-v10 也安全（1.26 通吃）
 httpx>=0.26.0
+
+# ── v11 聲紋 voiceprint（共享 image：v1-v10 不 import 這些 → runtime 不受影響，只是 image 變大，已接受）──
+# torch 必須裝 CPU wheel：見 Dockerfile 的 --index-url（PyPI 預設是 CUDA 版 ~2GB+，會把 image 撐爆）。
+# 套件/版本最終在 Phase 2 用實機 build + CPU 延遲定案；ECAPA(speechbrain) 是務實預設，CAM++(modelscope) 為備選。
+torch==2.2.2
+torchaudio==2.2.2
+speechbrain==1.0.2
+soxr>=0.3.7
+scipy>=1.11

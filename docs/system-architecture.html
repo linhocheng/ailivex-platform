@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ailiveX 系統架構與運作全解</title>
+<script>document.documentElement.classList.add('js');</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;700;900&family=Noto+Sans+TC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* 暖紙背景 · 高對比深墨字 */
+    --bg:#f5f1e8;
+    --bg-2:#efe9db;
+    --panel:#ffffff;
+    --panel-2:#f1ebdd;
+    --line:#ded5c3;
+    --line-soft:#e8e1d2;
+    --ink:#1b2027;
+    --ink-2:#363d47;
+    --muted:#5c6470;
+    --faint:#938c80;
+    /* 機器 / 管線 = 青 ; 靈魂 / 記憶 / 人 = 琥珀（深色版，淺底高對比）*/
+    --cyan:#0b7a6e;
+    --cyan-dim:#6cc1b6;
+    --amber:#b05a12;
+    --amber-dim:#dfa45a;
+    --violet:#5a52c0;
+    --rose:#c0392b;
+    --radius:14px;
+    --shadow:0 1px 2px rgba(40,33,18,.05), 0 10px 30px rgba(40,33,18,.06);
+    --shadow-lift:0 4px 10px rgba(40,33,18,.07), 0 18px 44px rgba(40,33,18,.10);
+    --serif:"Noto Serif TC",Georgia,"Source Han Serif TC",serif;
+    --sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    --mono:"JetBrains Mono","Fira Code",ui-monospace,monospace;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;font-size:18px}
+  body{
+    font-family:var(--sans);
+    color:var(--ink-2);
+    background-color:var(--bg);
+    background-image:
+      radial-gradient(1200px 700px at 80% -8%, rgba(11,122,110,.06), transparent 60%),
+      radial-gradient(1000px 600px at 4% 6%, rgba(176,90,18,.05), transparent 55%),
+      linear-gradient(rgba(120,104,72,.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,104,72,.055) 1px, transparent 1px);
+    background-size:auto,auto,44px 44px,44px 44px;
+    background-position:0 0,0 0,-1px -1px,-1px -1px;
+    line-height:1.95;
+    font-weight:400;
+    letter-spacing:.005em;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  /* 細微紙紋覆層 */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.025;mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 28px}
+
+  /* ── layout ── */
+  .shell{display:grid;grid-template-columns:236px 1fr;gap:56px;max-width:1340px;margin:0 auto;padding:0 28px}
+  nav.toc{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:42px 8px 42px 0;border-right:1px solid var(--line)}
+  nav.toc .brand{font-family:var(--mono);font-size:12px;letter-spacing:.3em;color:var(--cyan);text-transform:uppercase;margin-bottom:26px;font-weight:700}
+  nav.toc a{display:block;font-size:15px;color:var(--muted);text-decoration:none;padding:7px 0 7px 14px;border-left:2px solid transparent;transition:.2s;line-height:1.45}
+  nav.toc a .n{font-family:var(--mono);font-size:11px;color:var(--faint);margin-right:7px}
+  nav.toc a:hover{color:var(--ink);border-left-color:var(--cyan-dim)}
+  nav.toc a.active{color:var(--cyan);border-left-color:var(--cyan);font-weight:500}
+  main{min-width:0;padding-bottom:120px}
+
+  /* ── hero ── */
+  header.hero{padding:84px 0 60px;border-bottom:2px solid var(--ink)}
+  .eyebrow{font-family:var(--mono);font-size:13px;letter-spacing:.34em;color:var(--cyan);text-transform:uppercase;margin-bottom:24px;display:flex;align-items:center;gap:12px;font-weight:500}
+  .eyebrow::before{content:"";width:34px;height:2px;background:var(--cyan)}
+  h1.title{font-family:var(--serif);font-weight:900;font-size:clamp(2.7rem,6vw,4.7rem);line-height:1.06;letter-spacing:-.01em;color:var(--ink)}
+  h1.title .accent{color:var(--amber)}
+  .lede{font-size:clamp(1.18rem,2.1vw,1.45rem);color:var(--ink-2);max-width:60ch;margin-top:26px;font-weight:400;line-height:1.85}
+  .lede b{color:var(--cyan);font-weight:700}
+  .meta-strip{display:flex;flex-wrap:wrap;gap:10px;margin-top:38px}
+  .meta-strip .chip{font-family:var(--mono);font-size:13px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 15px;box-shadow:var(--shadow)}
+  .meta-strip .chip b{color:var(--amber);font-weight:700}
+
+  /* ── sections ── */
+  section{padding:64px 0;border-bottom:1px solid var(--line-soft)}
+  .sec-head{display:flex;align-items:baseline;gap:18px;margin-bottom:28px}
+  .sec-head .num{font-family:var(--mono);font-size:16px;color:var(--cyan);font-weight:700;flex:none}
+  h2{font-family:var(--serif);font-weight:700;font-size:clamp(1.85rem,3.6vw,2.7rem);line-height:1.2;color:var(--ink);letter-spacing:.01em}
+  h3{font-family:var(--serif);font-weight:700;font-size:1.5rem;color:var(--ink);margin:36px 0 14px;display:flex;align-items:center;gap:11px}
+  h3::before{content:"";width:9px;height:9px;background:var(--amber);transform:rotate(45deg);flex:none}
+  p{color:var(--ink-2);margin:15px 0;max-width:70ch;font-size:1.1rem;line-height:1.95}
+  p b,li b{color:var(--ink);font-weight:700}
+  .mono{font-family:var(--mono);font-size:.92em;color:var(--cyan);background:rgba(11,122,110,.08);padding:1px 6px;border-radius:5px;border:1px solid rgba(11,122,110,.2);white-space:nowrap;font-weight:500}
+  .mono.amber{color:var(--amber);background:rgba(176,90,18,.08);border-color:rgba(176,90,18,.22)}
+  ul.list{list-style:none;margin:18px 0;max-width:74ch}
+  ul.list li{position:relative;padding-left:26px;margin:11px 0;color:var(--ink-2);font-size:1.1rem;line-height:1.85}
+  ul.list li::before{content:"▸";position:absolute;left:2px;color:var(--cyan);font-size:.95em;top:2px}
+  a[href^="#"]{color:var(--cyan);font-weight:500}
+
+  /* ── cards / callouts ── */
+  .grid{display:grid;gap:18px;margin:26px 0}
+  .grid.c2{grid-template-columns:repeat(2,1fr)}
+  .grid.c3{grid-template-columns:repeat(3,1fr)}
+  .grid.c4{grid-template-columns:repeat(4,1fr)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:24px;transition:.25s;position:relative;overflow:hidden;box-shadow:var(--shadow)}
+  .card:hover{border-color:var(--cyan-dim);transform:translateY(-3px);box-shadow:var(--shadow-lift)}
+  .card .k{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);margin-bottom:10px;font-weight:700}
+  .card h4{font-family:var(--serif);font-size:1.28rem;color:var(--ink);margin-bottom:9px;font-weight:700}
+  .card p{font-size:1.02rem;margin:6px 0;color:var(--muted);line-height:1.75}
+  .callout{border:1px solid var(--amber-dim);background:linear-gradient(160deg,rgba(176,90,18,.07),rgba(255,255,255,.4));border-radius:var(--radius);padding:22px 24px;margin:28px 0;position:relative;box-shadow:var(--shadow)}
+  .callout .tag{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--amber);text-transform:uppercase;margin-bottom:8px;display:block;font-weight:700}
+  .callout p{margin:4px 0;color:var(--ink-2)}
+  .callout.danger{border-color:#d99;background:linear-gradient(160deg,rgba(192,57,43,.08),rgba(255,255,255,.4))}
+  .callout.danger .tag{color:var(--rose)}
+
+  /* ── figure / svg ── */
+  figure{margin:38px 0;background:linear-gradient(180deg,#fffdf8,#faf5ea);border:1px solid var(--line);border-radius:var(--radius);padding:28px 24px 18px;overflow:hidden;box-shadow:var(--shadow)}
+  figure svg{display:block;width:100%;height:auto}
+  /* 箭頭依管線色重新著色（覆蓋內聯亮色），淺底高對比 */
+  figure svg marker path{fill:var(--cyan)}
+  figure svg marker[id$="a"] path{fill:var(--amber)}
+  figcaption{font-family:var(--mono);font-size:12.5px;color:var(--faint);text-align:center;margin-top:16px;letter-spacing:.06em}
+  figcaption b{color:var(--muted);font-weight:700}
+  .legend{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .legend i{width:13px;height:13px;border-radius:3px;display:inline-block}
+
+  /* svg shared classes — 淺底：白盒 + 深墨字 */
+  .dbox{fill:#ffffff;stroke:var(--cyan-dim);stroke-width:1.6}
+  .dbox-amber{fill:#fff7ea;stroke:var(--amber-dim);stroke-width:1.6}
+  .dbox-soft{fill:#f0eadd;stroke:#d4cab6;stroke-width:1.4}
+  .dt{fill:var(--ink);font-family:var(--sans);font-weight:600}
+  .dt-sm{fill:#2e3640;font-family:var(--sans);font-weight:500}
+  .dt-mono{fill:var(--cyan);font-family:var(--mono);font-weight:500}
+  .dt-mono-a{fill:var(--amber);font-family:var(--mono);font-weight:500}
+  .dt-mut{fill:#5c6470;font-family:var(--sans)}
+  .conn{stroke:#b9af9b;stroke-width:1.8;fill:none}
+  .flow{stroke:var(--cyan);stroke-width:2.4;fill:none;stroke-dasharray:7 7;animation:dash 1s linear infinite}
+  .flow-a{stroke:var(--amber);stroke-width:2.4;fill:none;stroke-dasharray:7 7;animation:dash 1.3s linear infinite}
+  @keyframes dash{to{stroke-dashoffset:-28}}
+  @media (prefers-reduced-motion:reduce){.flow,.flow-a{animation:none}}
+
+  /* ── table ── */
+  .tbl-wrap{overflow-x:auto;margin:26px 0;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:1rem;min-width:560px;background:var(--panel)}
+  th{background:var(--panel-2);color:var(--cyan);font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;text-align:left;padding:14px 18px;font-weight:700;border-bottom:2px solid var(--line)}
+  td{padding:14px 18px;border-bottom:1px solid var(--line-soft);color:var(--ink-2);vertical-align:top;line-height:1.7}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(11,122,110,.04)}
+  td code{font-family:var(--mono);font-size:.88em;color:var(--amber);font-weight:500}
+
+  /* ── services ── */
+  .svc{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px;margin:28px 0}
+  .svc .card{display:flex;flex-direction:column}
+  .svc .card .badge{position:absolute;top:18px;right:18px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-weight:500;background:var(--bg)}
+  .svc .card .badge.ext{color:var(--cyan);border-color:var(--cyan-dim)}
+  .svc .card .badge.gcp{color:var(--amber);border-color:var(--amber-dim)}
+  .svc .card .badge.int{color:var(--violet);border-color:#c5c2e8}
+  .svc .card .use{font-size:13px;color:var(--faint);margin-top:auto;padding-top:14px;font-family:var(--mono);font-weight:500}
+
+  /* ── pill row ── */
+  .stack{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+  .stack .p{font-family:var(--mono);font-size:13px;padding:9px 15px;border-radius:8px;background:var(--panel);border:1px solid var(--line);color:var(--ink-2);box-shadow:var(--shadow)}
+  .stack .p b{color:var(--cyan);font-weight:700}
+
+  footer{padding:54px 0 80px;text-align:center;color:var(--faint);font-family:var(--mono);font-size:12.5px;letter-spacing:.08em}
+  footer b{color:var(--muted);font-weight:700}
+
+  /* reveal */
+  .js .rv{opacity:0;transform:translateY(22px);transition:opacity .7s ease,transform .7s ease}
+  .js .rv.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.js .rv{opacity:1;transform:none}}
+
+  /* responsive */
+  @media (max-width:1000px){
+    .shell{grid-template-columns:1fr;gap:0}
+    nav.toc{display:none}
+    main{padding-bottom:80px}
+  }
+  @media (max-width:680px){
+    html{font-size:17px}
+    .grid.c2,.grid.c3,.grid.c4{grid-template-columns:1fr}
+    .wrap,.shell{padding:0 18px}
+    section{padding:48px 0}
+    .meta-strip{gap:8px}
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+<!-- ───────────────────────── TOC ───────────────────────── -->
+<nav class="toc">
+  <div class="brand">ailiveX · 系統手冊</div>
+  <a href="#intro"><span class="n">00</span>系統定位</a>
+  <a href="#overview"><span class="n">01</span>系統總覽</a>
+  <a href="#users"><span class="n">02</span>使用者與頁面流</a>
+  <a href="#memory-core"><span class="n">03</span>核心理念：記憶</a>
+  <a href="#pipe-text"><span class="n">04</span>管線 A · 文字對話</a>
+  <a href="#pipe-voice"><span class="n">05</span>管線 B · 即時語音</a>
+  <a href="#versions"><span class="n">06</span>語音版本演進</a>
+  <a href="#multiparty"><span class="n">07</span>多人房雙腦機制</a>
+  <a href="#memory-sys"><span class="n">08</span>記憶系統細節</a>
+  <a href="#pipe-doc"><span class="n">09</span>管線 C · 文件生成</a>
+  <a href="#data"><span class="n">10</span>資料模型</a>
+  <a href="#auth"><span class="n">11</span>認證與權限</a>
+  <a href="#routing"><span class="n">12</span>LLM 路由</a>
+  <a href="#deploy"><span class="n">13</span>部署架構</a>
+  <a href="#services"><span class="n">14</span>第三方服務 ★</a>
+  <a href="#libs"><span class="n">15</span>函式庫與模型</a>
+  <a href="#env"><span class="n">16</span>環境變數</a>
+</nav>
+
+<main>
+<!-- ───────────────────────── HERO ───────────────────────── -->
+<header class="hero">
+  <div class="eyebrow">SYSTEM ARCHITECTURE · 架構與運作全解</div>
+  <h1 class="title">ailiveX<br><span class="accent">運作原理</span>全解析</h1>
+  <p class="lede">一個<b>以「用戶」為中心</b>的 AI 角色記憶 × 即時語音平台。每個用戶 × 每個角色各自記憶、不共享——同一個角色對不同人，記得的事不一樣。本文件完整拆解三條核心管線、語音雙腦機制、記憶系統，以及所有依賴的第三方服務。</p>
+  <div class="meta-strip">
+    <span class="chip">語音現役版本 · <b>v10</b></span>
+    <span class="chip">GCP 專案 · <b>ailivex-2026</b></span>
+    <span class="chip">前端 · <b>Next.js 16 / Vercel</b></span>
+    <span class="chip">語音 Agent · <b>Python / Cloud Run</b></span>
+    <span class="chip">文件日期 · <b>2026-06-16</b></span>
+  </div>
+</header>
+
+<!-- ───────────────────────── 00 INTRO ───────────────────────── -->
+<section id="intro">
+  <div class="sec-head"><span class="num">00</span><h2>系統定位</h2></div>
+  <div class="rv">
+  <p>ailiveX 是一個 AI 角色互動平台。使用者與被指派的 AI 角色進行<b>文字對話</b>或<b>即時語音通話</b>，角色會<b>記住這個用戶</b>（記憶系統），並能在對話中代為生成<b>策略書、企劃書</b>等正式文件。</p>
+  <p>整個架構的核心翻轉是：從「以角色為中心」改成「<b>以用戶為中心</b>」。記憶、對話、文件一律嚴格綁定 <span class="mono">(userId, characterId)</span> 這一對；角色不共享記憶——同一個角色面對 A 與 B，記得的事完全分開。</p>
+  <div class="grid c3">
+    <div class="card"><div class="k">兩種身份</div><h4>用戶 / 管理員</h4><p>用戶走前台（大廳→對話），只看到被指派的角色；管理員走後台，管角色、帳號、權限、記憶。</p></div>
+    <div class="card"><div class="k">三條管線</div><h4>文字 · 語音 · 文件</h4><p>文字對話、即時語音通話、非同步文件生成——三條獨立但共用同一份記憶與靈魂。</p></div>
+    <div class="card"><div class="k">一個靈魂</div><h4>soul → soulCore</h4><p>管理員寫角色「靈魂」原文，系統鑄煉成高密度 <span class="mono amber">soulCore</span>，注入每一次對話。</p></div>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 01 OVERVIEW ───────────────────────── -->
+<section id="overview">
+  <div class="sec-head"><span class="num">01</span><h2>系統總覽</h2></div>
+  <div class="rv">
+  <p>系統分成<b>三個運算層</b>與<b>一個資料層</b>，背後串接多個外部 AI 服務。前端與所有 API 跑在 Vercel；即時語音的「大腦」是一支獨立的 Python Agent，跑在 Google Cloud Run；資料的單一真相源是 Firestore。</p>
+
+  <figure class="rv">
+  <svg viewBox="0 0 1080 660" role="img" aria-label="系統總覽架構圖">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker>
+      <marker id="aha" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker>
+    </defs>
+
+    <!-- band labels -->
+    <text x="20" y="56" class="dt-mono" font-size="11" opacity=".7">使用者裝置</text>
+    <text x="20" y="176" class="dt-mono" font-size="11" opacity=".7">前端 / 連線</text>
+    <text x="20" y="346" class="dt-mono" font-size="11" opacity=".7">運算 · Cloud Run</text>
+    <text x="20" y="486" class="dt-mono" font-size="11" opacity=".7">資料層</text>
+    <text x="20" y="596" class="dt-mono-a" font-size="11" opacity=".8">外部 AI 服務</text>
+
+    <!-- user -->
+    <rect x="430" y="22" width="220" height="52" rx="10" class="dbox-amber"/>
+    <text x="540" y="46" text-anchor="middle" class="dt" font-size="15">瀏覽器 / 手機</text>
+    <text x="540" y="64" text-anchor="middle" class="dt-mut" font-size="11">用戶與角色互動</text>
+
+    <!-- frontend band -->
+    <rect x="150" y="120" width="360" height="70" rx="10" class="dbox"/>
+    <text x="330" y="148" text-anchor="middle" class="dt" font-size="14.5">Next.js 前端 + API</text>
+    <text x="330" y="168" text-anchor="middle" class="dt-mono" font-size="11">Vercel · /chat /lobby /admin /api/*</text>
+
+    <rect x="590" y="120" width="330" height="70" rx="10" class="dbox"/>
+    <text x="755" y="148" text-anchor="middle" class="dt" font-size="14.5">LiveKit Cloud</text>
+    <text x="755" y="168" text-anchor="middle" class="dt-mono" font-size="11">WebRTC 即時音訊房間</text>
+
+    <!-- compute band -->
+    <rect x="150" y="290" width="360" height="74" rx="10" class="dbox"/>
+    <text x="330" y="320" text-anchor="middle" class="dt" font-size="14.5">語音 Agent (Python)</text>
+    <text x="330" y="340" text-anchor="middle" class="dt-mono" font-size="11">ailivex-realtime-v10</text>
+    <text x="330" y="356" text-anchor="middle" class="dt-mut" font-size="10.5">STT → LLM → TTS 迴圈</text>
+
+    <rect x="590" y="290" width="330" height="74" rx="10" class="dbox"/>
+    <text x="755" y="320" text-anchor="middle" class="dt" font-size="14.5">doc-worker (Node)</text>
+    <text x="755" y="340" text-anchor="middle" class="dt-mono" font-size="11">文件生成 · Vercel/Cloud Run</text>
+    <text x="755" y="356" text-anchor="middle" class="dt-mut" font-size="10.5">markdown → HTML</text>
+
+    <!-- data band -->
+    <rect x="250" y="430" width="270" height="62" rx="10" class="dbox-amber"/>
+    <text x="385" y="457" text-anchor="middle" class="dt" font-size="14.5">Firestore</text>
+    <text x="385" y="476" text-anchor="middle" class="dt-mono-a" font-size="11">單一真相源 · 8 個 collection</text>
+
+    <rect x="560" y="430" width="270" height="62" rx="10" class="dbox-amber"/>
+    <text x="695" y="457" text-anchor="middle" class="dt" font-size="14.5">Cloud Storage</text>
+    <text x="695" y="476" text-anchor="middle" class="dt-mono-a" font-size="11">頭像 · 生成文件 HTML</text>
+
+    <!-- external services -->
+    <rect x="60" y="556" width="170" height="58" rx="9" class="dbox-soft"/>
+    <text x="145" y="580" text-anchor="middle" class="dt-sm" font-size="13">Soniox</text>
+    <text x="145" y="599" text-anchor="middle" class="dt-mut" font-size="10.5">語音辨識 STT</text>
+
+    <rect x="250" y="556" width="170" height="58" rx="9" class="dbox-soft"/>
+    <text x="335" y="580" text-anchor="middle" class="dt-sm" font-size="13">Anthropic Claude</text>
+    <text x="335" y="599" text-anchor="middle" class="dt-mut" font-size="10.5">語言模型 LLM</text>
+
+    <rect x="440" y="556" width="170" height="58" rx="9" class="dbox-soft"/>
+    <text x="525" y="580" text-anchor="middle" class="dt-sm" font-size="13">MiniMax</text>
+    <text x="525" y="599" text-anchor="middle" class="dt-mut" font-size="10.5">語音合成 TTS</text>
+
+    <rect x="630" y="556" width="170" height="58" rx="9" class="dbox-soft"/>
+    <text x="715" y="580" text-anchor="middle" class="dt-sm" font-size="13">Vertex AI</text>
+    <text x="715" y="599" text-anchor="middle" class="dt-mut" font-size="10.5">向量 Embedding</text>
+
+    <rect x="820" y="556" width="170" height="58" rx="9" class="dbox-soft"/>
+    <text x="905" y="580" text-anchor="middle" class="dt-sm" font-size="13">zhu-bridge</text>
+    <text x="905" y="599" text-anchor="middle" class="dt-mut" font-size="10.5">Claude Max 代理</text>
+
+    <!-- connectors -->
+    <path class="flow-a" d="M510,58 C400,75 360,95 345,118" marker-end="url(#aha)"/>
+    <path class="flow-a" d="M580,58 C690,75 730,95 750,118" marker-end="url(#aha)"/>
+    <path class="flow" d="M330,190 L330,288" marker-end="url(#ah)"/>
+    <path class="flow" d="M755,190 L755,288" marker-end="url(#ah)"/>
+    <!-- agent to data -->
+    <path class="conn" d="M330,364 C330,400 360,410 385,428" marker-end="url(#ah)"/>
+    <!-- worker to data/storage -->
+    <path class="conn" d="M755,364 C740,400 720,410 700,428" marker-end="url(#ah)"/>
+    <!-- frontend to data -->
+    <path class="conn" d="M260,190 C230,300 300,400 360,428" marker-end="url(#ah)"/>
+    <!-- agent to externals -->
+    <path class="conn" d="M270,364 C200,470 160,510 150,554" marker-end="url(#ah)" opacity=".7"/>
+    <path class="conn" d="M320,364 C330,460 335,510 335,554" marker-end="url(#ah)" opacity=".7"/>
+    <path class="conn" d="M380,364 C470,470 510,510 525,554" marker-end="url(#ah)" opacity=".7"/>
+    <path class="conn" d="M460,460 C620,500 700,520 715,554" marker-end="url(#ah)" opacity=".5"/>
+  </svg>
+  <div class="legend">
+    <span><i style="background:var(--cyan)"></i>機器 / 管線</span>
+    <span><i style="background:var(--amber)"></i>靈魂 / 記憶 / 人</span>
+    <span><i style="background:var(--faint)"></i>外部服務</span>
+    <span><i style="background:transparent;border:1px dashed var(--cyan)"></i>即時資料流</span>
+  </div>
+  <figcaption><b>圖 01</b> — 系統分層總覽：使用者 → 前端/連線 → Cloud Run 運算 → 資料層，外接五大 AI 服務</figcaption>
+  </figure>
+
+  <div class="stack">
+    <span class="p">前端 <b>Next.js 16 · React 19</b></span>
+    <span class="p">語音 <b>Python · LiveKit Agents 1.5.1</b></span>
+    <span class="p">資料庫 <b>Firestore</b></span>
+    <span class="p">儲存 <b>Cloud Storage</b></span>
+    <span class="p">區域 <b>asia-east1 / us-central1</b></span>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 02 USERS ───────────────────────── -->
+<section id="users">
+  <div class="sec-head"><span class="num">02</span><h2>使用者身份與頁面流程</h2></div>
+  <div class="rv">
+  <p>登入後依身份分流：管理員進後台，用戶進大廳。用戶在大廳挑角色，進入文字聊天頁，再從那裡可升級成即時語音通話；也能查看角色幫他生成的文件。</p>
+  <figure>
+  <svg viewBox="0 0 1040 360" role="img" aria-label="頁面流程圖">
+    <defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker></defs>
+    <rect x="40" y="150" width="150" height="60" rx="10" class="dbox-amber"/>
+    <text x="115" y="178" text-anchor="middle" class="dt" font-size="14">登入頁</text>
+    <text x="115" y="196" text-anchor="middle" class="dt-mono-a" font-size="10">/login</text>
+
+    <!-- admin path -->
+    <rect x="290" y="40" width="190" height="58" rx="10" class="dbox"/>
+    <text x="385" y="66" text-anchor="middle" class="dt" font-size="14">管理員 → 後台</text>
+    <text x="385" y="84" text-anchor="middle" class="dt-mono" font-size="10">/admin</text>
+    <rect x="560" y="20" width="440" height="98" rx="10" class="dbox-soft"/>
+    <text x="780" y="46" text-anchor="middle" class="dt-sm" font-size="12.5">角色管理 · 用戶管理 · 權限指派</text>
+    <text x="780" y="68" text-anchor="middle" class="dt-sm" font-size="12.5">記憶管理 · 全域 Prompt</text>
+    <text x="780" y="98" text-anchor="middle" class="dt-mono" font-size="10">/admin/characters · users · access · memories</text>
+
+    <!-- user path -->
+    <rect x="290" y="250" width="190" height="58" rx="10" class="dbox"/>
+    <text x="385" y="276" text-anchor="middle" class="dt" font-size="14">用戶 → 大廳</text>
+    <text x="385" y="294" text-anchor="middle" class="dt-mono" font-size="10">/lobby</text>
+
+    <rect x="560" y="200" width="200" height="58" rx="10" class="dbox-amber"/>
+    <text x="660" y="226" text-anchor="middle" class="dt" font-size="13.5">文字聊天</text>
+    <text x="660" y="244" text-anchor="middle" class="dt-mono-a" font-size="10">/chat/[id]</text>
+
+    <rect x="800" y="200" width="200" height="58" rx="10" class="dbox-amber"/>
+    <text x="900" y="226" text-anchor="middle" class="dt" font-size="13.5">即時語音</text>
+    <text x="900" y="244" text-anchor="middle" class="dt-mono-a" font-size="10">/realtime-v10/[id]</text>
+
+    <rect x="560" y="290" width="200" height="52" rx="10" class="dbox-soft"/>
+    <text x="660" y="320" text-anchor="middle" class="dt-sm" font-size="13">我的文件</text>
+
+    <path class="flow" d="M190,172 C240,150 250,90 288,72" marker-end="url(#ah2)"/>
+    <path class="flow" d="M190,188 C240,220 250,270 288,279" marker-end="url(#ah2)"/>
+    <path class="conn" d="M480,69 L558,69" marker-end="url(#ah2)"/>
+    <path class="conn" d="M480,279 C510,279 520,230 558,229" marker-end="url(#ah2)"/>
+    <path class="conn" d="M480,290 C510,300 520,315 558,316" marker-end="url(#ah2)"/>
+    <path class="flow" d="M760,229 L798,229" marker-end="url(#ah2)"/>
+  </svg>
+  <figcaption><b>圖 02</b> — 登入分流與頁面動線；文字聊天可一鍵升級為即時語音</figcaption>
+  </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── 03 MEMORY CORE ───────────────────────── -->
+<section id="memory-core">
+  <div class="sec-head"><span class="num">03</span><h2>核心理念：以用戶為中心的記憶</h2></div>
+  <div class="rv">
+  <p>這是整個系統的靈魂。所有記憶都被綁在 <span class="mono">(userId, characterId)</span> 這一對鑰匙上。同一個角色，對不同用戶各記各的；角色因此能像「記得你的老朋友」，而不是「拿著同一張備忘錄的陌生人」。</p>
+  <div class="callout">
+    <span class="tag">設計哲學</span>
+    <p>活著的人有<b>時間感</b>、有<b>關係弧線</b>、會<b>記得情緒</b>、會<b>追問未完成的事</b>。記憶系統 v2 的目標，就是讓角色具備這四件事——每條記憶都帶相對時間（今天 / X 天前 / X 個月前），並追蹤「我們認識多久、聊過幾次」。</p>
+  </div>
+  <p>每次對話結束，系統會非同步用 LLM 從逐字稿中<b>提煉記憶</b>，分成六種類型存進 Firestore；下次對話開場前，再把最相關的記憶組成有層次的 system prompt 注入角色。細節見 <a href="#memory-sys" style="color:var(--cyan)">第 08 節</a>。</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── 04 TEXT PIPELINE ───────────────────────── -->
+<section id="pipe-text">
+  <div class="sec-head"><span class="num">04</span><h2>管線 A · 文字對話</h2></div>
+  <div class="rv">
+  <p>文字對話走 Vercel 的 <span class="mono">/api/dialogue</span> 路由。一次請求的完整流程：驗證身份與權限 → 載入靈魂、記憶、歷史 → 呼叫 Claude → 用程式解析工具標記 → 回覆並存檔。記憶提煉與文件派工放在<b>回覆送出之後</b>非同步執行，避免拖慢回應。</p>
+
+  <figure>
+  <svg viewBox="0 0 1060 470" role="img" aria-label="文字對話管線">
+    <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker>
+    <marker id="ah3a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker></defs>
+
+    <rect x="40" y="40" width="150" height="56" rx="10" class="dbox-amber"/>
+    <text x="115" y="64" text-anchor="middle" class="dt" font-size="13.5">用戶送出訊息</text>
+    <text x="115" y="82" text-anchor="middle" class="dt-mut" font-size="10.5">POST /api/dialogue</text>
+
+    <rect x="250" y="40" width="150" height="56" rx="10" class="dbox"/>
+    <text x="325" y="64" text-anchor="middle" class="dt" font-size="13.5">驗證 + 權限</text>
+    <text x="325" y="82" text-anchor="middle" class="dt-mono" font-size="10">hasAccess()</text>
+
+    <rect x="460" y="28" width="200" height="80" rx="10" class="dbox-amber"/>
+    <text x="560" y="52" text-anchor="middle" class="dt" font-size="13.5">組裝 context</text>
+    <text x="560" y="72" text-anchor="middle" class="dt-mut" font-size="10.5">soulCore + 記憶區塊</text>
+    <text x="560" y="89" text-anchor="middle" class="dt-mut" font-size="10.5">+ 歷史(24) + 讀網址</text>
+
+    <rect x="720" y="40" width="160" height="56" rx="10" class="dbox"/>
+    <text x="800" y="64" text-anchor="middle" class="dt" font-size="13.5">Claude Sonnet 4.6</text>
+    <text x="800" y="82" text-anchor="middle" class="dt-mono" font-size="10">經 bridge</text>
+
+    <rect x="720" y="180" width="160" height="56" rx="10" class="dbox"/>
+    <text x="800" y="204" text-anchor="middle" class="dt" font-size="13.5">解析工具標記</text>
+    <text x="800" y="222" text-anchor="middle" class="dt-mono" font-size="9.5">[[REMEMBER]] [[DOCUMENT]]</text>
+
+    <rect x="460" y="180" width="200" height="56" rx="10" class="dbox-amber"/>
+    <text x="560" y="204" text-anchor="middle" class="dt" font-size="13.5">回覆用戶 + 存對話</text>
+    <text x="560" y="222" text-anchor="middle" class="dt-mut" font-size="10.5">appendMessages</text>
+
+    <!-- async band -->
+    <rect x="120" y="320" width="820" height="120" rx="12" fill="none" stroke="var(--amber-dim)" stroke-width="1.3" stroke-dasharray="5 5"/>
+    <text x="140" y="345" class="dt-mono-a" font-size="11">回覆送出後 · 非同步 after()</text>
+
+    <rect x="180" y="360" width="200" height="58" rx="10" class="dbox-amber"/>
+    <text x="280" y="385" text-anchor="middle" class="dt" font-size="13">提煉記憶 (Haiku)</text>
+    <text x="280" y="403" text-anchor="middle" class="dt-mut" font-size="10">extractAndSaveMemories</text>
+
+    <rect x="420" y="360" width="200" height="58" rx="10" class="dbox-amber"/>
+    <text x="520" y="385" text-anchor="middle" class="dt" font-size="13">更新關係</text>
+    <text x="520" y="403" text-anchor="middle" class="dt-mut" font-size="10">upsertRelationship</text>
+
+    <rect x="660" y="360" width="220" height="58" rx="10" class="dbox"/>
+    <text x="770" y="385" text-anchor="middle" class="dt" font-size="13">派工文件生成</text>
+    <text x="770" y="403" text-anchor="middle" class="dt-mut" font-size="10">dispatchDocumentJob</text>
+
+    <path class="flow" d="M190,68 L248,68" marker-end="url(#ah3)"/>
+    <path class="flow" d="M400,68 L458,68" marker-end="url(#ah3)"/>
+    <path class="flow" d="M660,68 L718,68" marker-end="url(#ah3)"/>
+    <path class="conn" d="M800,96 L800,178" marker-end="url(#ah3)"/>
+    <path class="flow-a" d="M718,208 L662,208" marker-end="url(#ah3a)"/>
+    <path class="conn" d="M460,225 C300,225 200,280 280,358" marker-end="url(#ah3a)"/>
+  </svg>
+  <figcaption><b>圖 04</b> — 文字對話：同步回覆（青）+ 回覆後非同步收尾（琥珀）</figcaption>
+  </figure>
+
+  <h3>關鍵設計</h3>
+  <ul class="list">
+    <li><b>工具靠文字標記，不靠 tool_use</b>：因為走 bridge 省錢、而 bridge 不支援原生 tool calling，所以角色用 <span class="mono">[[REMEMBER]]…[[/REMEMBER]]</span>、<span class="mono">[[DOCUMENT title="…"]]…[[/DOCUMENT]]</span> 文字標記，再由程式確定性解析（天條：解析/格式是程式的工作，不丟 LLM）。</li>
+    <li><b>後端把關權限</b>：未被指派該角色 → 直接 403，不只靠大廳隱藏。</li>
+    <li><b>讀網址</b>：訊息含 URL 時，伺服器抓網頁正文餵進這一輪 context（有 SSRF 防護：擋私有 IP、雲端 metadata、逐跳重驗 redirect）。</li>
+    <li><b>非同步收尾</b>：記憶提煉 + 關係更新 + 文件派工都放進 <span class="mono">after()</span>，回覆已先送出，使用者不等。</li>
+  </ul>
+  </div>
+</section>
+
+<!-- ───────────────────────── 05 VOICE PIPELINE ───────────────────────── -->
+<section id="pipe-voice">
+  <div class="sec-head"><span class="num">05</span><h2>管線 B · 即時語音通話</h2></div>
+  <div class="rv">
+  <p>即時語音是系統最複雜的部分。瀏覽器先向後端要一張 LiveKit token，token 裡夾帶<b>角色資訊</b>與一個 <span class="mono">RoomAgentDispatch</span>，指名要哪一版的 Python Agent 進房。Agent 進房後從 Firestore 讀出角色靈魂與記憶，組成 system prompt，然後跑一個「聽 → 想 → 說」的即時迴圈。</p>
+
+  <figure>
+  <svg viewBox="0 0 1060 560" role="img" aria-label="即時語音管線">
+    <defs><marker id="ah4" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker>
+    <marker id="ah4a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker></defs>
+
+    <!-- step 1 token -->
+    <rect x="40" y="30" width="170" height="64" rx="10" class="dbox-amber"/>
+    <text x="125" y="56" text-anchor="middle" class="dt" font-size="13.5">① 取得 token</text>
+    <text x="125" y="75" text-anchor="middle" class="dt-mut" font-size="10">POST /api/livekit/token</text>
+
+    <rect x="280" y="22" width="320" height="80" rx="10" class="dbox"/>
+    <text x="440" y="46" text-anchor="middle" class="dt" font-size="13.5">簽發 LiveKit JWT</text>
+    <text x="440" y="66" text-anchor="middle" class="dt-mono" font-size="9.5">room: ailivex-&lt;char&gt;-&lt;user&gt;-&lt;ts&gt;</text>
+    <text x="440" y="84" text-anchor="middle" class="dt-mono" font-size="9.5">RoomAgentDispatch{agentName, metadata}</text>
+
+    <rect x="680" y="30" width="160" height="64" rx="10" class="dbox-soft"/>
+    <text x="760" y="56" text-anchor="middle" class="dt-sm" font-size="13">LiveKit 房間</text>
+    <text x="760" y="75" text-anchor="middle" class="dt-mut" font-size="10">WebRTC</text>
+
+    <!-- agent join -->
+    <rect x="680" y="150" width="300" height="74" rx="10" class="dbox"/>
+    <text x="830" y="176" text-anchor="middle" class="dt" font-size="13.5">② Agent 進房 (v10)</text>
+    <text x="830" y="196" text-anchor="middle" class="dt-mut" font-size="10.5">讀 Firestore 靈魂 + 記憶 + lastSession</text>
+    <text x="830" y="213" text-anchor="middle" class="dt-mono" font-size="9.5">build_system_prompt()</text>
+
+    <!-- the loop -->
+    <rect x="120" y="270" width="760" height="170" rx="14" fill="none" stroke="var(--cyan-dim)" stroke-width="1.4"/>
+    <text x="140" y="296" class="dt-mono" font-size="11">③ 即時迴圈 · 聽 → 想 → 說</text>
+
+    <rect x="160" y="320" width="180" height="90" rx="10" class="dbox"/>
+    <text x="250" y="350" text-anchor="middle" class="dt" font-size="14">STT 聽</text>
+    <text x="250" y="372" text-anchor="middle" class="dt-mut" font-size="10.5">Soniox stt-rt-v4</text>
+    <text x="250" y="390" text-anchor="middle" class="dt-mut" font-size="10.5">+ Silero VAD · diarization</text>
+
+    <rect x="410" y="320" width="180" height="90" rx="10" class="dbox-amber"/>
+    <text x="500" y="350" text-anchor="middle" class="dt" font-size="14">LLM 想</text>
+    <text x="500" y="372" text-anchor="middle" class="dt-mut" font-size="10.5">Claude Sonnet 4.6</text>
+    <text x="500" y="390" text-anchor="middle" class="dt-mut" font-size="10.5">直連付費 key</text>
+
+    <rect x="660" y="320" width="180" height="90" rx="10" class="dbox"/>
+    <text x="750" y="350" text-anchor="middle" class="dt" font-size="14">TTS 說</text>
+    <text x="750" y="372" text-anchor="middle" class="dt-mut" font-size="10.5">MiniMax speech-2.6-hd</text>
+    <text x="750" y="390" text-anchor="middle" class="dt-mut" font-size="10.5">繁→簡 · WS 串流</text>
+
+    <!-- finalize -->
+    <rect x="120" y="478" width="760" height="60" rx="10" class="dbox-amber"/>
+    <text x="500" y="503" text-anchor="middle" class="dt" font-size="13.5">④ 掛斷收尾（90 秒視窗）</text>
+    <text x="500" y="522" text-anchor="middle" class="dt-mut" font-size="10.5">存逐字稿 · 萃取 lastSession 快照 · 提煉記憶 · /api/voice-end 更新關係</text>
+
+    <path class="flow-a" d="M210,62 L278,62" marker-end="url(#ah4a)"/>
+    <path class="flow" d="M600,62 L678,62" marker-end="url(#ah4)"/>
+    <path class="conn" d="M760,94 C760,115 800,128 820,148" marker-end="url(#ah4)"/>
+    <path class="flow" d="M340,365 L408,365" marker-end="url(#ah4)"/>
+    <path class="flow-a" d="M590,365 L658,365" marker-end="url(#ah4a)"/>
+    <path class="conn" d="M750,412 C750,440 320,440 250,412" marker-end="url(#ah4)" opacity=".55"/>
+    <path class="conn" d="M500,440 L500,476" marker-end="url(#ah4a)"/>
+  </svg>
+  <figcaption><b>圖 05</b> — 即時語音四階段：取 token → Agent 進房 → 聽/想/說迴圈 → 掛斷收尾</figcaption>
+  </figure>
+
+  <h3>關鍵設計</h3>
+  <ul class="list">
+    <li><b>靠 agent_name 隔離</b>：token 用 <span class="mono">RoomAgentDispatch</span> 指名 <span class="mono">ailivex-realtime-v10</span>，與其他版本、甚至其他專案共用同一個 LiveKit project 也不衝突。房名一律 <span class="mono">ailivex-</span> 前綴，Agent 端會拒絕沒前綴的房（安全把關）。</li>
+    <li><b>語音主迴圈用直連 key</b>：即時對話需要串流，而 bridge 不支援串流也不支援 tool_use，所以主說話的 Sonnet 一律直連付費 <span class="mono">ANTHROPIC_API_KEY</span>。</li>
+    <li><b>掛斷不丟記憶</b>：shutdown 視窗 90 秒，容得下掛斷後的 LLM 提煉；先秒存逐字稿，再並行萃取「上次對話快照（lastSession）」與長期記憶。</li>
+    <li><b>接得上上次</b>：開場第一句會優先看「上次聊到最後的原話」，從沒聊完的事接回來，而不是念摘要。</li>
+  </ul>
+  </div>
+</section>
+
+<!-- ───────────────────────── 06 VERSIONS ───────────────────────── -->
+<section id="versions">
+  <div class="sec-head"><span class="num">06</span><h2>語音版本演進 · v1 → v10</h2></div>
+  <div class="rv">
+  <p>即時語音是<b>實驗性</b>的，會直接改變體感。所以團隊用一條鐵律：<b>每一版完全隔離</b>——獨立的 <span class="mono">agent_name</span>、獨立的 Cloud Run 服務、獨立的前端路由、獨立的 build 設定。實驗版絕不影響穩定版，回滾就是「不要把流量切到新版」。</p>
+
+  <div class="callout danger">
+    <span class="tag">重要 · 版本紀律</span>
+    <p>所有版本<b>共用同一個 Docker image</b>，靠啟動命令 <span class="mono">python -m agent.main_vN start</span> 區分。要做新實驗，<b>複製</b>成新的 vN，<b>絕不</b>直接改現役版本。<b>沒有 v7</b>（版本從 v6 直接跳到 v8）。README 已過時（只寫到 v4），現役以程式與 git 為準。</p>
+  </div>
+
+  <figure>
+  <svg viewBox="0 0 1060 300" role="img" aria-label="語音版本演進時間軸">
+    <defs><marker id="ah5" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2942"/></marker></defs>
+    <line x1="40" y1="150" x2="1020" y2="150" stroke="var(--line)" stroke-width="2"/>
+    <!-- nodes -->
+    <g font-family="var(--mono)">
+      <circle cx="70" cy="150" r="7" fill="var(--cyan)"/><text x="70" y="128" text-anchor="middle" class="dt-mono" font-size="12">base</text><text x="70" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">1:1 語音</text>
+      <circle cx="175" cy="150" r="7" fill="var(--cyan)"/><text x="175" y="128" text-anchor="middle" class="dt-mono" font-size="12">v2</text><text x="175" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">記憶連貫</text>
+      <circle cx="280" cy="150" r="7" fill="var(--cyan)"/><text x="280" y="128" text-anchor="middle" class="dt-mono" font-size="12">v3</text><text x="280" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">主動發話 3a</text>
+      <circle cx="385" cy="150" r="7" fill="var(--cyan)"/><text x="385" y="128" text-anchor="middle" class="dt-mono" font-size="12">v4</text><text x="385" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">單機群聊</text>
+      <circle cx="490" cy="150" r="7" fill="var(--cyan)"/><text x="490" y="128" text-anchor="middle" class="dt-mono" font-size="12">v5</text><text x="490" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">讓位第三方</text>
+      <circle cx="595" cy="150" r="7" fill="var(--cyan)"/><text x="595" y="128" text-anchor="middle" class="dt-mono" font-size="12">v6</text><text x="595" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">雙腦</text>
+      <circle cx="720" cy="150" r="7" fill="var(--faint)"/><text x="720" y="128" text-anchor="middle" class="dt-mut" font-size="12">v7</text><text x="720" y="180" text-anchor="middle" class="dt-mut" font-size="9">（無）</text>
+      <circle cx="810" cy="150" r="7" fill="var(--cyan)"/><text x="810" y="128" text-anchor="middle" class="dt-mono" font-size="12">v8</text><text x="810" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">發言權控制</text>
+      <circle cx="905" cy="150" r="7" fill="var(--cyan)"/><text x="905" y="128" text-anchor="middle" class="dt-mono" font-size="12">v9</text><text x="905" y="180" text-anchor="middle" class="dt-mut" font-size="9.5">LLM floor-gate</text>
+      <circle cx="1000" cy="150" r="11" fill="var(--amber)"/><text x="1000" y="125" text-anchor="middle" class="dt-mono-a" font-size="13" font-weight="700">v10</text><text x="1000" y="182" text-anchor="middle" class="dt-mono-a" font-size="9.5">現役 · 多人房</text>
+    </g>
+    <rect x="660" y="222" width="380" height="52" rx="9" class="dbox-amber"/>
+    <text x="850" y="244" text-anchor="middle" class="dt" font-size="12.5">v10 多人房三補強</text>
+    <text x="850" y="262" text-anchor="middle" class="dt-mut" font-size="10">回音過濾 · 講者身份名冊 · 3a 收斂</text>
+    <path class="conn" d="M1000,162 C1000,200 920,215 880,220" marker-end="url(#ah5)"/>
+  </svg>
+  <figcaption><b>圖 06</b> — 語音 Agent 演進時間軸（青＝歷史版本，琥珀＝現役 v10）</figcaption>
+  </figure>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>版本</th><th>agent_name</th><th>新增能力</th></tr></thead>
+    <tbody>
+      <tr><td><code>base</code></td><td><code>ailivex-realtime</code></td><td>基礎 1:1 語音</td></tr>
+      <tr><td><code>v2</code></td><td><code>…-v2</code></td><td>記憶連貫 2.0（上次對話快照 + 原話結尾 + 時間感知）</td></tr>
+      <tr><td><code>v3</code></td><td><code>…-v3</code></td><td>擬真主動發話（一吋蛋糕 / 3a 冷場開口）</td></tr>
+      <tr><td><code>v4</code></td><td><code>…-v4</code></td><td>單機群聊（Soniox diarization 多人辨識）</td></tr>
+      <tr><td><code>v5</code></td><td><code>…-v5</code></td><td>發話對象偵測：棒子交第三方時 AI 靜默讓位</td></tr>
+      <tr><td><code>v6</code></td><td><code>…-v6</code></td><td>背景思考層雙腦：判斷腦 Haiku / 開口腦 Sonnet</td></tr>
+      <tr><td><code>v8</code></td><td><code>…-v8</code></td><td>發言權控制：被點名抓麥克風 / 交棒就閉嘴</td></tr>
+      <tr><td><code>v9</code></td><td><code>…-v9</code></td><td>LLM floor-gate：多人發言權判斷改 Haiku</td></tr>
+      <tr><td><code style="color:var(--amber)">v10</code></td><td><code style="color:var(--amber)">…-v10</code></td><td><b>現役</b>。多人房：回音過濾 / 講者身份名冊 / 3a 收斂</td></tr>
+    </tbody>
+  </table>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 07 MULTIPARTY ───────────────────────── -->
+<section id="multiparty">
+  <div class="sec-head"><span class="num">07</span><h2>多人房雙腦機制（v10）</h2></div>
+  <div class="rv">
+  <p>當一個焦點 AI 要在「一群真人」裡像真人一樣參與，挑戰是：什麼時候該開口、什麼時候該閉嘴、誰在跟誰說話。v10 用<b>雙腦分工</b>解決——一顆腦負責「判斷」，一顆腦負責「開口」。天條是：<b>判斷可以丟 LLM，但「要不要說」的開關由程式決定，機制不丟 LLM。</b></p>
+
+  <div class="grid c2">
+    <div class="card"><div class="k">判斷腦 · 背景</div><h4>Claude Haiku 4.5</h4><p>floor-gate 發言權判斷、學習講者名冊、評估內心狀態（stance / activation / want_to_speak）。便宜、快、跑在對話路徑之外。</p></div>
+    <div class="card"><div class="k">開口腦 · 主說</div><h4>Claude Sonnet 4.6</h4><p>真正生成要說出口的話、搶話時的回應。較慢、較貴、品質高。只在判斷腦放行後才動用。</p></div>
+  </div>
+
+  <figure>
+  <svg viewBox="0 0 1060 440" role="img" aria-label="多人房雙腦判斷流程">
+    <defs><marker id="ah6" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker>
+    <marker id="ah6a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker></defs>
+
+    <rect x="40" y="50" width="170" height="60" rx="10" class="dbox"/>
+    <text x="125" y="76" text-anchor="middle" class="dt" font-size="13.5">聽到一句話</text>
+    <text x="125" y="94" text-anchor="middle" class="dt-mut" font-size="10">STT + 講者標記 #N</text>
+
+    <!-- echo filter -->
+    <rect x="270" y="50" width="180" height="60" rx="10" class="dbox-amber"/>
+    <text x="360" y="76" text-anchor="middle" class="dt" font-size="13.5">① 回音過濾</text>
+    <text x="360" y="94" text-anchor="middle" class="dt-mut" font-size="10">是自己的 TTS？→ 丟棄</text>
+
+    <!-- floor gate -->
+    <rect x="510" y="42" width="200" height="76" rx="10" class="dbox"/>
+    <text x="610" y="68" text-anchor="middle" class="dt" font-size="13.5">② floor-gate</text>
+    <text x="610" y="88" text-anchor="middle" class="dt-mut" font-size="10">Haiku 判斷發言權</text>
+    <text x="610" y="105" text-anchor="middle" class="dt-mono" font-size="9.5">{addressed, handoff}</text>
+
+    <!-- decisions -->
+    <rect x="780" y="20" width="240" height="50" rx="9" class="dbox-soft"/>
+    <text x="900" y="42" text-anchor="middle" class="dt-sm" font-size="12">被點名 → 正常回話</text>
+    <text x="900" y="59" text-anchor="middle" class="dt-mut" font-size="9.5">addressed = true</text>
+
+    <rect x="780" y="82" width="240" height="50" rx="9" class="dbox-soft"/>
+    <text x="900" y="104" text-anchor="middle" class="dt-sm" font-size="12">交棒第三方 → 讓位 20s</text>
+    <text x="900" y="121" text-anchor="middle" class="dt-mut" font-size="9.5">handoff = true</text>
+
+    <rect x="780" y="144" width="240" height="50" rx="9" class="dbox-soft"/>
+    <text x="900" y="166" text-anchor="middle" class="dt-sm" font-size="12">彼此聊 → 靜默但記住</text>
+    <text x="900" y="183" text-anchor="middle" class="dt-mut" font-size="9.5">兩者皆 false</text>
+
+    <!-- background brain -->
+    <rect x="270" y="220" width="440" height="90" rx="12" class="dbox-amber"/>
+    <text x="490" y="248" text-anchor="middle" class="dt" font-size="14">③ 判斷腦（每 3 句重跑）</text>
+    <text x="490" y="270" text-anchor="middle" class="dt-mut" font-size="10.5">學講者名冊 #N→名字 · 評估內心狀態</text>
+    <text x="490" y="288" text-anchor="middle" class="dt-mono-a" font-size="10">{stance, activation, want_to_speak}</text>
+
+    <!-- deterministic gate -->
+    <rect x="270" y="350" width="200" height="64" rx="10" class="dbox"/>
+    <text x="370" y="376" text-anchor="middle" class="dt" font-size="13">確定性開關</text>
+    <text x="370" y="394" text-anchor="middle" class="dt-mono" font-size="9.5">should_grab_floor()</text>
+
+    <rect x="540" y="350" width="200" height="64" rx="10" class="dbox-amber"/>
+    <text x="640" y="376" text-anchor="middle" class="dt" font-size="13">開口腦搶話</text>
+    <text x="640" y="394" text-anchor="middle" class="dt-mut" font-size="10">Sonnet 生成 · 可被打斷</text>
+
+    <path class="flow" d="M210,80 L268,80" marker-end="url(#ah6)"/>
+    <path class="flow" d="M450,80 L508,80" marker-end="url(#ah6)"/>
+    <path class="conn" d="M710,62 L778,45" marker-end="url(#ah6)"/>
+    <path class="conn" d="M710,80 L778,105" marker-end="url(#ah6)"/>
+    <path class="conn" d="M710,98 L778,167" marker-end="url(#ah6)"/>
+    <path class="conn" d="M610,118 C610,160 530,190 500,218" marker-end="url(#ah6a)" opacity=".7"/>
+    <path class="flow-a" d="M420,310 L400,348" marker-end="url(#ah6a)"/>
+    <path class="conn" d="M470,382 L538,382" marker-end="url(#ah6)"/>
+  </svg>
+  <figcaption><b>圖 07</b> — v10 多人房：回音過濾 → floor-gate → 判斷腦 → 確定性開關 → 開口腦</figcaption>
+  </figure>
+
+  <h3>v10 三補強</h3>
+  <ul class="list">
+    <li><b>① 回音過濾</b>：角色自己的 TTS 被麥克風收回、被標成「旁邊另一位」時，會與自己近期輸出比對，高度吻合就直接丟——不判斷、不記憶、不算成另一個講者。這根治了「角色對自己讓位、把自己的話記成別人說的」的萬惡之源。</li>
+    <li><b>② 講者身份名冊</b>：逐字稿帶 diarization 標記 <span class="mono">#N</span>；背景判斷腦兼差學名字（有人自我介紹或被點名 → <span class="mono">#2 = 名字</span>），讓角色分得清誰是誰。</li>
+    <li><b>③ 3a 收斂</b>：一對一時維持原樣（陪伴、填冷場）；多人時不再因為「冷場」就開口，改成「只有判斷腦說我真的有話要加（<span class="mono amber">want_to_speak</span>）才講」，避免 AI 變成主持人。</li>
+  </ul>
+  </div>
+</section>
+
+<!-- ───────────────────────── 08 MEMORY SYS ───────────────────────── -->
+<section id="memory-sys">
+  <div class="sec-head"><span class="num">08</span><h2>記憶系統細節</h2></div>
+  <div class="rv">
+  <p>記憶分<b>六種類型</b>、<b>三層分級</b>，組成<b>七區塊</b>的 system prompt。寫入時用向量去重，讀取時用語義排序，並有「過期（stale）」與「主動回想（active recall）」機制。</p>
+
+  <figure>
+  <svg viewBox="0 0 1060 430" role="img" aria-label="記憶系統">
+    <defs><marker id="ah7" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker></defs>
+    <!-- types -->
+    <text x="40" y="40" class="dt-mono-a" font-size="11">六種記憶類型</text>
+    <g>
+      <rect x="40" y="54" width="150" height="46" rx="8" class="dbox-amber"/><text x="115" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">fact 事實</text><text x="115" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">不過期</text>
+      <rect x="205" y="54" width="150" height="46" rx="8" class="dbox-amber"/><text x="280" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">emotion 情緒</text><text x="280" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">90 天 stale</text>
+      <rect x="370" y="54" width="150" height="46" rx="8" class="dbox-amber"/><text x="445" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">preference 偏好</text><text x="445" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">不過期</text>
+      <rect x="535" y="54" width="150" height="46" rx="8" class="dbox-amber"/><text x="610" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">promise 承諾</text><text x="610" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">至 resolved</text>
+      <rect x="700" y="54" width="150" height="46" rx="8" class="dbox-amber"/><text x="775" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">question 懸念</text><text x="775" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">60 天 stale</text>
+      <rect x="865" y="54" width="155" height="46" rx="8" class="dbox-amber"/><text x="942" y="76" text-anchor="middle" class="dt-sm" font-size="12.5">milestone 里程碑</text><text x="942" y="92" text-anchor="middle" class="dt-mut" font-size="9.5">不過期</text>
+    </g>
+
+    <!-- tiers -->
+    <text x="40" y="150" class="dt-mono" font-size="11">三層分級（tier）· 與 status 是兩個不同維度</text>
+    <rect x="40" y="164" width="200" height="54" rx="9" class="dbox"/><text x="140" y="188" text-anchor="middle" class="dt-sm" font-size="13">fresh 新鮮</text><text x="140" y="206" text-anchor="middle" class="dt-mut" font-size="10">被命中 3 次 →</text>
+    <rect x="290" y="164" width="200" height="54" rx="9" class="dbox"/><text x="390" y="188" text-anchor="middle" class="dt-sm" font-size="13">core 核心</text><text x="390" y="206" text-anchor="middle" class="dt-mut" font-size="10">常駐優先注入</text>
+    <rect x="540" y="164" width="200" height="54" rx="9" class="dbox-soft"/><text x="640" y="188" text-anchor="middle" class="dt-mut" font-size="13">archive 封存</text><text x="640" y="206" text-anchor="middle" class="dt-mut" font-size="10">不進 prompt</text>
+    <rect x="790" y="164" width="230" height="54" rx="9" class="dbox-soft"/><text x="905" y="184" text-anchor="middle" class="dt-mut" font-size="11.5">status: active/stale/resolved</text><text x="905" y="204" text-anchor="middle" class="dt-mut" font-size="10">過期 lazy 標記，不注入</text>
+    <path class="flow-a" d="M240,191 L288,191" marker-end="url(#ah7)"/>
+
+    <!-- 7 blocks -->
+    <text x="40" y="268" class="dt-mono-a" font-size="11">注入：七區塊 system prompt</text>
+    <rect x="40" y="282" width="980" height="120" rx="12" fill="none" stroke="var(--amber-dim)" stroke-width="1.3"/>
+    <g class="dt-sm" font-size="12">
+      <text x="70" y="316">【關係】聊過幾次、認識多久</text>
+      <text x="70" y="344">【我對這個人的了解】fact ×4</text>
+      <text x="70" y="372">【他的情緒記憶】emotion ×2</text>
+      <text x="400" y="316">【我記得他的習慣】preference ×3</text>
+      <text x="400" y="344">【我答應過的事】promise ×2</text>
+      <text x="400" y="372">【懸而未決的事】question（&gt;7 天）×2</text>
+      <text x="720" y="316">【重要時刻】milestone ×2</text>
+      <text x="720" y="344" class="dt-mut">＋【上次對話】lastSession 快照</text>
+      <text x="720" y="372" class="dt-mut">＋ 上次原話結尾（最近 6 句）</text>
+    </g>
+  </svg>
+  <figcaption><b>圖 08</b> — 記憶：六類型 × 三層級（與 status 正交）→ 七區塊 prompt 注入</figcaption>
+  </figure>
+
+  <h3>讀寫機制</h3>
+  <ul class="list">
+    <li><b>提煉</b>：對話結束後用 Haiku 從逐字稿提取 1–2 條記憶，判給六種 type 之一，附 importance 1–10。</li>
+    <li><b>去重</b>：寫入前算 Vertex embedding，與既有記憶餘弦相似度 ≥ <span class="mono">0.85</span> 視為重複，跳過。</li>
+    <li><b>晉升</b>：fresh 被帶進對話命中 <span class="mono">3</span> 次 → 自動升 core。</li>
+    <li><b>主動回想</b>：question 類超過 7 天沒解決，會自然帶進「懸而未決」區塊，讓角色主動追問。</li>
+    <li><b>過期</b>：question &gt; 60 天、emotion &gt; 90 天 → 讀取時 lazy 標成 stale，不再注入。</li>
+    <li><b>語義排序</b>：有當前訊息時，fact 區塊用 embedding 相似度排序，挑最相關的注入。</li>
+  </ul>
+  </div>
+</section>
+
+<!-- ───────────────────────── 09 DOC PIPELINE ───────────────────────── -->
+<section id="pipe-doc">
+  <div class="sec-head"><span class="num">09</span><h2>管線 C · 文件生成</h2></div>
+  <div class="rv">
+  <p>當用戶在對話中請角色「寫一份策略書/企劃書」，角色會發出 <span class="mono">[[DOCUMENT]]</span> 標記（語音則呼叫 <span class="mono">write_document</span> 工具）。系統建立一筆 job + document 紀錄，<b>非同步</b>派工給 worker 生成，用戶可在「我的文件」看到狀態並下載。</p>
+
+  <figure>
+  <svg viewBox="0 0 1060 280" role="img" aria-label="文件生成管線">
+    <defs><marker id="ah8" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker></defs>
+    <rect x="30" y="40" width="160" height="64" rx="10" class="dbox-amber"/>
+    <text x="110" y="66" text-anchor="middle" class="dt" font-size="13">角色觸發</text>
+    <text x="110" y="84" text-anchor="middle" class="dt-mut" font-size="9.5">[[DOCUMENT]] / 工具</text>
+
+    <rect x="240" y="40" width="160" height="64" rx="10" class="dbox"/>
+    <text x="320" y="66" text-anchor="middle" class="dt" font-size="13">建 job + document</text>
+    <text x="320" y="84" text-anchor="middle" class="dt-mut" font-size="9.5">status: pending</text>
+
+    <rect x="450" y="40" width="180" height="64" rx="10" class="dbox"/>
+    <text x="540" y="62" text-anchor="middle" class="dt" font-size="13">派工 worker</text>
+    <text x="540" y="80" text-anchor="middle" class="dt-mut" font-size="9.5">+ x-worker-secret</text>
+    <text x="540" y="96" text-anchor="middle" class="dt-mut" font-size="9">主：/api/doc-process</text>
+
+    <rect x="680" y="28" width="170" height="88" rx="10" class="dbox-amber"/>
+    <text x="765" y="52" text-anchor="middle" class="dt" font-size="13">生成內容</text>
+    <text x="765" y="72" text-anchor="middle" class="dt-mut" font-size="9.5">Claude Sonnet 寫 markdown</text>
+    <text x="765" y="89" text-anchor="middle" class="dt-mut" font-size="9.5">marked → HTML</text>
+    <text x="765" y="106" text-anchor="middle" class="dt-mono" font-size="9">writing→rendering</text>
+
+    <rect x="900" y="40" width="140" height="64" rx="10" class="dbox-amber"/>
+    <text x="970" y="62" text-anchor="middle" class="dt" font-size="13">上傳 GCS</text>
+    <text x="970" y="80" text-anchor="middle" class="dt-mut" font-size="9.5">htmlUrl</text>
+    <text x="970" y="96" text-anchor="middle" class="dt-mono" font-size="9">status: done</text>
+
+    <!-- export -->
+    <rect x="450" y="180" width="400" height="60" rx="10" class="dbox-soft"/>
+    <text x="650" y="206" text-anchor="middle" class="dt-sm" font-size="13">下載：PDF（puppeteer）· PPT（pptxgenjs）</text>
+    <text x="650" y="225" text-anchor="middle" class="dt-mut" font-size="10">/api/documents/[id]/pdf · /ppt</text>
+
+    <path class="flow" d="M190,72 L238,72" marker-end="url(#ah8)"/>
+    <path class="flow" d="M400,72 L448,72" marker-end="url(#ah8)"/>
+    <path class="flow" d="M630,72 L678,72" marker-end="url(#ah8)"/>
+    <path class="flow" d="M850,72 L898,72" marker-end="url(#ah8)"/>
+    <path class="conn" d="M900,90 C760,150 720,165 690,178" marker-end="url(#ah8)" opacity=".6"/>
+  </svg>
+  <figcaption><b>圖 09</b> — 文件生成：觸發 → 建紀錄 → 派工 → 寫 markdown/HTML → 上 GCS → 可下載 PDF/PPT</figcaption>
+  </figure>
+
+  <div class="callout">
+    <span class="tag">兩條 worker 路徑</span>
+    <p><b>主路徑</b>＝ Vercel 的 <span class="mono">/api/doc-process</span> 路由（走 bridge 吃到飽，生成失敗回非重試狀態避免無限重排）。Cloud Run 的 <span class="mono">doc-worker</span>（Express，<span class="mono">/process</span>）為次要/舊路徑；原本的 <b>Cloud Tasks 派工鏈已廢棄</b>（<span class="mono">enqueue.ts</span> 在 env 未設時 no-op）。語音 Agent 端則用背景 thread 直接 POST 到 <span class="mono">DOC_WORKER_URL</span>。</p>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 10 DATA ───────────────────────── -->
+<section id="data">
+  <div class="sec-head"><span class="num">10</span><h2>資料模型 · Firestore</h2></div>
+  <div class="rv">
+  <p>Firestore 是單一真相源，定義在 <span class="mono">src/lib/collections.ts</span>。核心不變量：<b>memories / conversations / documents 一律嚴格綁 (userId, characterId)</b>，多數對應文件用確定性 docId <span class="mono">${userId}_${characterId}</span>。</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Collection</th><th>用途</th><th>關鍵欄位</th></tr></thead>
+    <tbody>
+      <tr><td><code>users</code></td><td>帳號</td><td>username, passwordHash(scrypt), displayName, role</td></tr>
+      <tr><td><code>characters</code></td><td>AI 角色</td><td>soul → soulCore, avatarUrl, voiceIdMinimax, voiceSettings, convSettings, aliases</td></tr>
+      <tr><td><code>access</code></td><td>權限指派（allowlist）</td><td>docId = <code>userId_characterId</code>（存在即有權）</td></tr>
+      <tr><td><code>conversations</code></td><td>文字對話歷史</td><td>messages[], summary, messageCount；Agent 另寫 lastSession</td></tr>
+      <tr><td><code>memories</code></td><td>記憶</td><td>content, embedding, importance, <b>tier</b>, <b>type</b>, <b>status</b>, hitCount</td></tr>
+      <tr><td><code>relationships</code></td><td>關係追蹤</td><td>conversationCount, first/lastConversationAt</td></tr>
+      <tr><td><code>documents</code></td><td>生成的文件</td><td>title, mdContent, htmlUrl, status</td></tr>
+      <tr><td><code>jobs</code></td><td>文件生成任務</td><td>brief, documentId, status</td></tr>
+      <tr><td><code>config/globalPrompts</code></td><td>全域 Prompt 結點</td><td>antiSycophancy, timeRule, abilities, voiceRules</td></tr>
+      <tr><td><code>zhu_vitals_cost</code></td><td>LLM 用量成本紀錄</td><td>model, tokens, cost_usd_est, route（90 天 TTL）</td></tr>
+    </tbody>
+  </table>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 11 AUTH ───────────────────────── -->
+<section id="auth">
+  <div class="sec-head"><span class="num">11</span><h2>認證與權限</h2></div>
+  <div class="rv">
+  <div class="grid c3">
+    <div class="card"><div class="k">密碼</div><h4>scrypt</h4><p>Node 內建 scrypt，格式 <span class="mono">salt:hash</span>（hex），比對用 timing-safe。</p></div>
+    <div class="card"><div class="k">Session</div><h4>HMAC Cookie</h4><p>httpOnly <span class="mono">ailivex_session</span>，Web Crypto 簽章（Edge + Node 都能跑），30 天，無狀態。</p></div>
+    <div class="card"><div class="k">把關</div><h4>middleware + hasAccess</h4><p>middleware 擋未登入、限制 /admin；後端每條路徑再查 access 指派，不靠前端隱藏。</p></div>
+  </div>
+  <p>公開路徑只有 <span class="mono">/login</span>、<span class="mono">/api/auth/login</span>、<span class="mono">/api/doc-process</span>（後者靠 <span class="mono">x-worker-secret</span> 保護）。<span class="mono">/admin*</span> 與 <span class="mono">/api/admin*</span> 限管理員。</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── 12 ROUTING ───────────────────────── -->
+<section id="routing">
+  <div class="sec-head"><span class="num">12</span><h2>LLM 路由 · bridge vs 直連</h2></div>
+  <div class="rv">
+  <p>系統的 Claude 呼叫走<b>兩條路</b>，目的是省錢與穩定的取捨。<span class="mono">zhu-bridge</span> 把 API 計費轉成 Claude Max 月費「吃到飽」，但<b>不支援串流、也不支援原生 tool_use</b>。所以：</p>
+  <figure>
+  <svg viewBox="0 0 1040 260" role="img" aria-label="LLM 路由">
+    <defs><marker id="ah9" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#41d6c3"/></marker>
+    <marker id="ah9a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f3b14e"/></marker></defs>
+    <rect x="60" y="40" width="260" height="56" rx="10" class="dbox-amber"/>
+    <text x="190" y="64" text-anchor="middle" class="dt" font-size="13">文字對話 · 文件 · 鑄魂 · 提煉</text>
+    <text x="190" y="82" text-anchor="middle" class="dt-mut" font-size="10">+ 語音「對話路徑外」的判斷/3a/收尾</text>
+
+    <rect x="60" y="150" width="260" height="56" rx="10" class="dbox"/>
+    <text x="190" y="174" text-anchor="middle" class="dt" font-size="13">語音「對話路徑」主說話</text>
+    <text x="190" y="192" text-anchor="middle" class="dt-mut" font-size="10">需要串流 → 不能走 bridge</text>
+
+    <rect x="560" y="40" width="200" height="56" rx="10" class="dbox-amber"/>
+    <text x="660" y="64" text-anchor="middle" class="dt" font-size="13">zhu-bridge</text>
+    <text x="660" y="82" text-anchor="middle" class="dt-mut" font-size="10">Max 月費 · 優先</text>
+
+    <rect x="560" y="150" width="200" height="56" rx="10" class="dbox"/>
+    <text x="660" y="174" text-anchor="middle" class="dt" font-size="13">直連付費 key</text>
+    <text x="660" y="192" text-anchor="middle" class="dt-mut" font-size="10">ANTHROPIC_API_KEY</text>
+
+    <rect x="820" y="95" width="170" height="56" rx="10" class="dbox-soft"/>
+    <text x="905" y="119" text-anchor="middle" class="dt-sm" font-size="13">Anthropic Claude</text>
+    <text x="905" y="137" text-anchor="middle" class="dt-mut" font-size="10">Sonnet 4.6 / Haiku 4.5</text>
+
+    <path class="flow-a" d="M320,68 L558,68" marker-end="url(#ah9a)"/>
+    <path class="flow" d="M320,178 L558,178" marker-end="url(#ah9)"/>
+    <path class="conn" d="M760,68 C800,68 810,100 820,118" marker-end="url(#ah9a)"/>
+    <path class="conn" d="M760,178 C800,178 810,150 820,132" marker-end="url(#ah9)"/>
+  </svg>
+  <figcaption><b>圖 12</b> — 路由分流：文字 + 語音路徑外＝bridge 優先；語音主說話＝直連</figcaption>
+  </figure>
+  <div class="callout">
+    <span class="tag">注意</span>
+    <p>切換靠 <span class="mono">BRIDGE_ENABLED</span> + <span class="mono">BRIDGE_URL</span> + <span class="mono">BRIDGE_SECRET</span>。若三者齊備就走 bridge；<b>bridge 執行期失敗一律 throw、不退回 SDK</b>（避免雙重燒錢）。設定不全時才退回直連 SDK。</p>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 13 DEPLOY ───────────────────────── -->
+<section id="deploy">
+  <div class="sec-head"><span class="num">13</span><h2>部署架構</h2></div>
+  <div class="rv">
+  <div class="grid c3">
+    <div class="card"><div class="k">前端</div><h4>Vercel</h4><p><span class="mono">npx vercel --prod --yes</span>。Next.js 16，Node runtime。</p></div>
+    <div class="card"><div class="k">語音 Agent</div><h4>Cloud Run · asia-east1</h4><p>Cloud Build：<span class="mono">gcloud builds submit --config=agent/cloudbuild-vN.yaml</span>。一版一服務，共用同一 image。</p></div>
+    <div class="card"><div class="k">密鑰</div><h4>Secret Manager</h4><p>runtime 注入，<b>絕不入庫</b>。<span class="mono">.env*</span> 一律 gitignore。</p></div>
+  </div>
+  <ul class="list">
+    <li><b>映像檔</b>：<span class="mono">asia-east1-docker.pkg.dev/$PROJECT/ailivex/ailivex-realtime-agent</span>，所有語音版本共用。</li>
+    <li><b>Cloud Run 規格（v10）</b>：min 1 / max 3 instances、2Gi 記憶體、1 vCPU、關閉 CPU throttling、開 CPU boost；部署後自動清掉舊 revision。</li>
+    <li><b>LiveKit 套件鎖死 <span class="mono">==1.5.1</span></b>：版本不一致會 <span class="mono">ChunkedStream</span> crash，不可隨意升。</li>
+  </ul>
+  </div>
+</section>
+
+<!-- ───────────────────────── 14 SERVICES ★ ───────────────────────── -->
+<section id="services">
+  <div class="sec-head"><span class="num">14</span><h2>第三方服務清單 ★</h2></div>
+  <div class="rv">
+  <p>系統依賴的所有外部服務如下。標籤：<span class="mono" style="color:var(--cyan)">外部</span>＝獨立 SaaS／API；<span class="mono amber">GCP</span>＝Google Cloud 旗下；<span class="mono" style="color:var(--violet);background:rgba(139,156,240,.08);border-color:#3a3f6b">內部</span>＝自架代理。</p>
+
+  <div class="svc">
+    <div class="card"><span class="badge ext">外部</span><div class="k">託管</div><h4>Vercel</h4><p>Next.js 前端 + 所有 <span class="mono">/api/*</span> 後端路由的 Serverless 託管。</p><div class="use">→ 前端 / API</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">即時音訊</div><h4>LiveKit Cloud</h4><p>WebRTC 即時語音房間 + LiveKit Agents 框架（Python，鎖 1.5.1）。靠 RoomAgentDispatch 派 Agent。</p><div class="use">→ 語音通話</div></div>
+
+    <div class="card"><span class="badge ext">外部</span><div class="k">語音辨識 STT</div><h4>Soniox</h4><p>串流語音轉文字，模型 <span class="mono">stt-rt-v4</span>，中英混合 + 多人 diarization（不需聲紋建檔）。</p><div class="use">→ 語音「聽」</div></div>
+
+    <div class="card"><span class="badge ext">外部</span><div class="k">語言模型 LLM</div><h4>Anthropic Claude</h4><p>生成/判斷大腦。<span class="mono">claude-sonnet-4-6</span>（生成/文件/鑄魂）＋ <span class="mono">claude-haiku-4-5</span>（判斷/提煉）。</p><div class="use">→ 語音「想」/ 文字 / 文件</div></div>
+
+    <div class="card"><span class="badge ext">外部</span><div class="k">語音合成 TTS</div><h4>MiniMax</h4><p>文字轉語音，模型 <span class="mono">speech-2.6-hd</span>，WebSocket 真串流 + REST 備援；繁→簡硬轉確保發音穩定。</p><div class="use">→ 語音「說」</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">向量嵌入</div><h4>Vertex AI</h4><p>文字嵌入 <span class="mono">text-embedding-004</span>（768 維），供記憶語義搜尋與去重。</p><div class="use">→ 記憶 embedding</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">資料庫</div><h4>Firestore</h4><p>系統單一真相源（用戶、角色、記憶、對話、文件、關係…）。</p><div class="use">→ 全系統資料</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">物件儲存</div><h4>Cloud Storage</h4><p>存角色頭像與生成文件的 HTML（public URL）。</p><div class="use">→ 檔案 / 文件</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">運算</div><h4>Cloud Run</h4><p>跑 Python 語音 Agent（asia-east1）與 doc-worker（us-central1），全託管容器。</p><div class="use">→ 語音 / 文件運算</div></div>
+
+    <div class="card"><span class="badge gcp">GCP</span><div class="k">CI/CD + 密鑰</div><h4>Cloud Build · Secret Manager · Artifact Registry</h4><p>建置部署語音 Agent；密鑰 runtime 注入；存放 Docker 映像。</p><div class="use">→ 部署 / 機敏</div></div>
+
+    <div class="card"><span class="badge int">內部</span><div class="k">LLM 代理</div><h4>zhu-bridge</h4><p>自架代理，把 Claude API 計費轉成 Max 月費「吃到飽」。文字與語音路徑外的呼叫優先走它（不支援串流/tool_use）。</p><div class="use">→ 省成本路由</div></div>
+  </div>
+
+  <div class="callout">
+    <span class="tag">一句話總結</span>
+    <p>語音三件套 = <b>Soniox（聽）+ Claude（想）+ MiniMax（說）</b>，由 <b>LiveKit</b> 串起即時音訊；資料與運算全在 <b>Google Cloud</b>；前端在 <b>Vercel</b>；成本最佳化靠自架的 <b>zhu-bridge</b>。</p>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 15 LIBS ───────────────────────── -->
+<section id="libs">
+  <div class="sec-head"><span class="num">15</span><h2>重要函式庫與模型</h2></div>
+  <div class="rv">
+  <p>非「服務」但同樣關鍵的依賴（隨程式碼一起部署）：</p>
+  <div class="stack">
+    <span class="p">VAD <b>Silero</b>（端上模型，語音活動偵測）</span>
+    <span class="p">繁簡 <b>OpenCC</b>（t2s，TTS 前硬轉）</span>
+    <span class="p">Markdown <b>marked</b>（文件轉 HTML）</span>
+    <span class="p">PDF <b>puppeteer-core + @sparticuz/chromium</b></span>
+    <span class="p">PPT <b>pptxgenjs</b></span>
+    <span class="p">框架 <b>Next.js 16 · React 19</b></span>
+    <span class="p">SDK <b>firebase-admin · livekit-server-sdk · @anthropic-ai/sdk</b></span>
+  </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 16 ENV ───────────────────────── -->
+<section id="env">
+  <div class="sec-head"><span class="num">16</span><h2>環境變數（附錄）</h2></div>
+  <div class="rv">
+  <p>全部走 GCP Secret Manager，部署時注入，<b>絕不寫進版本庫</b>。</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>類別</th><th>變數</th></tr></thead>
+    <tbody>
+      <tr><td>Firebase / GCP</td><td><code>FIREBASE_SERVICE_ACCOUNT_JSON</code> · <code>FIREBASE_STORAGE_BUCKET</code> · <code>FIREBASE_PROJECT_ID</code></td></tr>
+      <tr><td>LiveKit</td><td><code>LIVEKIT_URL</code> · <code>LIVEKIT_API_KEY</code> · <code>LIVEKIT_API_SECRET</code></td></tr>
+      <tr><td>AI 模型</td><td><code>SONIOX_API_KEY</code> · <code>ANTHROPIC_API_KEY</code> · <code>MINIMAX_API_KEY</code> · <code>MINIMAX_GROUP_ID</code> · <code>MINIMAX_DEFAULT_VOICE_ID</code></td></tr>
+      <tr><td>Bridge</td><td><code>BRIDGE_ENABLED</code> · <code>BRIDGE_URL</code> · <code>BRIDGE_SECRET</code></td></tr>
+      <tr><td>其他</td><td><code>SESSION_SECRET</code> · <code>WORKER_SECRET</code> · <code>PROJECT_NAMESPACE</code> · <code>CLOUD_RUN_DOC_WORKER_URL</code> · <code>DOC_WORKER_URL</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  </div>
+</section>
+
+<footer>
+  <p>ailiveX · 系統架構與運作全解 &nbsp;·&nbsp; 文件產生於 <b>2026-06-16</b> &nbsp;·&nbsp; 現役語音版本 <b>v10</b> &nbsp;·&nbsp; 以程式與 git 為準</p>
+</footer>
+
+</main>
+</div>
+
+<script>
+  // active TOC + reveal on scroll
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+    var map = {};
+    links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+    var secs = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          var id = e.target.id;
+          links.forEach(function(a){ a.classList.remove('active'); });
+          if(map[id]) map[id].classList.add('active');
+        }
+      });
+    }, {rootMargin:'-45% 0px -50% 0px'});
+    secs.forEach(function(s){ io.observe(s); });
+
+    var rio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){ e.target.classList.add('in'); rio.unobserve(e.target); }
+      });
+    }, {rootMargin:'0px 0px -8% 0px', threshold:0.04});
+    document.querySelectorAll('.rv').forEach(function(el){ rio.observe(el); });
+  })();
+</script>
+</body>
+</html>

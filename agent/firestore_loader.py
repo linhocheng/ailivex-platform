@@ -203,6 +203,28 @@ def write_memory(user_id: str, character_id: str, content: str, source: str = "v
     return ref.id
 
 
+def _speaker_label(m: dict, assistant_label: str, roster: dict | None) -> str:
+    """提煉記憶/快照時的講者標籤（v11 多人房用）。
+
+    roster is None（v10 / text 舊呼叫）→ user 一律「用戶」，與舊行為 byte-for-byte 一致。
+    roster is a dict（v11，可空）→ 主說話者=「用戶」、訪客 #N=名冊名 or「訪客N」，
+    讓提煉寫得出歸屬正確的記憶（如「用戶的朋友張立是做設計的」）。記憶全程仍綁房主
+    (userId, characterId)——這只是標籤，不分桶、不跨用戶寫。
+    """
+    if m.get("role") != "user":
+        return assistant_label
+    if roster is None:
+        return "用戶"
+    sp = m.get("speaker") or "主"
+    if sp == "主":
+        return "用戶"
+    if roster.get(sp):
+        return roster[sp]
+    if str(sp).startswith("#"):
+        return f"訪客{str(sp)[1:]}"
+    return "用戶"
+
+
 def extract_and_save_memories(
     user_id: str,
     character_id: str,
@@ -211,16 +233,19 @@ def extract_and_save_memories(
     bridge_url: str = "",
     bridge_secret: str = "",
     api_key: str = "",
+    roster: dict | None = None,
 ) -> None:
     """
     session 結束後被動提煉記憶。走 bridge（吃到飽）優先，fallback 直連 key。
     同步執行（session 已結束，用戶不在線，不影響體驗）。
+
+    roster（v11）：帶講者身份去提煉，可寫出「用戶的朋友X…」這類歸屬記憶；None=舊行為（全標「用戶」）。
     """
     if not transcript or len(transcript) < 2:
         return
 
     conversation = "\n".join(
-        f"{'用戶' if m.get('role') == 'user' else char_name}：{m.get('content', '')}"
+        f"{_speaker_label(m, char_name, roster)}：{m.get('content', '')}"
         for m in transcript[-20:]
     )
 
@@ -317,6 +342,7 @@ def extract_session_summary(
     bridge_url: str = "",
     bridge_secret: str = "",
     api_key: str = "",
+    roster: dict | None = None,
 ) -> dict | None:
     """從本次通話 transcript 萃取 lastSession 快照（給下次撥號開場接話用）。
     走 bridge（吃 Max）優先。對話太短或解析失敗回 None（caller 靜默跳過）。
@@ -325,7 +351,7 @@ def extract_session_summary(
         return None
     text_parts = []
     for m in transcript:
-        role = "用戶" if m.get("role") == "user" else "角色"
+        role = _speaker_label(m, "角色", roster)
         content = (m.get("content") or "")[:300]
         line = f"{role}：{content}"
         if len(line) > 5:

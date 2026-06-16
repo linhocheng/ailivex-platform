@@ -1,0 +1,57 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '-f'
+      - 'agent/Dockerfile'
+      - '-t'
+      - 'asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/ailivex-realtime-agent:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - 'asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/ailivex-realtime-agent:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ailivex-realtime-agent-v11
+      - '--image=asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/ailivex-realtime-agent:$COMMIT_SHA'
+      - '--region=asia-east1'
+      - '--platform=managed'
+      - '--no-allow-unauthenticated'
+      - '--command=python'
+      - '--args=-m,agent.main_v11,start'
+      - '--set-secrets=LIVEKIT_URL=LIVEKIT_URL:latest,LIVEKIT_API_KEY=LIVEKIT_API_KEY:latest,LIVEKIT_API_SECRET=LIVEKIT_API_SECRET:latest,SONIOX_API_KEY=SONIOX_API_KEY:latest,MINIMAX_API_KEY=MINIMAX_API_KEY:latest,MINIMAX_GROUP_ID=MINIMAX_GROUP_ID:latest,FIREBASE_SERVICE_ACCOUNT_JSON=FIREBASE_SERVICE_ACCOUNT_JSON:latest,BRIDGE_URL=BRIDGE_URL:latest,BRIDGE_SECRET=BRIDGE_SECRET:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,WORKER_SECRET=WORKER_SECRET:latest'
+      # VP_* = 聲紋子系統旋鈕（REVIEW B：放 env，不是 secret）。VP_ENABLED=0 → kill-switch off，等同 v10。
+      # 閾值先給 plan 預設，正式靠 live call 調（改 env 即可，不必改 code redeploy）。
+      - '--set-env-vars=PROJECT_NAMESPACE=ailivex,MINIMAX_DEFAULT_VOICE_ID=Wise_Woman,DOC_WORKER_URL=https://ailivex-doc-worker-6ybo3vltfq-de.a.run.app,VP_ENABLED=0,VP_MATCH=0.60,VP_NEW=0.45,VP_MERGE=0.72,VP_MIN_SEG=0.6,VP_MAX_CLUSTERS=6'
+      - '--min-instances=1'
+      - '--max-instances=3'
+      # REVIEW A/B：torch + speaker model 吃記憶體/算力 → 2Gi/1cpu 拉到 4Gi/2cpu
+      - '--memory=4Gi'
+      - '--cpu=2'
+      - '--no-cpu-throttling'
+      - '--cpu-boost'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        OLD_REVISIONS=$(gcloud run revisions list \
+          --service=ailivex-realtime-agent-v11 \
+          --region=asia-east1 \
+          --format="value(name)" \
+          --sort-by="~metadata.creationTimestamp" \
+          | tail -n +2)
+        if [ -n "$$OLD_REVISIONS" ]; then
+          echo "$$OLD_REVISIONS" | xargs -I{} gcloud run revisions delete {} \
+            --region=asia-east1 --quiet
+        fi
+
+images:
+  - 'asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/ailivex-realtime-agent:$COMMIT_SHA'
