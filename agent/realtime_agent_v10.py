@@ -546,7 +546,8 @@ async def entrypoint(ctx: JobContext):
                 _seen_speakers.add(sid)
             if (len(_seen_speakers) >= 2 or "（旁邊另一位" in txt) and not ctx_flags["multi_person"]:
                 ctx_flags["multi_person"] = True
-                logger.info(f"v10 偵測到多人情境 → 啟用 LLM floor-gate (speakers={_seen_speakers})")
+                _cancel_timer()   # 多人情境下 3a 不再跑，立刻停掉現有 timer
+                logger.info(f"v10 偵測到多人情境 → 啟用 LLM floor-gate，停止 3a (speakers={_seen_speakers})")
             logger.info(f"v10 STT speaker_id={sid!r} → {txt[:60]!r}")
 
     async def _finalize(reason: str = "") -> None:
@@ -654,12 +655,10 @@ async def entrypoint(ctx: JobContext):
         if time.time() - _itj["last_say"] < MIN_GAP:
             _arm(MIN_GAP)
             return
-        # ② 多人收斂：群裡 3a 不因「冷場」就開口（那會變主持人）。
-        #    只有判斷腦說「我真的有話想加」(want_to_speak) 才放行；否則安靜聽。一對一維持原樣。
-        if ctx_flags.get("multi_person") and not _inner.get("want_to_speak"):
-            logger.info("3a: 多人且無貨（want_to_speak=False）→ 安靜聽")
-            _arm(min(_itj["interval"] * BACKOFF, MAX_INTERVAL))
-            return
+        # ② 多人：3a 完全不跑。冷場填補不是群聊裡 AI 的責任；兩個 AI 同時有 3a 會互相打架。
+        #    多人時 AI 只靠 gate（被點名才回）+ inner（有貨才主動）。
+        if ctx_flags.get("multi_person"):
+            return  # 不重排，3a 迴圈在多人情境徹底停止
         quiet_for = int(time.time() - _itj["quiet_since"])
         n = _itj["nudges"]
         logger.info(f"3a: 評估主動開口 (第{n+1}次, 已靜默{quiet_for}s, interval={_itj['interval']:.0f}s, im={im_threshold})")
@@ -722,7 +721,7 @@ async def entrypoint(ctx: JobContext):
         elif new == "listening":
             if _itj["nudges"] == 0:
                 _itj["quiet_since"] = time.time()
-            if _itj["timer"] is None:
+            if _itj["timer"] is None and not ctx_flags.get("multi_person"):
                 _arm(_itj["interval"])
 
     logger.info(f"3a active: baseline={baseline_secs:.1f}s ×{BACKOFF} cap={MAX_INTERVAL:.0f}s im={im_threshold}")
