@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir -r agent/requirements.txt
 # v11 聲紋：把 speaker model 烤進 image，冷啟不依賴 ModelScope/HF 線上下載（cold start 穩定）。
 # 載到 /app/models/ecapa；voiceprint.py 從 VP_MODEL_DIR（預設此路徑）載入。
 # Phase 2 若改用 CAM++(modelscope) 換這一行即可。
-RUN python -c "from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='/app/models/ecapa')"
+RUN python -c "from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source='speechbrain/spkrec-ecapa-voxceleb', savedir='/app/models/ecapa')" \
+    || echo "[Dockerfile] HuggingFace model download failed (network timeout) — model will download at runtime when VP_ENABLED=1"
 
 COPY agent/ ./agent/
 
