@@ -126,6 +126,27 @@ function htmlToText(html: string): { title: string; text: string } {
 }
 
 /**
+ * 抓單一指定 URL 的乾淨正文（即時語音「讀網址」用，SSRF 防護沿用 fetchGuarded）。
+ * 與 readUrlsForContext 的差別：不從文字抽 URL、給更大的字數上限（供摘要），結構化回傳成敗。
+ */
+export async function fetchUrlClean(
+  rawUrl: string,
+  maxChars = 8000,
+): Promise<{ ok: true; title: string; text: string; finalUrl: string } | { ok: false; error: string }> {
+  let u: URL;
+  try { u = new URL(rawUrl.trim()); } catch { return { ok: false, error: '網址格式無效' }; }
+  try {
+    const r = await fetchGuarded(u.toString());
+    if (!r) return { ok: false, error: '讀不到或不是網頁' };
+    const { title, text } = htmlToText(r.html);
+    if (!text) return { ok: false, error: '抓到頁面但沒有可讀正文' };
+    return { ok: true, title, text: text.slice(0, maxChars), finalUrl: r.finalUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : '無法讀取' };
+  }
+}
+
+/**
  * 偵測 message 裡的 URL，抓取並抽正文，回傳要附到角色 context 的區塊。
  * 沒有 URL → 回空字串。抓不到 → 回「讀取失敗」讓角色能坦白說打不開。
  */

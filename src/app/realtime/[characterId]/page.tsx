@@ -109,8 +109,12 @@ export default function RealtimeCallPage() {
   const [diagLogs, setDiagLogs] = useState<DiagLog[]>([]);
   const [micMuted, setMicMuted] = useState(false);
   const [agentPhase, setAgentPhase] = useState<'idle'|'thinking'|'speaking'>('idle');
+  const [sourceUrl, setSourceUrl] = useState('');     // 同步框：分享給角色的網址
+  const [sourceBusy, setSourceBusy] = useState(false); // 角色正在讀（思考動畫）
+  const [sourceMsg, setSourceMsg] = useState('');
 
   const identityRef = useRef('');
+  const agentIdentityRef = useRef('');   // 角色 participant identity，performRpc 目的地
   const roomRef = useRef<Room | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const callStartRef = useRef<number>(0);
@@ -287,6 +291,7 @@ export default function RealtimeCallPage() {
         })
         .on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
           log('info', `agent joined: ${p.identity}`);
+          agentIdentityRef.current = p.identity;
           setHealth(h => ({ ...h, agent: 'present' }));
           setState('in-call'); setFlowForState('in-call');
         })
@@ -324,6 +329,8 @@ export default function RealtimeCallPage() {
       log('info', 'mic published');
 
       if (room.remoteParticipants.size > 0) {
+        const first = room.remoteParticipants.values().next().value;
+        if (first) agentIdentityRef.current = first.identity;
         setHealth(h => ({ ...h, agent: 'present' }));
         setState('in-call'); setFlowForState('in-call');
       }
@@ -359,6 +366,32 @@ export default function RealtimeCallPage() {
     await room.localParticipant.setMicrophoneEnabled(!next);
     setMicMuted(next);
   }, [micMuted]);
+
+  // 同步框：把網址分享給角色 → 角色暫停→讀→帶內容接話。RPC 回來才收掉思考動畫。
+  const shareSource = useCallback(async () => {
+    const room = roomRef.current;
+    const dest = agentIdentityRef.current;
+    const url = sourceUrl.trim();
+    if (!room || !dest || !url || sourceBusy) return;
+    setSourceMsg(''); setSourceBusy(true);
+    try {
+      const res = await room.localParticipant.performRpc({
+        destinationIdentity: dest,
+        method: 'share_source',
+        payload: JSON.stringify({ url }),
+        responseTimeout: 30000,
+      });
+      let ok = true, parsed: { ok?: boolean; error?: string } = {};
+      try { parsed = JSON.parse(res); ok = parsed.ok !== false; } catch { /* 非 JSON 當成功 */ }
+      if (ok) { setSourceUrl(''); setSourceMsg(''); }
+      else setSourceMsg(parsed.error || '角色讀不了這個連結');
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      setSourceMsg(m.includes('UNSUPPORTED') || m.includes('not found') ? '這個角色版本還不支援讀網址' : '分享失敗，再試一次');
+    } finally {
+      setSourceBusy(false);
+    }
+  }, [sourceUrl, sourceBusy]);
 
   // unmount cleanup
   useEffect(() => () => {
@@ -489,6 +522,39 @@ export default function RealtimeCallPage() {
           </div>
         ))}
       </div>
+
+      {/* 同步框：通話中把網址分享給角色 */}
+      {inCall && (
+        <div style={{ position:'absolute', bottom:96, left:0, right:0, zIndex:4,
+          display:'flex', flexDirection:'column', alignItems:'center', gap:7, padding:'0 20px' }}>
+          {sourceBusy ? (
+            <div style={{ display:'inline-flex', alignItems:'center', gap:10, fontSize:13.5, color:'rgba(255,255,255,0.85)',
+              background:'rgba(10,10,10,0.6)', border:'1px solid rgba(160,110,84,0.4)', padding:'10px 18px', borderRadius:24, backdropFilter:'blur(10px)' }}>
+              <span style={{ display:'flex', gap:4 }}>
+                {[0,1,2].map(i => <span key={i} style={{ width:6, height:6, borderRadius:'50%', background:'#c2954e', animation:`ax-eq 1s ease-in-out ${i*0.18}s infinite` }} />)}
+              </span>
+              {characterName || '角色'}正在讀你給的連結…
+            </div>
+          ) : (
+            <div style={{ display:'flex', alignItems:'center', gap:8, width:'100%', maxWidth:440,
+              background:'rgba(10,10,10,0.55)', border:'1px solid rgba(255,255,255,0.14)', borderRadius:24,
+              padding:'6px 6px 6px 16px', backdropFilter:'blur(10px)' }}>
+              <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') shareSource(); }}
+                placeholder="貼一個網址，讓他現在讀…" inputMode="url"
+                style={{ flex:1, minWidth:0, background:'transparent', border:'none', outline:'none',
+                  color:'#fbfaf6', fontSize:14 }} />
+              <button onClick={shareSource} disabled={!sourceUrl.trim()}
+                style={{ flexShrink:0, height:34, padding:'0 16px', borderRadius:20, border:'none', fontSize:13.5, fontWeight:500,
+                  background: sourceUrl.trim() ? '#a06e54' : 'rgba(255,255,255,0.08)', color:'#fff',
+                  cursor: sourceUrl.trim() ? 'pointer' : 'default', opacity: sourceUrl.trim() ? 1 : 0.5 }}>
+                分享
+              </button>
+            </div>
+          )}
+          {sourceMsg && <div style={{ fontSize:12, color:'#e0a075' }}>{sourceMsg}</div>}
+        </div>
+      )}
 
       {/* Controls */}
       <div style={{ position:'absolute', bottom:32, left:0, right:0, zIndex:3,
