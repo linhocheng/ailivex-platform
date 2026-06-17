@@ -60,7 +60,36 @@ export interface CharacterDoc {
 export interface AccessDoc {
   userId: string;
   characterId: string;
+  voiceVersion?: string;   // 指派的語音 agent 版本（VOICE_VERSIONS.id）；缺省 = 全域預設
   grantedAt: FirebaseFirestore.Timestamp | Date;
+}
+
+/**
+ * 語音 agent 版本登錄表 —— 單一真相源。
+ * token route 據此派 RoomAgentDispatch.agentName；admin 後台據此列版本下拉。
+ * 用戶端只進「語音通話」一個入口，看不到版本——派哪版由後台指派決定（缺省走 DEFAULT_VOICE_VERSION）。
+ * 新增版本時：在 token route 加對應 agent 服務後，這裡補一列即可（不必再改 token route 的決策邏輯）。
+ */
+export const VOICE_VERSIONS = [
+  { id: 'base', label: '基礎', agentName: 'ailivex-realtime' },
+  { id: 'v2', label: '2.0', agentName: 'ailivex-realtime-v2' },
+  { id: 'v3', label: '3.0', agentName: 'ailivex-realtime-v3' },
+  { id: 'v4', label: '4.0', agentName: 'ailivex-realtime-v4' },
+  { id: 'v5', label: '5.0', agentName: 'ailivex-realtime-v5' },
+  { id: 'v6', label: '6.0', agentName: 'ailivex-realtime-v6' },
+  { id: 'v8', label: '8.0', agentName: 'ailivex-realtime-v8' },
+  { id: 'v9', label: '9.0', agentName: 'ailivex-realtime-v9' },
+  { id: 'v10', label: '10', agentName: 'ailivex-realtime-v10' },
+  { id: 'v11', label: '11', agentName: 'ailivex-realtime-v11' },
+  { id: 'v12', label: '12（讀網址）', agentName: 'ailivex-realtime-v12' },
+] as const;
+
+export const DEFAULT_VOICE_VERSION = 'v3';
+
+/** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
+export function agentNameForVersion(version?: string): string {
+  const fallback = VOICE_VERSIONS.find(v => v.id === DEFAULT_VOICE_VERSION)!;
+  return (VOICE_VERSIONS.find(v => v.id === version) || fallback).agentName;
 }
 
 export interface ChatMessage {

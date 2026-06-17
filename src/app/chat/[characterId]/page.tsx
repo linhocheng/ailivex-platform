@@ -17,6 +17,7 @@ export default function ChatPage() {
   const params = useParams();
   const characterId = String(params.characterId);
   const [char, setChar] = useState<CharMeta | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -27,6 +28,7 @@ export default function ChatPage() {
     fetch(`/api/conversation/${characterId}`).then(r => r.json())
       .then(r => { if (r.character) setChar(r.character); setMsgs(r.messages || []); })
       .catch(() => {});
+    fetch('/api/me').then(r => r.json()).then(r => setIsAdmin(r.role === 'admin')).catch(() => {});
   }, [characterId]);
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export default function ChatPage() {
                   background: 'rgba(60,52,40,0.03)', color: 'var(--text)' }}>
                 <Icon name="phone" size={16} />語音通話
               </Link>
+              {isAdmin && <>
               <Link href={`/realtime-v2/${characterId}`} title="主動插話實驗版"
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
                   fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
@@ -137,6 +140,7 @@ export default function ChatPage() {
                   background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
                 <Icon name="phone" size={15} />11
               </Link>
+              </>}
             </div>
           )}
         </header>
