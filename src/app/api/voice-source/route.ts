@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   const url = body?.url?.trim();
   if (!url) return NextResponse.json({ error: 'url 必填' }, { status: 400 });
 
-  const r = await fetchUrlClean(url);
+  const r = await fetchUrlClean(url, 50000);
   // 抓取失敗不當 HTTP error：回 200 + ok:false，讓角色能坦白「打不開」而不是整通卡死。
   if (!r.ok) return NextResponse.json({ ok: false, error: r.error });
   return NextResponse.json({ ok: true, title: r.title, text: r.text, finalUrl: r.finalUrl });

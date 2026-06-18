@@ -51,6 +51,7 @@ class CharacterContext:
     voice_settings: dict = field(default_factory=dict)
     conv_settings: dict = field(default_factory=dict)   # 對話手感：responseSpeed/interruptSensitivity/imThreshold/interruptThreshold
     aliases: list = field(default_factory=list)         # 角色別名（v5 圓桌點名用，如 簡報王→[福哥,王永福]）；v1-v4 不讀
+    capabilities: list = field(default_factory=list)    # 允許呼叫的工廠能力，v13+ 讀，缺省空陣列
 
 
 @dataclass
@@ -104,6 +105,7 @@ def load_character(character_id: str) -> CharacterContext:
         voice_settings=d.get("voiceSettings") or {},
         conv_settings=d.get("convSettings") or {},
         aliases=d.get("aliases") or [],
+        capabilities=d.get("capabilities") or [],
     )
 
 
@@ -438,6 +440,48 @@ def build_last_session_block(last_session: dict | None) -> str:
     return "\n".join(parts)
 
 
+def build_task_notifications_block(user_id: str, character_id: str) -> str:
+    """查 tasks collection，找出已完成但尚未通知的任務，組成注入 block，並標記為已通知。"""
+    try:
+        _ensure_init()
+        db = firestore.client()
+        snaps = (
+            db.collection("tasks")
+            .where("userId", "==", user_id)
+            .where("characterId", "==", character_id)
+            .where("status", "==", "done")
+            .where("notified", "==", False)
+            .order_by("completedAt", direction=firestore.Query.DESCENDING)
+            .limit(5)
+            .get()
+        )
+        docs = [s for s in snaps if s.exists]
+        if not docs:
+            return ""
+
+        lines = []
+        for doc in docs:
+            d = doc.to_dict()
+            summary = d.get("summary") or "任務已完成"
+            task_type = d.get("type", "")
+            type_label = {
+                "image_generation": "製圖",
+                "audio_generation": "音檔",
+                "writing": "文件",
+                "web_search": "搜尋",
+            }.get(task_type, task_type)
+            lines.append(f"- [{type_label}] {summary}")
+            # 標記已通知
+            doc.reference.update({"notified": True})
+
+        block = "\n\n---\n【你有已完成的背景任務】\n" + "\n".join(lines)
+        block += "\n（你可以自然地告訴對方結果，不用逐字複述。）"
+        return block
+    except Exception as e:
+        print(f"[firestore_loader] task_notifications error: {e}")
+        return ""
+
+
 def _relative_time(ts) -> str:
     """把 Firestore Timestamp 或 datetime 轉成「今天/X天前/X個月前...」"""
     if ts is None:
@@ -617,6 +661,11 @@ def build_system_prompt(char: CharacterContext, conv: ConversationContext, memor
     if last_session_block:
         parts.append(last_session_block)
 
+    # 已完成的背景任務通知（讓角色知道派出去的工作做好了）
+    task_block = build_task_notifications_block(user_id, character_id)
+    if task_block:
+        parts.append(task_block)
+
     # 上次對話的「原話結尾」—— 連貫感的關鍵：讓角色從真實的最後幾句接話，不是從濃縮摘要接（會變成念稿）
     recent_msgs = getattr(conv, "messages", None) or []
     tail_lines = []
@@ -683,6 +732,90 @@ def create_document_job(user_id: str, character_id: str, title: str, brief: str)
     _enqueue_job(job_ref.id)
     logger.info(f"[doc] created document={doc_ref.id} job={job_ref.id} title={title!r}")
     return doc_ref.id
+
+
+def dispatch_task_job(user_id: str, character_id: str, task_type: str, intent: str, params: dict) -> str:
+    """建 Firestore tasks doc，然後非同步呼叫 media-worker API，回傳 taskId。"""
+    _ensure_init()
+    db = firestore.client()
+
+    task_ref = db.collection("tasks").document()
+    task_ref.set({
+        "userId": user_id,
+        "characterId": character_id,
+        "type": task_type,
+        "intent": intent,
+        "params": params,
+        "status": "pending",
+        "notified": False,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+    })
+    task_id = task_ref.id
+
+    _enqueue_media_task(task_id, task_type, params)
+    logger.info(f"[task] created task={task_id} type={task_type!r} intent={intent[:60]!r}")
+    return task_id
+
+
+def _enqueue_media_task(task_id: str, task_type: str, params: dict) -> None:
+    """背景 thread 呼叫 media-worker API，fire-and-forget。"""
+    media_worker_url = os.environ.get("MEDIA_WORKER_URL", "").strip().rstrip("/")
+    media_worker_key = os.environ.get("MEDIA_WORKER_KEY_AILIVEX", "").strip()
+    if not media_worker_url or not media_worker_key:
+        logger.warning(f"[media] MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX 未設，task {task_id} 留 pending")
+        return
+
+    def _post() -> None:
+        db = firestore.client()
+        try:
+            # 建 media-worker job
+            if task_type == "image_generation":
+                media_type = "image"
+                input_data = {
+                    "prompt": params.get("prompt", params.get("intent", "")),
+                    "size": params.get("size", "1024x1024"),
+                    "outputFormat": "png",
+                }
+            elif task_type == "audio_generation":
+                media_type = "audio"
+                input_data = {
+                    "text": params.get("text", ""),
+                    "voiceId": params.get("voiceId", ""),
+                    "speed": params.get("speed", 1.0),
+                    "vol": params.get("vol", 1.0),
+                    "pitch": params.get("pitch", 0),
+                    "emotion": params.get("emotion", "neutral"),
+                }
+            else:
+                logger.warning(f"[media] unsupported task_type={task_type!r}, task {task_id} 留 pending")
+                return
+
+            payload = json.dumps({
+                "mediaType": media_type,
+                "idempotencyKey": task_id,
+                "input": input_data,
+                "metadata": {"taskId": task_id},
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{media_worker_url}/v1/jobs",
+                data=payload,
+                headers={"Content-Type": "application/json", "x-api-key": media_worker_key},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                job_id = body.get("jobId", "")
+                db.collection("tasks").document(task_id).update({
+                    "status": "running",
+                    "resultRef": f"mw_jobs/{job_id}",
+                })
+                logger.info(f"[media] task {task_id} → mw job {job_id}")
+        except Exception as e:
+            logger.error(f"[media] dispatch failed task {task_id}: {e}")
+            db.collection("tasks").document(task_id).update({"status": "failed", "error": str(e)})
+
+    threading.Thread(target=_post, daemon=True, name=f"media-{task_id}").start()
 
 
 def _enqueue_job(job_id: str) -> None:

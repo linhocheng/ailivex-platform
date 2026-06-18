@@ -22,7 +22,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Sidebar */}
       <aside style={{ borderRight:'1px solid var(--border)', padding:'22px 16px', display:'flex', flexDirection:'column',
         background:'var(--bg-2)', overflowY:'auto' }}>
-        <div style={{ padding:'4px 8px 22px' }}><Wordmark size={18} /></div>
+        <Link href="/admin" style={{ padding:'4px 8px 22px', display:'block', textDecoration:'none' }}><Wordmark size={18} /></Link>
         <div style={{ fontSize:11, color:'var(--muted)', letterSpacing:'0.08em', padding:'0 12px 10px', fontWeight:500 }}>管理後台</div>
         <nav style={{ display:'flex', flexDirection:'column', gap:4 }}>
           {ADMIN_NAV.map(n => {
@@ -41,6 +41,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           })}
         </nav>
         <div style={{ marginTop:'auto', paddingTop:16, borderTop:'1px solid var(--border)' }}>
+          <Link href="/lobby"
+            style={{ display:'flex', alignItems:'center', gap:9, width:'100%', padding:'9px 12px',
+              borderRadius:6, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)',
+              fontSize:13.5, fontWeight:500, textDecoration:'none', marginBottom:8 }}>
+            <svg viewBox="0 0 24 24" style={{width:16,height:16,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round',flexShrink:0}}><path d="M3 12L12 3l9 9"/><path d="M9 21V12h6v9"/><path d="M3 12v9h18v-9"/></svg>前台主頁
+          </Link>
           <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', marginBottom:8 }}>
             <div style={{ width:34, height:34, borderRadius:6, background:'linear-gradient(155deg,#9a9389,#6f685d)',
               display:'grid', placeItems:'center', fontSize:13, fontWeight:600, color:'#fff', flexShrink:0 }}>管</div>

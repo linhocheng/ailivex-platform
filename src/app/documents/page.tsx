@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Wordmark, Icon, Tag, Dot, Typing, EmptyState, Ambient, GlowButton } from '@/app/_components/ui';
 import { LogoutButton } from '@/app/_components/LogoutButton';
 
-interface Doc { id: string; title: string; status: string; htmlUrl: string; slidesUrl?: string; createdAt: number; }
+interface Doc { id: string; title: string; status: string; htmlUrl: string; createdAt: number; }
 
 const STATUS: Record<string, { label: string; color: string; dot: string }> = {
   pending:    { label: '排隊中',  color: 'var(--muted)',    dot: 'rgba(255,255,255,0.3)' },
@@ -26,13 +26,9 @@ function NavLink({ href, active, icon, children }: { href: string; active?: bool
   );
 }
 
-function DocRow({ doc, onDelete, onOpenSlides, openingSlides, onDownloadPdf, downloadingPdf }: {
+function DocRow({ doc, onDelete }: {
   doc: Doc;
   onDelete: () => void;
-  onOpenSlides: () => void;
-  openingSlides: boolean;
-  onDownloadPdf: () => void;
-  downloadingPdf: boolean;
 }) {
   const st = STATUS[doc.status] || STATUS.pending;
   const inProgress = doc.status === 'writing' || doc.status === 'rendering' || doc.status === 'pending';
@@ -71,12 +67,6 @@ function DocRow({ doc, onDelete, onOpenSlides, openingSlides, onDownloadPdf, dow
                 <Icon name="external" size={15} />查看
               </GlowButton>
             )}
-            <GlowButton variant="ghost" size="sm" onClick={onDownloadPdf} disabled={downloadingPdf}>
-              <Icon name="download" size={15} />{downloadingPdf ? '生成中…' : 'PDF'}
-            </GlowButton>
-            <GlowButton variant="soft" size="sm" onClick={onOpenSlides} disabled={openingSlides}>
-              <Icon name="external" size={15} />{openingSlides ? '建立中…' : 'Google Slides'}
-            </GlowButton>
           </>
         ) : doc.status === 'failed' ? (
           <span style={{ fontSize:12.5, color:'#b5654a' }}>生成失敗</span>
@@ -98,8 +88,6 @@ function DocRow({ doc, onDelete, onOpenSlides, openingSlides, onDownloadPdf, dow
 export default function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [openingSlides, setOpeningSlides] = useState<string | null>(null);
-  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   async function load() {
     const r = await fetch('/api/documents').then(r => r.json()).catch(() => ({ documents: [] }));
@@ -113,31 +101,6 @@ export default function Documents() {
     setDocs(prev => prev.filter(d => d.id !== id));
   }
 
-  async function downloadPdf(id: string, title: string) {
-    setDownloadingPdf(id);
-    try {
-      const r = await fetch(`/api/documents/${id}/pdf`);
-      if (!r.ok) { alert('PDF 生成失敗，請稍後再試'); return; }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `${title}.pdf`; a.click();
-      URL.revokeObjectURL(url);
-    } finally { setDownloadingPdf(null); }
-  }
-
-  async function openSlides(id: string) {
-    setOpeningSlides(id);
-    try {
-      const r = await fetch(`/api/documents/${id}/ppt`).then(r => r.json()).catch(() => null);
-      if (r?.slidesUrl) {
-        window.open(r.slidesUrl, '_blank');
-        setDocs(prev => prev.map(d => d.id === id ? { ...d, slidesUrl: r.slidesUrl } : d));
-      } else {
-        alert('Google Slides 建立失敗，請稍後再試');
-      }
-    } finally { setOpeningSlides(null); }
-  }
 
   useEffect(() => {
     load();
@@ -185,11 +148,7 @@ export default function Documents() {
                 {docs.map((d, i) => (
                   <div key={d.id} style={{ animationDelay:`${i*0.04}s` }}>
                     <DocRow doc={d}
-                      onDelete={() => deleteDoc(d.id, d.title)}
-                      onDownloadPdf={() => downloadPdf(d.id, d.title)}
-                      downloadingPdf={downloadingPdf === d.id}
-                      onOpenSlides={() => openSlides(d.id)}
-                      openingSlides={openingSlides === d.id} />
+                      onDelete={() => deleteDoc(d.id, d.title)} />
                   </div>
                 ))}
               </div>

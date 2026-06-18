@@ -15,6 +15,7 @@ export const COL = {
   relationships: 'relationships',
   documents: 'documents',
   jobs: 'jobs',
+  tasks: 'tasks',
 } as const;
 
 export type UserRole = 'user' | 'admin';
@@ -44,6 +45,8 @@ export interface ConvSettings {
   temperature?: number;          // 0.1–1.0 LLM 溫度（越低越收斂/越不演）
 }
 
+export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search';
+
 export interface CharacterDoc {
   name: string;
   soul: string;            // 原始靈魂文字
@@ -53,6 +56,7 @@ export interface CharacterDoc {
   voiceSettings?: VoiceSettings;
   convSettings?: ConvSettings;  // 對話手感旋鈕
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
+  capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
@@ -82,9 +86,10 @@ export const VOICE_VERSIONS = [
   { id: 'v10', label: '10', agentName: 'ailivex-realtime-v10' },
   { id: 'v11', label: '11', agentName: 'ailivex-realtime-v11' },
   { id: 'v12', label: '12（讀網址）', agentName: 'ailivex-realtime-v12' },
+  { id: 'v13', label: '13（任務派發）', agentName: 'ailivex-realtime-v13' },
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v3';
+export const DEFAULT_VOICE_VERSION = 'v12';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {
@@ -162,4 +167,21 @@ export interface JobDoc {
   result?: string;
   error?: string;
   createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+export type TaskStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export interface TaskDoc {
+  userId: string;
+  characterId: string;
+  type: TaskCapability;
+  intent: string;          // 角色說的自然語言意圖
+  params: Record<string, unknown>;
+  status: TaskStatus;
+  summary?: string;        // 完成後給角色讀的一句話摘要
+  resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
+  error?: string;
+  notified: boolean;       // 是否已被注入 lastSession 通知過
+  createdAt: FirebaseFirestore.Timestamp | Date;
+  completedAt?: FirebaseFirestore.Timestamp | Date;
 }
