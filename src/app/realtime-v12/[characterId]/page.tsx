@@ -112,6 +112,7 @@ export default function RealtimeCallPage() {
   const [agentPhase, setAgentPhase] = useState<'idle'|'thinking'|'speaking'>('idle');
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceStatus, setSourceStatus] = useState<SourceStatus>('idle');
+  const [webSearch, setWebSearch] = useState(false);
 
   const identityRef = useRef('');
   const agentIdentityRef = useRef('');  // v12: for RPC destinationIdentity
@@ -266,11 +267,12 @@ export default function RealtimeCallPage() {
         setHealth(h => ({ ...h, token: 'fail' }));
         throw new Error(err.error || `token ${tokenRes.status}`);
       }
-      const { token, url, roomName, identity, characterName: cName, avatarUrl } = await tokenRes.json();
+      const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws } = await tokenRes.json();
       identityRef.current = identity;
       setHealth(h => ({ ...h, token: 'ok' }));
       if (cName) setCharacterName(cName);
       if (avatarUrl) setCharacterImage(avatarUrl);
+      setWebSearch(!!ws);
       log('info', `token OK, room=${roomName}`);
 
       const room = new Room({ adaptiveStream: true, dynacast: true });
@@ -516,7 +518,7 @@ export default function RealtimeCallPage() {
             {stateLabel[state]}
             {inCall && <span style={{fontSize:12,color:'rgba(255,255,255,0.45)',fontVariantNumeric:'tabular-nums'}}>{String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}</span>}
           </div>
-          <div style={{fontSize:10,color:'rgba(255,255,255,0.2)',marginTop:6,letterSpacing:1}}>v12.0 讀網址工作臺 (實驗)</div>
+          {webSearch && <div style={{fontSize:10,color:'rgba(255,255,255,0.2)',marginTop:6,letterSpacing:1}}>v12.0 讀網址工作臺 (實驗)</div>}
         </div>
 
         {/* Latest caption */}
@@ -526,8 +528,8 @@ export default function RealtimeCallPage() {
           </div>
         )}
 
-        {/* v12 URL input — visible when in-call */}
-        {state === 'in-call' && (
+        {/* v12 URL input — visible when in-call, only for characters with web_search capability */}
+        {state === 'in-call' && webSearch && (
           <div style={{ width:'100%', maxWidth:340, display:'flex', flexDirection:'column', gap:8 }}>
             <div style={{ display:'flex', gap:8 }}>
               <input

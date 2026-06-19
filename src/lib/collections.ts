@@ -89,7 +89,7 @@ export const VOICE_VERSIONS = [
   { id: 'v13', label: '13（任務派發）', agentName: 'ailivex-realtime-v13' },
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v12';
+export const DEFAULT_VOICE_VERSION = 'v13';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {
@@ -179,6 +179,7 @@ export interface TaskDoc {
   params: Record<string, unknown>;
   status: TaskStatus;
   summary?: string;        // 完成後給角色讀的一句話摘要
+  imageUrl?: string;       // image_generation 完成後的 GCS 圖片網址（圖庫直接讀這個）
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過
