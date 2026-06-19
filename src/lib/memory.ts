@@ -12,6 +12,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { COL, type MemoryDoc, type MemoryType, type MemoryStatus, type RelationshipDoc } from '@/lib/collections';
 import { generateEmbedding, cosineSimilarity } from '@/lib/embeddings';
+import { parseJsonLoose } from '@/lib/safe-json';
 
 const MAX_FACTS = 4;
 const MAX_EMOTIONS = 2;
@@ -306,10 +307,15 @@ importance：1-10
     const match = text.match(/<result>([\s\S]*?)<\/result>/);
     if (!match) return;
 
-    const candidates = JSON.parse(match[1].trim()) as Array<{
+    const candidates = parseJsonLoose<Array<{
       content: string; type: string; importance: number;
-    }>;
-    if (!Array.isArray(candidates) || candidates.length === 0) return;
+    }>>(match[1].trim());
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      if (candidates === null) {
+        console.warn('[extraction] LLM 輸出無法解析為 JSON，略過：', match[1].trim().slice(0, 200));
+      }
+      return;
+    }
 
     let written = 0;
     for (const c of candidates) {

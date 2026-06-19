@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { marked } from 'marked';
 import { getFirestore, getFirebaseAdmin } from '@/lib/firebase-admin';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
+import { cleanSecret } from '@/lib/clean-env';
 import { COL, type DocumentDoc } from '@/lib/collections';
 
 export const runtime = 'nodejs';
@@ -17,8 +18,8 @@ export const maxDuration = 300;
 const MODEL = 'claude-sonnet-4-6';
 
 export async function POST(req: Request) {
-  const secret = req.headers.get('x-worker-secret') || '';
-  const expected = (process.env.WORKER_SECRET || '').replace(/^"|"$/g, '').trim();
+  const secret = cleanSecret(req.headers.get('x-worker-secret'));
+  const expected = cleanSecret(process.env.WORKER_SECRET);
   if (expected && secret !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

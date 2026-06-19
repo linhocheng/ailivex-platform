@@ -7,13 +7,14 @@
  */
 import { NextResponse } from 'next/server';
 import { fetchUrlClean } from '@/lib/url-reader';
+import { cleanSecret } from '@/lib/clean-env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
-  const secret = (process.env.WORKER_SECRET || '').trim();
-  if (secret && req.headers.get('x-worker-secret') !== secret) {
+  const secret = cleanSecret(process.env.WORKER_SECRET);
+  if (secret && cleanSecret(req.headers.get('x-worker-secret')) !== secret) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 

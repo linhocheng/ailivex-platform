@@ -5,6 +5,7 @@
  * Bridge 失敗一律 throw，不 fallback SDK（避免雙燒）。
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 
 const DEFAULT_BRIDGE_TIMEOUT_MS = 280_000;
 
@@ -57,8 +58,8 @@ export function getAnthropicClient(
   opts?: { bridgeTimeoutMs?: number },
 ): Anthropic | AnthropicBridge {
   const enabled = process.env.BRIDGE_ENABLED === 'true';
-  const url = process.env.BRIDGE_URL;
-  const secret = process.env.BRIDGE_SECRET;
+  const url = cleanUrl(process.env.BRIDGE_URL);
+  const secret = cleanSecret(process.env.BRIDGE_SECRET);
   if (enabled && url && secret) {
     return new AnthropicBridge(url, secret, opts?.bridgeTimeoutMs);
   }

@@ -9,10 +9,19 @@ interface Char {
   id: string; name: string; avatarUrl: string; status: string;
   hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
+type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search';
+const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
+  { value: 'image_generation', label: '製圖' },
+  { value: 'audio_generation', label: '生音檔' },
+  { value: 'writing', label: '寫文件' },
+  { value: 'web_search', label: '網路搜尋' },
+];
+
 type EditState = {
   id: string; name: string; soul: string; soulCore: string;
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
   aliases: string[];
+  capabilities: TaskCapability[];
   avatar: { b64: string; type: string } | null;
 };
 
@@ -184,6 +193,7 @@ export default function AdminCharacters() {
     payload.voiceSettings = editing.voiceSettings;
     payload.convSettings = editing.convSettings;
     payload.aliases = editing.aliases.filter(a => a.trim());
+    payload.capabilities = editing.capabilities;
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
     const r = await fetch(`/api/admin/characters/${editing.id}`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -256,9 +266,9 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -335,6 +345,23 @@ export default function AdminCharacters() {
                 placeholder={'聖嚴\n聖嚴法師\n圣严\n法師'}
                 value={editing.aliases.join('\n')}
                 onChange={e=>setEditing({...editing, aliases: e.target.value.split('\n')})} />
+            </Field>
+            <Field label="角色能力（派發任務權限）">
+              <div style={{ display:'flex', gap:12, flexWrap:'wrap', padding:'6px 0' }}>
+                {ALL_CAPABILITIES.map(cap => (
+                  <label key={cap.value} style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, cursor:'pointer' }}>
+                    <input type="checkbox"
+                      checked={editing.capabilities.includes(cap.value)}
+                      onChange={e => {
+                        const next = e.target.checked
+                          ? [...editing.capabilities, cap.value]
+                          : editing.capabilities.filter(c => c !== cap.value);
+                        setEditing({...editing, capabilities: next});
+                      }} />
+                    {cap.label}
+                  </label>
+                ))}
+              </div>
             </Field>
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}

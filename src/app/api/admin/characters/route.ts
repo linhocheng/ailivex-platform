@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
-import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings } from '@/lib/collections';
+import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
 import { enhanceSoul } from '@/lib/soul';
+
+const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search'];
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -29,6 +31,7 @@ export async function POST(req: Request) {
     name?: string; soul?: string; soulCore?: string;
     avatarBase64?: string; avatarContentType?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings; convSettings?: ConvSettings;
+    capabilities?: TaskCapability[];
   } | null;
 
   const name = body?.name?.trim();
@@ -50,6 +53,7 @@ export async function POST(req: Request) {
     voiceIdMinimax: body?.voiceIdMinimax?.trim() || '',
     voiceSettings: sanitizeVoiceSettings(body?.voiceSettings),
     convSettings: sanitizeConvSettings(body?.convSettings),
+    capabilities: Array.isArray(body?.capabilities) ? body.capabilities.filter(c => ALL_CAPABILITIES.includes(c)) : [],
     status: 'active',
     createdAt: new Date(),
   };

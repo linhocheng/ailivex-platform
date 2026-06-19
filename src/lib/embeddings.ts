@@ -67,6 +67,11 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     throw new Error('Embedding 回傳格式異常');
   }
 
+  // 維度自檢：模型名 / outputDimensionality 漂移會靜默存錯維度向量 → findNearest 失準。
+  if (values.length !== DIMENSION) {
+    throw new Error(`Embedding 維度異常：期望 ${DIMENSION}，實得 ${values.length}（模型或參數可能漂移）`);
+  }
+
   return values;
 }
 

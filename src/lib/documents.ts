@@ -5,6 +5,7 @@
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { COL, type DocumentDoc, type JobDoc } from '@/lib/collections';
+import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 
 export async function createDocumentJob(
   db: Firestore,
@@ -42,21 +43,13 @@ export async function createDocumentJob(
 // 或多餘空白。.trim() 只吃得掉真空白，吃不掉字面 \n —— 污染的 URL 會讓 fetch 直接拋錯，
 // 被下面的 catch 靜默吞掉，job 永遠停在 pending（= 文件「卡住」）。URL 與 secret 內部本來
 // 就不含空白，整串洗掉最穩，dispatch 不受 env 怎麼設的影響。
-function cleanEnv(raw: string | undefined): string {
-  return (raw || '')
-    .replace(/^["']|["']$/g, '')  // 包住的引號
-    .replace(/\\[nrt]/g, '')       // 漏進來的字面跳脫序列 \n \r \t
-    .replace(/\s+/g, '')           // 任何真空白
-    .trim();
-}
-
 export async function dispatchDocumentJob(jobId: string): Promise<void> {
   // Cloud Run worker takes priority; falls back to Vercel self-call (/api/doc-process)
-  const cloudRunUrl = cleanEnv(process.env.CLOUD_RUN_DOC_WORKER_URL);
+  const cloudRunUrl = cleanUrl(process.env.CLOUD_RUN_DOC_WORKER_URL);
   const endpoint = cloudRunUrl
     ? cloudRunUrl
     : `${process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')}/api/doc-process`;
-  const workerSecret = cleanEnv(process.env.WORKER_SECRET);
+  const workerSecret = cleanSecret(process.env.WORKER_SECRET);
   try {
     const r = await fetch(endpoint, {
       method: 'POST',

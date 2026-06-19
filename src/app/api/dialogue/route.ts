@@ -19,6 +19,7 @@ import { loadHistory, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
+import { dispatchTask } from '@/lib/task-dispatcher';
 import { upsertRelationship } from '@/lib/relationship';
 import { trackCost } from '@/lib/cost-tracker';
 import { readUrlsForContext } from '@/lib/url-reader';
@@ -85,7 +86,7 @@ export async function POST(req: Request) {
   });
 
   const raw = textOf(res);
-  const { visible, remembers, documents } = parseToolTags(raw);
+  const { visible, remembers, documents, dispatches } = parseToolTags(raw);
   const reply = visible || '（……）';
 
   // 工具副作用（不阻斷回覆）
@@ -102,6 +103,16 @@ export async function POST(req: Request) {
       createdDocs.push({ documentId: r.documentId, title: d.title });
       pendingJobIds.push(r.jobId);
     }
+  }
+  // capability gate：只有角色被授權的 type 才派出
+  const capabilities = char.capabilities ?? [];
+  for (const d of dispatches) {
+    if (!capabilities.includes(d.type)) {
+      console.warn(`[dialogue] dispatch blocked: ${d.type} not in capabilities for char ${characterId}`);
+      continue;
+    }
+    dispatchTask(user.uid, characterId, d.type, d.intent, d.params)
+      .catch(e => console.error('[dialogue] dispatch failed:', e instanceof Error ? e.message : String(e)));
   }
 
   // 存對話
