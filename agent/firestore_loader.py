@@ -786,7 +786,9 @@ def dispatch_script_draft(user_id: str, character_id: str, voice_id: str, text: 
 
 
 def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str) -> str:
-    """直接寫 Firestore story_draft task，不走 media-worker。回傳 taskId。"""
+    """寫 Firestore story_draft task，然後 fire-and-forget 觸發 Phase A。回傳 taskId。
+    text 傳角色的簡介/主題（不是完整故事），Phase A 的 LLM 會根據 intent 生成完整故事。
+    """
     _ensure_init()
     db = firestore.client()
     task_ref = db.collection("tasks").document()
@@ -795,14 +797,37 @@ def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str
         "characterId": character_id,
         "type": "story_draft",
         "intent": intent,
-        "storyText": text,
-        "params": {},
-        "status": "draft",
+        "storyText": "",   # Phase A 填充
+        "params": {"brief": text},
+        "status": "pending",
         "notified": False,
         "createdAt": firestore.SERVER_TIMESTAMP,
     })
     task_id = task_ref.id
     logger.info(f"[task] story_draft created task={task_id} intent={intent[:60]!r}")
+
+    # fire-and-forget：觸發 Phase A（LLM 生故事）
+    platform_url = os.environ.get("PLATFORM_URL", "").strip().rstrip("/")
+    worker_secret = os.environ.get("WORKER_SECRET", "").strip()
+    if platform_url and worker_secret:
+        import threading
+        def _trigger():
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    f"{platform_url}/api/tasks/{task_id}/generate-story",
+                    method="POST",
+                    headers={"x-worker-secret": worker_secret, "Content-Type": "application/json"},
+                    data=b"{}",
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    logger.info(f"[story_draft] Phase A triggered task={task_id} status={resp.status}")
+            except Exception as e:
+                logger.error(f"[story_draft] Phase A trigger failed task={task_id}: {e}")
+        threading.Thread(target=_trigger, daemon=True).start()
+    else:
+        logger.warning(f"[story_draft] PLATFORM_URL or WORKER_SECRET not set, Phase A must be triggered manually")
+
     return task_id
 
 

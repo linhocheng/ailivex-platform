@@ -171,7 +171,7 @@ export interface JobDoc {
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
-export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'draft' | 'submitted';
+export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'draft' | 'submitted' | 'scripting' | 'ready' | 'scripted';
 
 export interface TaskDoc {
   userId: string;
@@ -188,6 +188,8 @@ export interface TaskDoc {
   storyText?: string;      // story_draft 的故事原文（可編修）
   parentTaskId?: string;   // image_generation 所屬的 story_draft task id
   order?: number;          // 故事板中的圖片順序（1-based）
+  cardText?: string;       // Phase B 產出：這張圖卡的文字說明
+  cardType?: string;       // Phase B 產出：realistic_photo | infographic
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過

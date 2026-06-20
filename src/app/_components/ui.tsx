@@ -28,6 +28,11 @@ const PATHS: Record<string, ReactNode> = {
   image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></>,
   audio: <><path d="M9 18V6l11-3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="15" r="3"/></>,
   spinner: <circle cx="12" cy="12" r="8" strokeDasharray="38" strokeDashoffset="12"/>,
+  refresh: <><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6L21 8"/><path d="M21 3v5h-5"/></>,
+  'chevron-left': <path d="M15 6l-6 6 6 6"/>,
+  'chevron-right': <path d="M9 6l6 6-6 6"/>,
+  edit: <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></>,
+  close: <path d="M18 6L6 18M6 6l12 12"/>,
 };
 
 export function Icon({ name, size = 20, style }: { name: string; size?: number; style?: CSSProperties }) {

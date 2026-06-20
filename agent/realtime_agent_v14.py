@@ -255,7 +255,7 @@ async def entrypoint(ctx: JobContext):
             "task_type 可以是：image_generation（生成圖片）、audio_generation（生成音檔）、"
             "script_draft（寫腳本草稿供用戶審閱後生成音檔）、story_draft（寫故事草稿供用戶審閱後生成故事圖卡）。"
             "script_draft：params 必須包含 'text'（完整腳本原文）。建立後告知對方去媒體庫確認腳本再生成音檔。"
-            "story_draft：params 必須包含 'text'（完整故事原文，約 200-500 字）。建立後告知對方去媒體庫確認故事再生成圖卡。"
+            "story_draft：params 必須包含 'text'（故事主題或簡介，20-100字即可，系統後台自動生成完整故事和圖卡腳本）。建立後告知對方去故事板頁面查看進度。"
             "image_generation：params 包含 'prompt'。"
             "audio_generation：直接生成，params 包含 'text'。通常先走 script_draft 讓對方確認。"
             "intent 用一句話描述任務目的。呼叫後系統背景執行，口頭告知對方任務已安排。"
@@ -281,12 +281,12 @@ async def entrypoint(ctx: JobContext):
                 logger.info(f"[v14] script_draft dispatched: {task_id}")
                 return "腳本草稿已備妥，你可以去媒體庫確認並編修後，按「生成音檔」鈕產出音檔。"
             elif task_type == "story_draft":
-                text = parsed_params.get("text", "")
-                if not text:
-                    return "請提供故事內容（params.text）。"
-                task_id = dispatch_story_draft(user_id, character_id, text, intent)
-                logger.info(f"[v14] story_draft dispatched: {task_id}")
-                return "故事草稿已備妥，你可以去媒體庫確認並編修後，按「生成圖卡」鈕產出故事圖卡。"
+                brief = parsed_params.get("text", "") or parsed_params.get("brief", "")
+                if not brief:
+                    return "請提供故事主題或簡介（params.text）。"
+                task_id = dispatch_story_draft(user_id, character_id, brief, intent)
+                logger.info(f"[v14] story_draft dispatched: {task_id} brief={brief[:60]!r}")
+                return "故事板已開始生成，系統會自動寫故事、分析圖卡腳本，你可以去故事板頁面查看進度。"
             elif task_type == "audio_generation":
                 # 自動注入角色 voiceId，不讓 LLM 猜
                 parsed_params.setdefault("voiceId", voice_id)

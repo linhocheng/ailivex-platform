@@ -502,6 +502,7 @@ export default function Gallery() {
             <NavLink href="/lobby">大廳</NavLink>
             <NavLink href="/documents" icon="doc">我的文件</NavLink>
             <NavLink href="/gallery" active icon="image">媒體庫</NavLink>
+            <NavLink href="/stories" icon="image">故事板</NavLink>
             <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
               border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
               fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
