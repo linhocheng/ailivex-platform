@@ -76,9 +76,6 @@ export async function POST(
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  // 標記草稿已送出（避免重複生成）
-  await draftRef.update({ status: 'submitted' });
-
   // dispatch media-worker（非同步，不等）
   enqueueAudio(audioTaskId, scriptText, voiceId).catch(err => {
     console.error('[generate-audio] dispatch error:', err);

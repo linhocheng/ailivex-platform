@@ -69,11 +69,12 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onDelete: (t: MediaTask) => void; onGenerated: () => void }) {
   const [text, setText] = useState(task.scriptText || '');
   const [loading, setLoading] = useState(false);
-  const submitted = task.status === 'submitted';
+  const [lastError, setLastError] = useState('');
 
   async function generate() {
     if (!text.trim()) return;
     setLoading(true);
+    setLastError('');
     const r = await fetch(`/api/tasks/${task.id}/generate-audio`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -81,7 +82,7 @@ function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onD
     }).then(r => r.json()).catch(() => null);
     setLoading(false);
     if (r?.ok) { onGenerated(); }
-    else { alert('生成失敗，請稍後再試。'); }
+    else { setLastError('生成失敗，請稍後再試。'); }
   }
 
   return (
@@ -98,31 +99,27 @@ function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onD
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(task.createdAt)}</div>
         </div>
-        <Tag color="#8c7ec2"><Dot color="#8c7ec2" size={6} />{submitted ? '已送出' : '待確認'}</Tag>
+        <Tag color="#8c7ec2"><Dot color="#8c7ec2" size={6} />腳本草稿</Tag>
       </div>
 
-      {!submitted && (
-        <>
-          <textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            rows={6}
-            style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.7,
-              background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 7,
-              padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
-              marginBottom: 12 }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
-            <RowButton onClick={generate} icon="audio" primary>
-              {loading ? '處理中…' : '生成音檔'}
-            </RowButton>
-          </div>
-        </>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={6}
+        style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.7,
+          background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 7,
+          padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
+          marginBottom: 12 }}
+      />
+      {lastError && (
+        <div style={{ fontSize: 12.5, color: '#b5654a', marginBottom: 10 }}>{lastError}</div>
       )}
-      {submitted && (
-        <div style={{ fontSize: 13, color: 'var(--muted)' }}>腳本已送出生成音檔，完成後會出現在下方。</div>
-      )}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
+        <RowButton onClick={generate} icon="audio" primary>
+          {loading ? '處理中…' : '生成音檔'}
+        </RowButton>
+      </div>
     </div>
   );
 }
@@ -279,7 +276,7 @@ export default function Gallery() {
   const imgActive  = tasks.filter(t => t.type === 'image_generation' && (t.status === 'pending' || t.status === 'running'));
   const imgFailed  = tasks.filter(t => t.type === 'image_generation' && t.status === 'failed');
   const imgDone    = tasks.filter(t => t.type === 'image_generation' && t.status === 'done' && t.imageUrl);
-  const drafts     = tasks.filter(t => t.type === 'script_draft' && t.status !== 'submitted');
+  const drafts     = tasks.filter(t => t.type === 'script_draft');
   const audioTasks = tasks.filter(t => t.type === 'audio_generation');
 
   const anyActive = imgActive.length > 0 || audioTasks.some(t => t.status === 'pending' || t.status === 'running');
