@@ -38,7 +38,7 @@ function parseAttrs(attrStr: string): Record<string, string> {
   return result;
 }
 
-const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft'];
+const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft'];
 
 export function parseToolTags(raw: string): ParsedTools {
   const remembers: string[] = [];
@@ -102,10 +102,15 @@ export const TOOL_INSTRUCTIONS = `
 - 當你被授權派發任務（如生圖、寫腳本、生音檔），在回覆中夾帶：
   [[DISPATCH type="image_generation" intent="用一句話描述任務" params='{"prompt":"具體提示詞"}']][[/DISPATCH]]
   type 可以是：image_generation / audio_generation / writing / web_search / script_draft。
-  script_draft（腳本草稿）流程：
+  script_draft（口白腳本草稿）流程：
     步驟一：先在對話裡把完整腳本原文寫給對方看。
     步驟二：對方確認後，你的回覆裡必須夾帶以下標記（不夾帶 = 草稿不會儲存，你說「草稿在媒體庫了」就是謊話）：
     [[DISPATCH type="script_draft" intent="腳本用途一句話" params='{"text":"完整腳本原文（逐字複製）"}']][[/DISPATCH]]
     標記夾帶後，口頭說「草稿已存到媒體庫，確認後按生成音檔」。
+  story_draft（故事板）流程：
+    當對方請你做一個故事板、圖卡故事、圖文故事時，在回覆中夾帶：
+    [[DISPATCH type="story_draft" intent="一句話說明故事主題" params='{"brief":"故事的核心概念或簡介（20-100字）"}']][[/DISPATCH]]
+    系統會自動：(A)寫完整故事劇情 → (B)分析圖卡腳本 → (C)等用戶觸發生圖。
+    你只需口頭說「故事板已開始生成，稍後去故事板頁面查看進度」，不需要在對話裡寫故事。
   其餘 type 系統背景執行，你只需口頭說「我已安排，完成後會告訴你」。
 標記以外的文字才是你對這個人說的話。`;
