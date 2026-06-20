@@ -478,8 +478,19 @@ export default function RealtimeCallPage() {
             <path d="M15 5l-7 7 7 7"/>
           </svg>
         </Link>
-        <div style={{ width:38 }} />
-        <div style={{ width:38 }} />
+        {/* Status dot — top right, no frame */}
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          {inCall && <span style={{ fontSize:12, color:'rgba(255,255,255,0.3)', fontVariantNumeric:'tabular-nums' }}>
+            {String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}
+          </span>}
+          <div style={{
+            width:9, height:9, borderRadius:'50%', flexShrink:0,
+            background: state === 'in-call' ? '#6f8c5f'
+              : state === 'error' ? '#b5654a'
+              : (state === 'connecting' || state === 'waiting-agent' || state === 'finalizing') ? '#c2954e'
+              : 'rgba(255,255,255,0.22)',
+          }} />
+        </div>
       </header>
 
       {/* Centre stage */}
@@ -505,20 +516,46 @@ export default function RealtimeCallPage() {
               </div>}
         </div>
 
-        {/* Name + status */}
-        <div style={{ textAlign:'center' }}>
-          <h2 style={{ fontSize:30, margin:'0 0 10px', fontWeight:600, color:'#fbfaf6', textShadow:'0 2px 12px rgba(0,0,0,0.6)' }}>{characterName||characterId}</h2>
-          <div style={{ display:'inline-flex', alignItems:'center', gap:10, fontSize:14.5, color:'rgba(255,255,255,0.85)',
-            background:'rgba(10,10,10,0.5)', border:'1px solid rgba(255,255,255,0.12)', padding:'8px 16px', borderRadius:6, backdropFilter:'blur(10px)' }}>
-            {state==='connecting' || state==='waiting-agent' || state==='finalizing'
-              ? <span className="ax-spin" style={{display:'grid'}}><svg viewBox="0 0 24 24" style={{width:15,height:15,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round'}}><circle cx="12" cy="12" r="8" strokeDasharray="38" strokeDashoffset="12"/></svg></span>
-              : speaking
-                ? <div style={{display:'flex',alignItems:'center',gap:4,height:22}}>{[0,1,2,3,4].map(i=><span key={i} style={{width:3,borderRadius:2,background:'#c2954e',animation:`ax-eq 0.9s ease-in-out ${i*0.12}s infinite`}}/>)}</div>
-                : <span style={{width:7,height:7,borderRadius:'50%',background:'rgba(255,255,255,0.4)',display:'inline-block'}}/>}
-            {stateLabel[state]}
-            {inCall && <span style={{fontSize:12,color:'rgba(255,255,255,0.45)',fontVariantNumeric:'tabular-nums'}}>{String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}</span>}
-          </div>
-          {webSearch && <div style={{fontSize:10,color:'rgba(255,255,255,0.2)',marginTop:6,letterSpacing:1}}>v14.0 讀網址工作臺 (實驗)</div>}
+        {/* Name + search bar */}
+        <div style={{ textAlign:'center', width:'100%', maxWidth:340 }}>
+          <h2 style={{ fontSize:30, margin:'0 0 16px', fontWeight:600, color:'#fbfaf6', textShadow:'0 2px 12px rgba(0,0,0,0.6)' }}>{characterName||characterId}</h2>
+          {webSearch && (
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              <div style={{ display:'flex', gap:8 }}>
+                <input
+                  type="url"
+                  value={sourceUrl}
+                  onChange={e => setSourceUrl(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') void handleShareSource(); }}
+                  placeholder="貼網址讓角色幫你讀…"
+                  disabled={state !== 'in-call' || sourceStatus === 'sending'}
+                  style={{
+                    flex:1, fontSize:13, padding:'9px 12px', borderRadius:7,
+                    border: `1px solid ${sourceBorderColor}`,
+                    background:'rgba(10,10,10,0.6)', color:'rgba(255,255,255,0.85)',
+                    backdropFilter:'blur(8px)', outline:'none',
+                    opacity: (state !== 'in-call' || sourceStatus === 'sending') ? 0.4 : 1,
+                  }}
+                />
+                <button
+                  onClick={() => void handleShareSource()}
+                  disabled={state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending'}
+                  style={{
+                    padding:'9px 14px', borderRadius:7, border:'1px solid rgba(255,255,255,0.15)',
+                    background: sourceStatus === 'sending' ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
+                    color:'rgba(255,255,255,0.8)', fontSize:13,
+                    cursor: (state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending') ? 'default' : 'pointer',
+                    opacity: (state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending') ? 0.35 : 1,
+                    transition:'background .15s',
+                  }}>
+                  {sourceStatus === 'sending' ? '送出中…' : sourceStatus === 'done' ? '已收到' : sourceStatus === 'error' ? '失敗' : '送出'}
+                </button>
+              </div>
+              {sourceStatus === 'error' && (
+                <div style={{ fontSize:11, color:'rgba(248,113,113,0.8)', textAlign:'center' }}>讀取失敗，請確認網址後重試</div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Latest caption */}
@@ -528,43 +565,6 @@ export default function RealtimeCallPage() {
           </div>
         )}
 
-        {/* v14 URL input — visible when in-call, only for characters with web_search capability */}
-        {state === 'in-call' && webSearch && (
-          <div style={{ width:'100%', maxWidth:340, display:'flex', flexDirection:'column', gap:8 }}>
-            <div style={{ display:'flex', gap:8 }}>
-              <input
-                type="url"
-                value={sourceUrl}
-                onChange={e => setSourceUrl(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') void handleShareSource(); }}
-                placeholder="貼網址讓角色幫你讀…"
-                disabled={sourceStatus === 'sending'}
-                style={{
-                  flex:1, fontSize:13, padding:'9px 12px', borderRadius:7,
-                  border: `1px solid ${sourceBorderColor}`,
-                  background:'rgba(10,10,10,0.6)', color:'rgba(255,255,255,0.85)',
-                  backdropFilter:'blur(8px)', outline:'none',
-                  opacity: sourceStatus === 'sending' ? 0.6 : 1,
-                }}
-              />
-              <button
-                onClick={() => void handleShareSource()}
-                disabled={!sourceUrl.trim() || sourceStatus === 'sending'}
-                style={{
-                  padding:'9px 14px', borderRadius:7, border:'1px solid rgba(255,255,255,0.15)',
-                  background: sourceStatus === 'sending' ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
-                  color:'rgba(255,255,255,0.8)', fontSize:13, cursor: !sourceUrl.trim() || sourceStatus === 'sending' ? 'default' : 'pointer',
-                  opacity: !sourceUrl.trim() || sourceStatus === 'sending' ? 0.4 : 1,
-                  transition:'background .15s',
-                }}>
-                {sourceStatus === 'sending' ? '送出中…' : sourceStatus === 'done' ? '已收到' : sourceStatus === 'error' ? '失敗' : '送出'}
-              </button>
-            </div>
-            {sourceStatus === 'error' && (
-              <div style={{ fontSize:11, color:'rgba(248,113,113,0.8)', textAlign:'center' }}>讀取失敗，請確認網址後重試</div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Health pills */}
