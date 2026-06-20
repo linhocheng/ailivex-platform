@@ -45,7 +45,7 @@ export interface ConvSettings {
   temperature?: number;          // 0.1–1.0 LLM 溫度（越低越收斂/越不演）
 }
 
-export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search';
+export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft';
 
 export interface CharacterDoc {
   name: string;
@@ -87,6 +87,7 @@ export const VOICE_VERSIONS = [
   { id: 'v11', label: '11', agentName: 'ailivex-realtime-v11' },
   { id: 'v12', label: '12（讀網址）', agentName: 'ailivex-realtime-v12' },
   { id: 'v13', label: '13（任務派發）', agentName: 'ailivex-realtime-v13' },
+  { id: 'v14', label: '14（腳本草稿音檔）', agentName: 'ailivex-realtime-v14' },
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v13';
@@ -169,7 +170,7 @@ export interface JobDoc {
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
-export type TaskStatus = 'pending' | 'running' | 'done' | 'failed';
+export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'draft' | 'submitted';
 
 export interface TaskDoc {
   userId: string;
@@ -180,6 +181,9 @@ export interface TaskDoc {
   status: TaskStatus;
   summary?: string;        // 完成後給角色讀的一句話摘要
   imageUrl?: string;       // image_generation 完成後的 GCS 圖片網址（圖庫直接讀這個）
+  audioUrl?: string;       // audio_generation 完成後的 GCS 音檔網址
+  scriptText?: string;     // script_draft 的腳本原文（可編修）
+  voiceId?: string;        // script_draft 綁定的角色 voiceId，生成音檔時帶入
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過

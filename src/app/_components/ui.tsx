@@ -26,6 +26,7 @@ const PATHS: Record<string, ReactNode> = {
   search: <><circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/></>,
   sparkle: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>,
   image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></>,
+  audio: <><path d="M9 18V6l11-3v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="15" r="3"/></>,
   spinner: <circle cx="12" cy="12" r="8" strokeDasharray="38" strokeDashoffset="12"/>,
 };
 

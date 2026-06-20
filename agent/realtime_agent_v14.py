@@ -50,7 +50,7 @@ from agent.firestore_loader import (
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("ailivex-realtime-v13")
+logger = logging.getLogger("ailivex-realtime-v14")
 
 PROJECT_NAMESPACE = os.environ.get("PROJECT_NAMESPACE", "ailivex")
 
@@ -244,7 +244,7 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"create_document_job failed: {e}")
             return "文件建立失敗，請稍後再試。"
 
-    # v13 新增：派發背景任務（生圖 / 生音檔）
+    # v14 新增：派發背景任務（生圖 / 生音檔）
     char_capabilities = list(getattr(char_ctx, "capabilities", None) or [])
 
     @function_tool(
@@ -262,7 +262,7 @@ async def entrypoint(ctx: JobContext):
         if not user_id or not character_id:
             return "無法派發任務（缺少 userId/characterId）"
         if task_type not in char_capabilities:
-            logger.warning(f"[v13] dispatch blocked: {task_type} not in capabilities={char_capabilities}")
+            logger.warning(f"[v14] dispatch blocked: {task_type} not in capabilities={char_capabilities}")
             return f"此角色尚未開放「{task_type}」功能。"
         try:
             import json as _json
@@ -275,17 +275,17 @@ async def entrypoint(ctx: JobContext):
                 if not text:
                     return "請提供腳本內容（params.text）。"
                 task_id = dispatch_script_draft(user_id, character_id, voice_id, text, intent)
-                logger.info(f"[v13] script_draft dispatched: {task_id}")
+                logger.info(f"[v14] script_draft dispatched: {task_id}")
                 return "腳本草稿已備妥，你可以去媒體庫確認並編修後，按「生成音檔」鈕產出音檔。"
             elif task_type == "audio_generation":
                 # 自動注入角色 voiceId，不讓 LLM 猜
                 parsed_params.setdefault("voiceId", voice_id)
                 task_id = dispatch_task_job(user_id, character_id, task_type, intent, parsed_params)
-                logger.info(f"[v13] audio_generation dispatched: {task_id}")
+                logger.info(f"[v14] audio_generation dispatched: {task_id}")
                 return "音檔生成任務已安排，完成後你可以在媒體庫播放。"
             else:
                 task_id = dispatch_task_job(user_id, character_id, task_type, intent, parsed_params)
-                logger.info(f"[v13] task dispatched: {task_id} type={task_type!r}")
+                logger.info(f"[v14] task dispatched: {task_id} type={task_type!r}")
                 return {"image_generation": "製圖任務已安排，完成後你可以在圖庫查看。"}.get(
                     task_type, "任務已安排，完成後會通知你。"
                 )
@@ -307,7 +307,7 @@ async def entrypoint(ctx: JobContext):
     agent = SanitizingAgent(instructions=system_prompt, tools=tools)
     logger.info(f"Agent initialized, soul={len(system_prompt)} chars")
 
-    # v13：讀網址工作臺。base_instructions = 開場 instructions；每讀一條網址就 append 進去（update_instructions）。
+    # v14：讀網址工作臺。base_instructions = 開場 instructions；每讀一條網址就 append 進去（update_instructions）。
     base_instructions = system_prompt
     sources_state: list = []
 
@@ -388,7 +388,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(agent=agent, room=ctx.room)
     logger.info("Session started, agent active")
 
-    # v13：註冊 RPC 'share_source' —— 前端同步框貼網址 → 角色暫停→讀→帶內容接話。
+    # v14：註冊 RPC 'share_source' —— 前端同步框貼網址 → 角色暫停→讀→帶內容接話。
     async def _rpc_share_source(data) -> str:
         try:
             payload = json.loads(data.payload) if data.payload else {}
@@ -412,7 +412,7 @@ async def entrypoint(ctx: JobContext):
 
     try:
         ctx.room.local_participant.register_rpc_method("share_source", _rpc_share_source)
-        logger.info("RPC 'share_source' registered (v13 讀網址工作臺)")
+        logger.info("RPC 'share_source' registered (v14 讀網址工作臺)")
     except Exception as e:
         logger.error(f"register share_source RPC failed: {e}")
 

@@ -440,48 +440,6 @@ def build_last_session_block(last_session: dict | None) -> str:
     return "\n".join(parts)
 
 
-def build_task_notifications_block(user_id: str, character_id: str) -> str:
-    """查 tasks collection，找出已完成但尚未通知的任務，組成注入 block，並標記為已通知。"""
-    try:
-        _ensure_init()
-        db = firestore.client()
-        snaps = (
-            db.collection("tasks")
-            .where("userId", "==", user_id)
-            .where("characterId", "==", character_id)
-            .where("status", "==", "done")
-            .where("notified", "==", False)
-            .order_by("completedAt", direction=firestore.Query.DESCENDING)
-            .limit(5)
-            .get()
-        )
-        docs = [s for s in snaps if s.exists]
-        if not docs:
-            return ""
-
-        lines = []
-        for doc in docs:
-            d = doc.to_dict()
-            summary = d.get("summary") or "任務已完成"
-            task_type = d.get("type", "")
-            type_label = {
-                "image_generation": "製圖",
-                "audio_generation": "音檔",
-                "writing": "文件",
-                "web_search": "搜尋",
-            }.get(task_type, task_type)
-            lines.append(f"- [{type_label}] {summary}")
-            # 標記已通知
-            doc.reference.update({"notified": True})
-
-        block = "\n\n---\n【你有已完成的背景任務】\n" + "\n".join(lines)
-        block += "\n（你可以自然地告訴對方結果，不用逐字複述。）"
-        return block
-    except Exception as e:
-        print(f"[firestore_loader] task_notifications error: {e}")
-        return ""
-
-
 def _relative_time(ts) -> str:
     """把 Firestore Timestamp 或 datetime 轉成「今天/X天前/X個月前...」"""
     if ts is None:
@@ -557,8 +515,77 @@ def load_global_prompts() -> dict:
     return gp
 
 
+def load_pending_task_notifications(user_id: str, character_id: str) -> list[dict]:
+    """讀取這個用戶×角色組合裡，done 但還沒通知過的 tasks（notified=False）。
+    同步標記 notified=True，確保每條通知只注入一次。"""
+    if not user_id or not character_id:
+        return []
+    _ensure_init()
+    db = firestore.client()
+    try:
+        snaps = (
+            db.collection("tasks")
+            .where("userId", "==", user_id)
+            .where("characterId", "==", character_id)
+            .where("status", "in", ["done", "draft"])
+            .where("notified", "==", False)
+            .limit(10)
+            .get()
+        )
+        tasks = []
+        for doc in snaps:
+            d = doc.to_dict()
+            t = d.get("type", "")
+            # draft tasks 只在有 scriptText 時通知（草稿備妥）
+            if t == "draft":
+                continue
+            tasks.append({"id": doc.id, "type": t, "intent": d.get("intent", ""),
+                          "summary": d.get("summary", ""), "audioUrl": d.get("audioUrl", ""),
+                          "imageUrl": d.get("imageUrl", ""), "status": d.get("status", "")})
+            doc.reference.update({"notified": True})
+        # 另外撈 script_draft（status=draft）未通知的
+        draft_snaps = (
+            db.collection("tasks")
+            .where("userId", "==", user_id)
+            .where("characterId", "==", character_id)
+            .where("type", "==", "script_draft")
+            .where("status", "==", "draft")
+            .where("notified", "==", False)
+            .limit(5)
+            .get()
+        )
+        for doc in draft_snaps:
+            d = doc.to_dict()
+            tasks.append({"id": doc.id, "type": "script_draft", "intent": d.get("intent", ""),
+                          "summary": "腳本草稿已備妥，可以去媒體庫確認後生成音檔。", "status": "draft"})
+            doc.reference.update({"notified": True})
+        return tasks
+    except Exception as e:
+        logger.warning(f"[task-notif] load failed: {e}")
+        return []
+
+
+def build_task_notifications_block(tasks: list[dict]) -> str:
+    """把待通知任務組成注入 prompt 的文字塊。"""
+    if not tasks:
+        return ""
+    lines = []
+    for t in tasks:
+        summary = t.get("summary") or ""
+        intent = t.get("intent") or ""
+        label = {"image_generation": "圖片", "audio_generation": "音檔",
+                 "script_draft": "腳本草稿", "writing": "文件"}.get(t.get("type", ""), "任務")
+        desc = summary or f"{label}「{intent}」已完成"
+        if t.get("audioUrl"):
+            desc += f"（連結：{t['audioUrl']}）"
+        elif t.get("imageUrl"):
+            desc += f"（連結：{t['imageUrl']}）"
+        lines.append(f"- {desc}")
+    return "\n\n【剛完成的任務，自然告知對方】\n" + "\n".join(lines)
+
+
 def build_system_prompt(char: CharacterContext, conv: ConversationContext, memories: list[dict],
-                        relationship: dict | None = None) -> str:
+                        relationship: dict | None = None, user_id: str = "") -> str:
     gp = load_global_prompts()
     parts = [char.soul_text or f"你是 {char.name}。"]
 
@@ -661,11 +688,6 @@ def build_system_prompt(char: CharacterContext, conv: ConversationContext, memor
     if last_session_block:
         parts.append(last_session_block)
 
-    # 已完成的背景任務通知（讓角色知道派出去的工作做好了）
-    task_block = build_task_notifications_block(user_id, character_id)
-    if task_block:
-        parts.append(task_block)
-
     # 上次對話的「原話結尾」—— 連貫感的關鍵：讓角色從真實的最後幾句接話，不是從濃縮摘要接（會變成念稿）
     recent_msgs = getattr(conv, "messages", None) or []
     tail_lines = []
@@ -684,6 +706,13 @@ def build_system_prompt(char: CharacterContext, conv: ConversationContext, memor
 
     if any([facts, emotions, preferences, promises, questions, milestones]):
         parts.append("\n\n（以上是你對這個人的了解，自然帶進對話，不要逐條列舉。）")
+
+    # 待通知任務（done/draft 且 notified=False）
+    if user_id:
+        pending = load_pending_task_notifications(user_id, char.character_id)
+        notif_block = build_task_notifications_block(pending)
+        if notif_block:
+            parts.append(notif_block)
 
     parts.append("\n\n" + gp["abilities"] + "\n\n" + gp["voiceRules"])
     return "".join(parts)
@@ -734,6 +763,28 @@ def create_document_job(user_id: str, character_id: str, title: str, brief: str)
     return doc_ref.id
 
 
+def dispatch_script_draft(user_id: str, character_id: str, voice_id: str, text: str, intent: str) -> str:
+    """直接寫 Firestore script_draft task，不走 media-worker。回傳 taskId。"""
+    _ensure_init()
+    db = firestore.client()
+    task_ref = db.collection("tasks").document()
+    task_ref.set({
+        "userId": user_id,
+        "characterId": character_id,
+        "type": "script_draft",
+        "intent": intent,
+        "scriptText": text,
+        "voiceId": voice_id,
+        "params": {},
+        "status": "draft",
+        "notified": False,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+    })
+    task_id = task_ref.id
+    logger.info(f"[task] script_draft created task={task_id} intent={intent[:60]!r}")
+    return task_id
+
+
 def dispatch_task_job(user_id: str, character_id: str, task_type: str, intent: str, params: dict) -> str:
     """建 Firestore tasks doc，然後非同步呼叫 media-worker API，回傳 taskId。"""
     _ensure_init()
@@ -765,6 +816,10 @@ def _enqueue_media_task(task_id: str, task_type: str, params: dict) -> None:
         logger.warning(f"[media] MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX 未設，task {task_id} 留 pending")
         return
 
+    platform_url = os.environ.get("PLATFORM_URL", "").strip().rstrip("/")
+    webhook_secret = os.environ.get("MEDIA_WORKER_WEBHOOK_SECRET", "").strip()
+    webhook_url = f"{platform_url}/api/tasks/callback" if platform_url else ""
+
     def _post() -> None:
         db = firestore.client()
         try:
@@ -793,6 +848,8 @@ def _enqueue_media_task(task_id: str, task_type: str, params: dict) -> None:
             payload = json.dumps({
                 "mediaType": media_type,
                 "idempotencyKey": task_id,
+                "webhookUrl": webhook_url,
+                "webhookSecret": webhook_secret,
                 "input": input_data,
                 "metadata": {"taskId": task_id},
             }).encode("utf-8")

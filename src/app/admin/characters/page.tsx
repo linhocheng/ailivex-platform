@@ -9,10 +9,11 @@ interface Char {
   id: string; name: string; avatarUrl: string; status: string;
   hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
-type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search';
+type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'writing' | 'web_search';
 const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
   { value: 'image_generation', label: '製圖' },
   { value: 'audio_generation', label: '生音檔' },
+  { value: 'script_draft', label: '腳本草稿' },
   { value: 'writing', label: '寫文件' },
   { value: 'web_search', label: '網路搜尋' },
 ];

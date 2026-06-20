@@ -38,7 +38,7 @@ function parseAttrs(attrStr: string): Record<string, string> {
   return result;
 }
 
-const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search'];
+const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft'];
 
 export function parseToolTags(raw: string): ParsedTools {
   const remembers: string[] = [];
@@ -99,8 +99,13 @@ export const TOOL_INSTRUCTIONS = `
 - 當對方請你寫一份策略書、企劃書或正式文件，在回覆中夾帶：
   [[DOCUMENT title="文件標題"]] 文件的主題、結構與重點要求 [[/DOCUMENT]]
   系統會非同步幫你產出文件，對方會在「我的文件」看到。你只需在標記裡寫清楚要求，並口頭告訴對方「我這就幫你寫，稍後到文件區看」。
-- 當你被授權派發任務（如生圖、生音檔），在回覆中夾帶：
+- 當你被授權派發任務（如生圖、寫腳本、生音檔），在回覆中夾帶：
   [[DISPATCH type="image_generation" intent="用一句話描述任務" params='{"prompt":"具體提示詞"}']][[/DISPATCH]]
-  type 可以是：image_generation / audio_generation / writing / web_search。
-  這段不會顯示給對方，系統背景執行。你只需口頭說「我已安排，完成後會告訴你」。
+  type 可以是：image_generation / audio_generation / writing / web_search / script_draft。
+  script_draft（腳本草稿）流程：
+    步驟一：先在對話裡把完整腳本原文寫給對方看。
+    步驟二：對方確認後，你的回覆裡必須夾帶以下標記（不夾帶 = 草稿不會儲存，你說「草稿在媒體庫了」就是謊話）：
+    [[DISPATCH type="script_draft" intent="腳本用途一句話" params='{"text":"完整腳本原文（逐字複製）"}']][[/DISPATCH]]
+    標記夾帶後，口頭說「草稿已存到媒體庫，確認後按生成音檔」。
+  其餘 type 系統背景執行，你只需口頭說「我已安排，完成後會告訴你」。
 標記以外的文字才是你對這個人說的話。`;

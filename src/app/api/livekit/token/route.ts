@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'LIVEKIT_* env 未設定' }, { status: 500 });
   }
 
-  const body = await req.json().catch(() => null) as { characterId?: string; v2?: boolean; v3?: boolean; v4?: boolean; v5?: boolean; v6?: boolean; v8?: boolean; v9?: boolean; v10?: boolean; v11?: boolean; v12?: boolean; v13?: boolean } | null;
+  const body = await req.json().catch(() => null) as { characterId?: string; v2?: boolean; v3?: boolean; v4?: boolean; v5?: boolean; v6?: boolean; v8?: boolean; v9?: boolean; v10?: boolean; v11?: boolean; v12?: boolean; v13?: boolean; v14?: boolean } | null;
   const characterId = body?.characterId?.trim();
   if (!characterId) return NextResponse.json({ error: 'characterId 必填' }, { status: 400 });
 
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   // admin 例外：帶 vN flag 直接走該版（保留逐版測試能力，admin 無 access doc）。
   let voiceVersion: string | undefined;
   if (user.role === 'admin') {
-    voiceVersion = body?.v13 ? 'v13' : body?.v12 ? 'v12' : body?.v11 ? 'v11' : body?.v10 ? 'v10' : body?.v9 ? 'v9' : body?.v8 ? 'v8' : body?.v6 ? 'v6' : body?.v5 ? 'v5' : body?.v4 ? 'v4' : body?.v3 ? 'v3' : body?.v2 ? 'v2' : undefined;
+    voiceVersion = body?.v14 ? 'v14' : body?.v13 ? 'v13' : body?.v12 ? 'v12' : body?.v11 ? 'v11' : body?.v10 ? 'v10' : body?.v9 ? 'v9' : body?.v8 ? 'v8' : body?.v6 ? 'v6' : body?.v5 ? 'v5' : body?.v4 ? 'v4' : body?.v3 ? 'v3' : body?.v2 ? 'v2' : undefined;
   } else {
     const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
     if (!accessSnap.exists) return NextResponse.json({ error: 'forbidden' }, { status: 403 });

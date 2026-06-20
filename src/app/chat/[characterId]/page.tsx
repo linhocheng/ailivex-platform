@@ -152,6 +152,12 @@ export default function ChatPage() {
                   background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
                 <Icon name="phone" size={15} />13
               </Link>
+              <Link href={`/realtime-v14/${characterId}`} title="腳本草稿＋音檔生成 實驗版"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
+                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
+                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
+                <Icon name="phone" size={15} />14
+              </Link>
               </>}
             </div>
           )}

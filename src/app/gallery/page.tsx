@@ -1,27 +1,33 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { Wordmark, Icon, Tag, Dot, Typing, EmptyState, Ambient } from '@/app/_components/ui';
 import { LogoutButton } from '@/app/_components/LogoutButton';
 
-interface ImgTask {
+interface MediaTask {
   id: string;
+  type: string;
   characterId: string;
   intent: string;
   summary: string;
   status: string;
   imageUrl: string;
+  audioUrl: string;
+  scriptText: string;
+  voiceId: string;
   error: string;
   createdAt: number;
   completedAt: number;
 }
 
 const STATUS: Record<string, { label: string; color: string; dot: string }> = {
-  pending: { label: '排隊中', color: 'var(--muted)',    dot: 'rgba(255,255,255,0.3)' },
-  running: { label: '製圖中', color: '#c2954e',         dot: '#c2954e' },
-  done:    { label: '完成',   color: 'var(--accent-2)',  dot: '#6f8c5f' },
-  failed:  { label: '失敗',   color: '#b5654a',          dot: '#b5654a' },
+  pending:   { label: '排隊中', color: 'var(--muted)',    dot: 'rgba(255,255,255,0.3)' },
+  running:   { label: '生成中', color: '#c2954e',         dot: '#c2954e' },
+  done:      { label: '完成',   color: 'var(--accent-2)',  dot: '#6f8c5f' },
+  failed:    { label: '失敗',   color: '#b5654a',          dot: '#b5654a' },
+  draft:     { label: '待確認', color: '#8c7ec2',          dot: '#8c7ec2' },
+  submitted: { label: '已送出', color: 'var(--muted)',    dot: 'rgba(255,255,255,0.3)' },
 };
 
 function fmt(ms: number) {
@@ -39,17 +45,127 @@ function NavLink({ href, active, icon, children }: { href: string; active?: bool
   );
 }
 
-function RowButton({ onClick, icon, children }: { onClick: () => void; icon: string; children: React.ReactNode }) {
+function RowButton({ onClick, icon, children, primary }: { onClick: () => void; icon: string; children: React.ReactNode; primary?: boolean }) {
   return (
     <button onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-      background: 'rgba(60,52,40,0.045)', border: '1px solid var(--border)', borderRadius: 6,
-      padding: '7px 12px', fontSize: 13, fontWeight: 500, color: 'var(--muted)', cursor: 'pointer', minHeight: 36 }}>
+      background: primary ? 'color-mix(in oklab, var(--accent) 18%, transparent)' : 'rgba(60,52,40,0.045)',
+      border: `1px solid ${primary ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'var(--border)'}`,
+      borderRadius: 6, padding: '7px 12px', fontSize: 13, fontWeight: 500,
+      color: primary ? 'var(--accent)' : 'var(--muted)', cursor: 'pointer', minHeight: 36 }}>
       <Icon name={icon} size={15} />{children}
     </button>
   );
 }
 
-function ScheduleRow({ task, onDelete }: { task: ImgTask; onDelete: (t: ImgTask) => void }) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 12, letterSpacing: '0.02em' }}>
+      {children}
+    </div>
+  );
+}
+
+// ── 腳本草稿卡 ────────────────────────────────────────────────────────
+function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onDelete: (t: MediaTask) => void; onGenerated: () => void }) {
+  const [text, setText] = useState(task.scriptText || '');
+  const [loading, setLoading] = useState(false);
+  const submitted = task.status === 'submitted';
+
+  async function generate() {
+    if (!text.trim()) return;
+    setLoading(true);
+    const r = await fetch(`/api/tasks/${task.id}/generate-audio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).then(r => r.json()).catch(() => null);
+    setLoading(false);
+    if (r?.ok) { onGenerated(); }
+    else { alert('生成失敗，請稍後再試。'); }
+  }
+
+  return (
+    <div className="ax-enter" style={{ padding: '18px 20px', borderRadius: 10, background: 'var(--panel)',
+      border: '1px solid color-mix(in oklab, #8c7ec2 28%, var(--border))' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
+          background: 'rgba(140,126,194,0.12)', color: '#8c7ec2', border: '1px solid rgba(140,126,194,0.28)' }}>
+          <Icon name="doc" size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {task.intent || '腳本草稿'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(task.createdAt)}</div>
+        </div>
+        <Tag color="#8c7ec2"><Dot color="#8c7ec2" size={6} />{submitted ? '已送出' : '待確認'}</Tag>
+      </div>
+
+      {!submitted && (
+        <>
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={6}
+            style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.7,
+              background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 7,
+              padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
+              marginBottom: 12 }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
+            <RowButton onClick={generate} icon="audio" primary>
+              {loading ? '處理中…' : '生成音檔'}
+            </RowButton>
+          </div>
+        </>
+      )}
+      {submitted && (
+        <div style={{ fontSize: 13, color: 'var(--muted)' }}>腳本已送出生成音檔，完成後會出現在下方。</div>
+      )}
+    </div>
+  );
+}
+
+// ── 音檔卡 ────────────────────────────────────────────────────────────
+function AudioCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTask) => void }) {
+  const [h, setH] = useState(false);
+  const inProgress = task.status === 'pending' || task.status === 'running';
+  const st = STATUS[task.status] || STATUS.pending;
+
+  return (
+    <div className="ax-enter" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ padding: '16px 18px', borderRadius: 10, background: 'var(--panel)',
+        border: '1px solid', borderColor: h ? 'var(--border-strong)' : 'var(--border)',
+        transition: 'border-color .2s' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: task.audioUrl ? 12 : 0 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
+          background: 'color-mix(in oklab, var(--accent) 12%, transparent)', color: 'var(--accent)',
+          border: '1px solid color-mix(in oklab, var(--accent) 24%, transparent)' }}>
+          <Icon name="audio" size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {task.intent || '音檔'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(task.completedAt || task.createdAt)}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {inProgress && <Typing />}
+          <Tag color={st.color}><Dot color={st.dot} pulse={inProgress} size={6} />{st.label}</Tag>
+          <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
+        </div>
+      </div>
+      {task.audioUrl && (
+        <audio controls src={task.audioUrl}
+          style={{ width: '100%', height: 36, borderRadius: 6, accentColor: 'var(--accent)' }} />
+      )}
+    </div>
+  );
+}
+
+// ── 圖片元件（不變）──────────────────────────────────────────────────
+function ScheduleRow({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTask) => void }) {
   const st = STATUS[task.status] || STATUS.pending;
   const inProgress = task.status === 'pending' || task.status === 'running';
   return (
@@ -75,7 +191,7 @@ function ScheduleRow({ task, onDelete }: { task: ImgTask; onDelete: (t: ImgTask)
   );
 }
 
-function GalleryCard({ task, onOpen, onDelete }: { task: ImgTask; onOpen: () => void; onDelete: (t: ImgTask) => void }) {
+function GalleryCard({ task, onOpen, onDelete }: { task: MediaTask; onOpen: () => void; onDelete: (t: MediaTask) => void }) {
   const [h, setH] = useState(false);
   return (
     <div className="ax-enter" onClick={onOpen}
@@ -106,7 +222,7 @@ function GalleryCard({ task, onOpen, onDelete }: { task: ImgTask; onOpen: () => 
   );
 }
 
-function Lightbox({ task, onClose, onDelete }: { task: ImgTask; onClose: () => void; onDelete: (t: ImgTask) => void }) {
+function Lightbox({ task, onClose, onDelete }: { task: MediaTask; onClose: () => void; onDelete: (t: MediaTask) => void }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center',
       background: 'rgba(20,16,12,0.72)', padding: 'clamp(16px,5vw,48px)', backdropFilter: 'blur(4px)' }}>
@@ -137,10 +253,11 @@ function Lightbox({ task, onClose, onDelete }: { task: ImgTask; onClose: () => v
   );
 }
 
+// ── 主頁 ─────────────────────────────────────────────────────────────
 export default function Gallery() {
-  const [tasks, setTasks] = useState<ImgTask[]>([]);
+  const [tasks, setTasks] = useState<MediaTask[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [open, setOpen] = useState<ImgTask | null>(null);
+  const [open, setOpen] = useState<MediaTask | null>(null);
 
   async function load() {
     const r = await fetch('/api/gallery').then(r => r.json()).catch(() => ({ tasks: [] }));
@@ -148,9 +265,9 @@ export default function Gallery() {
     setLoaded(true);
   }
 
-  async function del(task: ImgTask) {
+  async function del(task: MediaTask) {
     const verb = task.status === 'pending' || task.status === 'running' ? '取消' : '刪除';
-    if (!confirm(`確定${verb}「${task.intent || '這個任務'}」？此操作會從根本源頭清除，無法復原。`)) return;
+    if (!confirm(`確定${verb}「${task.intent || '這個任務'}」？此操作無法復原。`)) return;
     setTasks(prev => prev.filter(t => t.id !== task.id));
     if (open?.id === task.id) setOpen(null);
     const r = await fetch(`/api/gallery/${task.id}`, { method: 'DELETE' }).then(r => r.json()).catch(() => null);
@@ -158,15 +275,23 @@ export default function Gallery() {
     else if (r.warnings?.length) console.warn('[gallery] 部分來源未清乾淨：', r.warnings);
   }
 
+  // 分類
+  const imgActive  = tasks.filter(t => t.type === 'image_generation' && (t.status === 'pending' || t.status === 'running'));
+  const imgFailed  = tasks.filter(t => t.type === 'image_generation' && t.status === 'failed');
+  const imgDone    = tasks.filter(t => t.type === 'image_generation' && t.status === 'done' && t.imageUrl);
+  const drafts     = tasks.filter(t => t.type === 'script_draft' && t.status !== 'submitted');
+  const audioTasks = tasks.filter(t => t.type === 'audio_generation');
+
+  const anyActive = imgActive.length > 0 || audioTasks.some(t => t.status === 'pending' || t.status === 'running');
+  const hasContent = imgDone.length > 0 || drafts.length > 0 || audioTasks.length > 0 || imgActive.length > 0 || imgFailed.length > 0;
+
+  useEffect(() => { load(); }, []);
+
   useEffect(() => {
-    load();
+    if (!anyActive) return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, []);
-
-  const active = tasks.filter(t => t.status === 'pending' || t.status === 'running');
-  const failed = tasks.filter(t => t.status === 'failed');
-  const done = tasks.filter(t => t.status === 'done' && t.imageUrl);
+  }, [anyActive]);
 
   return (
     <>
@@ -179,7 +304,7 @@ export default function Gallery() {
           <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <NavLink href="/lobby">大廳</NavLink>
             <NavLink href="/documents" icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" active icon="image">圖庫</NavLink>
+            <NavLink href="/gallery" active icon="image">媒體庫</NavLink>
             <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
               border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
               fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
@@ -190,67 +315,92 @@ export default function Gallery() {
 
         <main style={{ flex: 1, overflowY: 'auto', padding: '40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 28, gap: 16 }} className="ax-enter">
+
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, gap: 16 }} className="ax-enter">
               <div>
-                <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>圖庫</h1>
-                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>角色為你生成的圖片，與正在製作中的任務</p>
+                <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>媒體庫</h1>
+                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>角色為你生成的圖片、音檔與腳本草稿</p>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 7 }}>
-                <Dot color="var(--accent-2)" pulse size={6} />每 5 秒自動更新
-              </div>
+              {anyActive && (
+                <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <Dot color="var(--accent-2)" pulse size={6} />每 5 秒自動更新
+                </div>
+              )}
             </div>
 
-            {/* 任務排程 */}
-            {(active.length > 0 || failed.length > 0) && (
-              <div style={{ marginBottom: 36 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 12, letterSpacing: '0.02em' }}>
-                  任務排程
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {active.map(t => <ScheduleRow key={t.id} task={t} onDelete={del} />)}
-                  {failed.map(t => (
-                    <div key={t.id} className="ax-enter" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', rowGap: 12,
-                      padding: '14px 18px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
-                        background: 'rgba(181,101,74,0.1)', color: '#b5654a', border: '1px solid rgba(181,101,74,0.28)' }}>
-                        <Icon name="image" size={19} />
-                      </div>
-                      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-                        <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {t.intent || '製圖任務'}
-                        </div>
-                        <div style={{ fontSize: 12.5, color: '#b5654a' }}>{t.error || '生成失敗'}</div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <Tag color="#b5654a"><Dot color="#b5654a" size={6} />失敗</Tag>
-                        <RowButton onClick={() => del(t)} icon="trash">刪除</RowButton>
-                      </div>
+            {!loaded ? null : !hasContent ? (
+              <EmptyState icon="image" title="媒體庫還是空的"
+                desc="在對話中告訴角色幫你畫圖、寫腳本或生成音檔，完成後會出現在這裡。" />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+
+                {/* 腳本草稿 */}
+                {drafts.length > 0 && (
+                  <section>
+                    <SectionLabel>腳本草稿</SectionLabel>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {drafts.map(t => (
+                        <ScriptDraftCard key={t.id} task={t} onDelete={del} onGenerated={load} />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </section>
+                )}
+
+                {/* 音檔 */}
+                {audioTasks.length > 0 && (
+                  <section>
+                    <SectionLabel>音檔</SectionLabel>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {audioTasks.map(t => <AudioCard key={t.id} task={t} onDelete={del} />)}
+                    </div>
+                  </section>
+                )}
+
+                {/* 圖片 — 進行中 */}
+                {(imgActive.length > 0 || imgFailed.length > 0) && (
+                  <section>
+                    <SectionLabel>圖片任務</SectionLabel>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {imgActive.map(t => <ScheduleRow key={t.id} task={t} onDelete={del} />)}
+                      {imgFailed.map(t => (
+                        <div key={t.id} className="ax-enter" style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', rowGap: 12,
+                          padding: '14px 18px', borderRadius: 8, background: 'var(--panel)', border: '1px solid var(--border)' }}>
+                          <div style={{ width: 38, height: 38, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
+                            background: 'rgba(181,101,74,0.1)', color: '#b5654a', border: '1px solid rgba(181,101,74,0.28)' }}>
+                            <Icon name="image" size={19} />
+                          </div>
+                          <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                            <div style={{ fontSize: 14.5, fontWeight: 500, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {t.intent || '製圖任務'}
+                            </div>
+                            <div style={{ fontSize: 12.5, color: '#b5654a' }}>{t.error || '生成失敗'}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <Tag color="#b5654a"><Dot color="#b5654a" size={6} />失敗</Tag>
+                            <RowButton onClick={() => del(t)} icon="trash">刪除</RowButton>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* 圖庫 */}
+                {imgDone.length > 0 && (
+                  <section>
+                    {(imgActive.length > 0 || imgFailed.length > 0) && <SectionLabel>已完成圖片</SectionLabel>}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+                      {imgDone.map((t, i) => (
+                        <div key={t.id} style={{ animationDelay: `${i * 0.04}s` }}>
+                          <GalleryCard task={t} onOpen={() => setOpen(t)} onDelete={del} />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
               </div>
             )}
-
-            {/* 圖庫 */}
-            {!loaded ? null : done.length === 0 && active.length === 0 && failed.length === 0 ? (
-              <EmptyState icon="image" title="還沒有圖片"
-                desc="在對話中告訴角色幫你畫一張圖，完成後會出現在這裡。" />
-            ) : done.length > 0 ? (
-              <div>
-                {(active.length > 0 || failed.length > 0) && (
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 12, letterSpacing: '0.02em' }}>
-                    已完成
-                  </div>
-                )}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-                  {done.map((t, i) => (
-                    <div key={t.id} style={{ animationDelay: `${i * 0.04}s` }}>
-                      <GalleryCard task={t} onOpen={() => setOpen(t)} onDelete={del} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
         </main>
       </div>

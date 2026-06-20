@@ -111,7 +111,10 @@ export async function POST(req: Request) {
       console.warn(`[dialogue] dispatch blocked: ${d.type} not in capabilities for char ${characterId}`);
       continue;
     }
-    dispatchTask(user.uid, characterId, d.type, d.intent, d.params)
+    const taskParams = d.type === 'script_draft'
+      ? { ...d.params, voiceId: char.voiceIdMinimax ?? '' }
+      : d.params;
+    dispatchTask(user.uid, characterId, d.type, d.intent, taskParams)
       .catch(e => console.error('[dialogue] dispatch failed:', e instanceof Error ? e.message : String(e)));
   }
 
