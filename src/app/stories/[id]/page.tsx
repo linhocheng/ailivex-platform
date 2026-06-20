@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Wordmark, Icon, Dot, Typing, Ambient } from '@/app/_components/ui';
@@ -193,12 +193,25 @@ export default function StoryDetailPage() {
   const [addType, setAddType] = useState('realistic_photo');
   const [addLoading, setAddLoading] = useState(false);
 
+  const phaseATriggered = useRef(false);
+  const phaseBTriggered = useRef(false);
+
   const load = useCallback(async () => {
     const r = await fetch(`/api/stories/${storyId}`).then(r => r.json()).catch(() => null);
     if (r?.id) {
       setStory(r);
       if (!storyDraft) setStoryDraft(r.storyText || '');
       setLoaded(true);
+      // pending + 沒有故事文字 → 自動觸發 Phase A（可能 enqueueStoryDraftJob 沒成功）
+      if (r.status === 'pending' && !r.storyText && !phaseATriggered.current) {
+        phaseATriggered.current = true;
+        fetch(`/api/tasks/${storyId}/generate-story`, { method: 'POST' }).catch(() => {});
+      }
+      // scripting（Phase A 完成）且還沒有 cards → 自動觸發 Phase B
+      if (r.status === 'scripting' && r.cards.length === 0 && !phaseBTriggered.current) {
+        phaseBTriggered.current = true;
+        fetch(`/api/tasks/${storyId}/generate-scripts`, { method: 'POST' }).catch(() => {});
+      }
     } else if (r?.error === 'not_found') {
       router.push('/stories');
     }

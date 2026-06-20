@@ -89,11 +89,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       await ref.update({ storyText, status: 'scripting', updatedAt: FieldValue.serverTimestamp() });
 
-      // 觸發 Phase B：await fetch 讓連線確實送出（generate-scripts 也是快速回 200）
+      // 觸發 Phase B（best-effort；前端也有 polling fallback）
       const base = platformUrl();
       const secret = cleanSecret(process.env.WORKER_SECRET);
       if (base && secret) {
-        await fetch(`${base}/api/tasks/${taskId}/generate-scripts`, {
+        fetch(`${base}/api/tasks/${taskId}/generate-scripts`, {
           method: 'POST',
           headers: { 'x-worker-secret': secret, 'Content-Type': 'application/json' },
           body: '{}',
