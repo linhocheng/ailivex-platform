@@ -104,19 +104,16 @@ export async function POST(req: Request) {
       pendingJobIds.push(r.jobId);
     }
   }
-  // capability gate：只有角色被授權的 type 才派出
+
+  // dispatches 移到 after() — enqueueStoryDraftJob 需要 await fetch，在 after() 裡才保證 lambda 存活
   const capabilities = char.capabilities ?? [];
-  for (const d of dispatches) {
-    if (!capabilities.includes(d.type)) {
-      console.warn(`[dialogue] dispatch blocked: ${d.type} not in capabilities for char ${characterId}`);
-      continue;
-    }
-    const taskParams = d.type === 'script_draft'
-      ? { ...d.params, voiceId: char.voiceIdMinimax ?? '' }
-      : d.params;
-    dispatchTask(user.uid, characterId, d.type, d.intent, taskParams)
-      .catch(e => console.error('[dialogue] dispatch failed:', e instanceof Error ? e.message : String(e)));
-  }
+  const voiceId = char.voiceIdMinimax ?? '';
+  const pendingDispatches = dispatches
+    .filter(d => capabilities.includes(d.type))
+    .map(d => ({
+      ...d,
+      params: d.type === 'script_draft' ? { ...d.params, voiceId } : d.params,
+    }));
 
   // 存對話
   const now = Date.now();
@@ -138,6 +135,11 @@ export async function POST(req: Request) {
       upsertRelationship(db, user.uid, characterId),
     ]);
     await Promise.all(pendingJobIds.map(id => dispatchDocumentJob(id)));
+    // dispatchTask 在 after() 裡執行，確保 lambda 存活到 HTTP 請求送出
+    for (const d of pendingDispatches) {
+      await dispatchTask(user.uid, characterId, d.type, d.intent, d.params)
+        .catch(e => console.error('[dialogue] dispatch failed:', e instanceof Error ? e.message : String(e)));
+    }
   });
 
   // 費用

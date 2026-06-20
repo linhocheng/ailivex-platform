@@ -168,7 +168,8 @@ async function enqueueStoryDraftJob(taskId: string, _params: Record<string, unkn
   const base = platformBase();
   const secret = cleanSecret(process.env.WORKER_SECRET);
   if (!base || !secret) { console.warn('[task-dispatcher] story_draft: PLATFORM_URL or WORKER_SECRET not set'); return; }
-  fetch(`${base}/api/tasks/${taskId}/generate-story`, {
+  // generate-story 快速回 200（LLM 在 after() 裡跑），await 確保 HTTP 請求確實送出
+  await fetch(`${base}/api/tasks/${taskId}/generate-story`, {
     method: 'POST',
     headers: { 'x-worker-secret': secret, 'Content-Type': 'application/json' },
     body: '{}',

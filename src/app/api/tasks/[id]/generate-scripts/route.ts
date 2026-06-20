@@ -5,6 +5,7 @@
  * 在 Firestore 建立 N 個 image_generation tasks（status='scripted'）。
  * 完成後 story_draft status → 'ready'。
  */
+import { after } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
@@ -40,52 +41,55 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const storyText = (task.storyText as string) || '';
   if (!storyText.trim()) return NextResponse.json({ error: 'no_story_text' }, { status: 400 });
 
-  // 取角色 imageStyle
-  let imageStyle = '';
-  if (task.characterId) {
-    const cs = await db.collection(COL.characters).doc(task.characterId as string).get();
-    if (cs.exists) imageStyle = (cs.data() as CharacterDoc).imageStyle ?? '';
-  }
-
-  try {
-    const cards = await analyzeStory(storyText, imageStyle);
-    if (!cards.length) throw new Error('LLM returned empty card list');
-
-    // 刪除該 story 舊有的 scripted 子任務（重新分析時覆蓋）
-    const oldSnap = await db.collection(COL.tasks)
-      .where('parentTaskId', '==', taskId)
-      .where('status', '==', 'scripted')
-      .get();
-    const batch = db.batch();
-    oldSnap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-
-    // 建新的 scripted 任務
-    for (const card of cards) {
-      const imgRef = db.collection(COL.tasks).doc();
-      await imgRef.set({
-        userId: task.userId,
-        characterId: task.characterId,
-        type: 'image_generation',
-        intent: card.title,
-        params: {},
-        status: 'scripted',
-        parentTaskId: taskId,
-        order: card.order,
-        cardText: card.cardText,
-        cardType: card.cardType,
-        notified: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
+  // 快速回 200，LLM 分析在 after() 裡執行
+  after(async () => {
+    // 取角色 imageStyle
+    let imageStyle = '';
+    if (task.characterId) {
+      const cs = await db.collection(COL.characters).doc(task.characterId as string).get();
+      if (cs.exists) imageStyle = (cs.data() as CharacterDoc).imageStyle ?? '';
     }
 
-    await ref.update({ status: 'ready', updatedAt: FieldValue.serverTimestamp() });
-    return NextResponse.json({ ok: true, count: cards.length });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await ref.update({ status: 'failed', error: msg }).catch(() => {});
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+    try {
+      const cards = await analyzeStory(storyText, imageStyle);
+      if (!cards.length) throw new Error('LLM returned empty card list');
+
+      // 刪除該 story 舊有的 scripted 子任務（重新分析時覆蓋）
+      const oldSnap = await db.collection(COL.tasks)
+        .where('parentTaskId', '==', taskId)
+        .where('status', '==', 'scripted')
+        .get();
+      const batch = db.batch();
+      oldSnap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+
+      // 建新的 scripted 任務
+      for (const card of cards) {
+        const imgRef = db.collection(COL.tasks).doc();
+        await imgRef.set({
+          userId: task.userId,
+          characterId: task.characterId,
+          type: 'image_generation',
+          intent: card.title,
+          params: {},
+          status: 'scripted',
+          parentTaskId: taskId,
+          order: card.order,
+          cardText: card.cardText,
+          cardType: card.cardType,
+          notified: false,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+
+      await ref.update({ status: 'ready', updatedAt: FieldValue.serverTimestamp() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await ref.update({ status: 'failed', error: msg }).catch(() => {});
+    }
+  });
+
+  return NextResponse.json({ ok: true, queued: true });
 }
 
 async function analyzeStory(story: string, imageStyle: string): Promise<CardSlot[]> {

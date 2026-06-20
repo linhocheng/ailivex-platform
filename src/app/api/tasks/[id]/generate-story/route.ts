@@ -8,6 +8,7 @@
  *   - Python agent dispatch 後呼叫：x-worker-secret header
  *   - 用戶在故事板頁面手動「重新生成」：session cookie
  */
+import { after } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
@@ -57,49 +58,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   await ref.update({ status: 'pending' });
 
-  try {
-    const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY ?? '', { bridgeTimeoutMs: 160_000 });
-    const resp = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
-      system: charSoul
-        ? `你是「${charName}」。${charSoul}\n\n請用你的身份和風格寫故事。`
-        : '你是一個創意故事寫手，擅長寫生動有畫面感的故事。',
-      messages: [{
-        role: 'user',
-        content: (
-          `請根據以下主題，寫一篇完整的故事（約 500-800 字）。\n`
-          + `主題：${task.intent || (task.params as Record<string, unknown>)?.brief || '一個精彩的故事'}\n\n`
-          + `要求：\n`
-          + `- 分成 5-8 個段落，每段有清楚的場景或情節推進\n`
-          + `- 有畫面感，適合後續生成圖片\n`
-          + `- 直接寫故事本文，不要標題、不要前言說明`
-        ),
-      }],
-    });
+  // 快速回 200，LLM 工作在 after() 裡執行（after() 可使用 route 的 maxDuration 時限）
+  after(async () => {
+    try {
+      const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY ?? '', { bridgeTimeoutMs: 160_000 });
+      const resp = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2048,
+        system: charSoul
+          ? `你是「${charName}」。${charSoul}\n\n請用你的身份和風格寫故事。`
+          : '你是一個創意故事寫手，擅長寫生動有畫面感的故事。',
+        messages: [{
+          role: 'user',
+          content: (
+            `請根據以下主題，寫一篇完整的故事（約 500-800 字）。\n`
+            + `主題：${task.intent || (task.params as Record<string, unknown>)?.brief || '一個精彩的故事'}\n\n`
+            + `要求：\n`
+            + `- 分成 5-8 個段落，每段有清楚的場景或情節推進\n`
+            + `- 有畫面感，適合後續生成圖片\n`
+            + `- 直接寫故事本文，不要標題、不要前言說明`
+          ),
+        }],
+      });
 
-    const storyText = resp.content
-      .filter(b => b.type === 'text')
-      .map(b => (b as { type: 'text'; text: string }).text)
-      .join('')
-      .trim();
+      const storyText = resp.content
+        .filter(b => b.type === 'text')
+        .map(b => (b as { type: 'text'; text: string }).text)
+        .join('')
+        .trim();
 
-    await ref.update({ storyText, status: 'scripting', updatedAt: FieldValue.serverTimestamp() });
+      await ref.update({ storyText, status: 'scripting', updatedAt: FieldValue.serverTimestamp() });
 
-    // fire-and-forget Phase B
-    const base = platformUrl();
-    const secret = cleanSecret(process.env.WORKER_SECRET);
-    if (base && secret) {
-      fetch(`${base}/api/tasks/${taskId}/generate-scripts`, {
-        method: 'POST',
-        headers: { 'x-worker-secret': secret, 'Content-Type': 'application/json' },
-      }).catch(err => console.error('[generate-story] Phase B trigger failed:', err));
+      // 觸發 Phase B：await fetch 讓連線確實送出（generate-scripts 也是快速回 200）
+      const base = platformUrl();
+      const secret = cleanSecret(process.env.WORKER_SECRET);
+      if (base && secret) {
+        await fetch(`${base}/api/tasks/${taskId}/generate-scripts`, {
+          method: 'POST',
+          headers: { 'x-worker-secret': secret, 'Content-Type': 'application/json' },
+          body: '{}',
+        }).catch(err => console.error('[generate-story] Phase B trigger failed:', err instanceof Error ? err.message : String(err)));
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await ref.update({ status: 'failed', error: msg }).catch(() => {});
     }
+  });
 
-    return NextResponse.json({ ok: true, chars: storyText.length });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await ref.update({ status: 'failed', error: msg }).catch(() => {});
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true, queued: true });
 }
