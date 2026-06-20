@@ -9,11 +9,12 @@ interface Char {
   id: string; name: string; avatarUrl: string; status: string;
   hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
-type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'writing' | 'web_search';
+type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'story_draft' | 'writing' | 'web_search';
 const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
   { value: 'image_generation', label: '製圖' },
   { value: 'audio_generation', label: '生音檔' },
   { value: 'script_draft', label: '腳本草稿' },
+  { value: 'story_draft', label: '故事圖卡' },
   { value: 'writing', label: '寫文件' },
   { value: 'web_search', label: '網路搜尋' },
 ];
@@ -23,6 +24,7 @@ type EditState = {
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
   aliases: string[];
   capabilities: TaskCapability[];
+  imageStyle: string;
   avatar: { b64: string; type: string } | null;
 };
 
@@ -195,6 +197,7 @@ export default function AdminCharacters() {
     payload.convSettings = editing.convSettings;
     payload.aliases = editing.aliases.filter(a => a.trim());
     payload.capabilities = editing.capabilities;
+    payload.imageStyle = editing.imageStyle;
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
     const r = await fetch(`/api/admin/characters/${editing.id}`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -267,9 +270,9 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -364,6 +367,12 @@ export default function AdminCharacters() {
                 ))}
               </div>
             </Field>
+            {editing.capabilities.includes('story_draft') && (
+              <Field label="圖片風格（story_draft 用）">
+                <TextInput value={editing.imageStyle} onChange={e=>setEditing({...editing,imageStyle:e.target.value})}
+                  placeholder="例：cinematic photography, warm tones, realistic" />
+              </Field>
+            )}
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}
                 placeholder="靈魂（留空不更新）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />

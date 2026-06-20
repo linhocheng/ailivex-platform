@@ -5,7 +5,7 @@ import { COL, type TaskDoc } from '@/lib/collections';
 
 export const runtime = 'nodejs';
 
-const GALLERY_TYPES = ['image_generation', 'audio_generation', 'script_draft'];
+const GALLERY_TYPES = ['image_generation', 'audio_generation', 'script_draft', 'story_draft'];
 
 function toMillis(v: TaskDoc['createdAt'] | undefined): number {
   if (!v) return 0;
@@ -37,6 +37,9 @@ export async function GET() {
     audioUrl: (t.audioUrl as string) || '',
     scriptText: (t.scriptText as string) || '',
     voiceId: (t.voiceId as string) || '',
+    storyText: (t.storyText as string) || '',
+    parentTaskId: (t.parentTaskId as string) || '',
+    order: (t.order as number) ?? 0,
     error: (t.error as string) || '',
     createdAt: toMillis(t.createdAt),
     completedAt: toMillis(t.completedAt as TaskDoc['createdAt']),

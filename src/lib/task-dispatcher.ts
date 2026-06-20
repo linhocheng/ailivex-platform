@@ -30,6 +30,7 @@ const WORKER_ROUTES: Record<TaskCapability, (taskId: string, params: Record<stri
   writing: enqueueWritingJob,
   web_search: enqueueWebSearchJob,
   script_draft: enqueueScriptDraftJob,
+  story_draft: enqueueStoryDraftJob,
 };
 
 export interface DispatchResult {
@@ -48,14 +49,17 @@ export async function dispatchTask(
   const ref = db.collection(COL.tasks).doc();
   const taskId = ref.id;
 
-  const isScriptDraft = type === 'script_draft';
+  const isDraft = type === 'script_draft' || type === 'story_draft';
   const doc: Omit<TaskDoc, 'createdAt'> & Record<string, unknown> = {
     userId, characterId, type, intent, params,
-    status: isScriptDraft ? 'draft' : 'pending',
+    status: isDraft ? 'draft' : 'pending',
     notified: false,
-    ...(isScriptDraft && {
+    ...(type === 'script_draft' && {
       scriptText: (params.text as string) ?? '',
       voiceId: (params.voiceId as string) ?? '',
+    }),
+    ...(type === 'story_draft' && {
+      storyText: (params.text as string) ?? '',
     }),
   };
 
@@ -82,6 +86,7 @@ const DISPATCH_MESSAGES: Record<TaskCapability, string> = {
   writing: '我已開始寫這份文件，完成後你可以在文件區查看。',
   web_search: '我已派出搜尋任務，完成後我會告訴你結果。',
   script_draft: '腳本草稿已備妥，你可以去媒體庫確認後生成音檔。',
+  story_draft: '故事草稿已備妥，你可以去媒體庫確認後生成圖卡。',
 };
 
 // ── Worker 呼叫實作 ──────────────────────────────────────────────────
@@ -155,6 +160,10 @@ async function enqueueAudioJob(taskId: string, params: Record<string, unknown>):
 
 async function enqueueScriptDraftJob(_taskId: string, _params: Record<string, unknown>): Promise<void> {
   // script_draft 不走 media-worker：agent 直接寫 Firestore，此路由是佔位（不應被呼叫）
+}
+
+async function enqueueStoryDraftJob(_taskId: string, _params: Record<string, unknown>): Promise<void> {
+  // story_draft 不走 media-worker：agent 直接寫 Firestore，此路由是佔位（不應被呼叫）
 }
 
 async function enqueueWritingJob(_taskId: string, _params: Record<string, unknown>): Promise<void> {

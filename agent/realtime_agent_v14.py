@@ -47,6 +47,7 @@ from agent.firestore_loader import (
     create_document_job,
     dispatch_task_job,
     dispatch_script_draft,
+    dispatch_story_draft,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -251,8 +252,10 @@ async def entrypoint(ctx: JobContext):
         name="dispatch_task",
         description=(
             "派發背景任務給工廠執行。"
-            "task_type 可以是：image_generation（生成圖片）、audio_generation（生成音檔）、script_draft（寫腳本草稿供用戶審閱後生成音檔）。"
-            "script_draft：params 必須包含 'text'（完整腳本原文）。任務建立後告知對方可去媒體庫確認腳本再生成音檔。"
+            "task_type 可以是：image_generation（生成圖片）、audio_generation（生成音檔）、"
+            "script_draft（寫腳本草稿供用戶審閱後生成音檔）、story_draft（寫故事草稿供用戶審閱後生成故事圖卡）。"
+            "script_draft：params 必須包含 'text'（完整腳本原文）。建立後告知對方去媒體庫確認腳本再生成音檔。"
+            "story_draft：params 必須包含 'text'（完整故事原文，約 200-500 字）。建立後告知對方去媒體庫確認故事再生成圖卡。"
             "image_generation：params 包含 'prompt'。"
             "audio_generation：直接生成，params 包含 'text'。通常先走 script_draft 讓對方確認。"
             "intent 用一句話描述任務目的。呼叫後系統背景執行，口頭告知對方任務已安排。"
@@ -277,6 +280,13 @@ async def entrypoint(ctx: JobContext):
                 task_id = dispatch_script_draft(user_id, character_id, voice_id, text, intent)
                 logger.info(f"[v14] script_draft dispatched: {task_id}")
                 return "腳本草稿已備妥，你可以去媒體庫確認並編修後，按「生成音檔」鈕產出音檔。"
+            elif task_type == "story_draft":
+                text = parsed_params.get("text", "")
+                if not text:
+                    return "請提供故事內容（params.text）。"
+                task_id = dispatch_story_draft(user_id, character_id, text, intent)
+                logger.info(f"[v14] story_draft dispatched: {task_id}")
+                return "故事草稿已備妥，你可以去媒體庫確認並編修後，按「生成圖卡」鈕產出故事圖卡。"
             elif task_type == "audio_generation":
                 # 自動注入角色 voiceId，不讓 LLM 猜
                 parsed_params.setdefault("voiceId", voice_id)

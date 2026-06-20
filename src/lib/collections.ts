@@ -45,7 +45,7 @@ export interface ConvSettings {
   temperature?: number;          // 0.1–1.0 LLM 溫度（越低越收斂/越不演）
 }
 
-export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft';
+export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft';
 
 export interface CharacterDoc {
   name: string;
@@ -57,6 +57,7 @@ export interface CharacterDoc {
   convSettings?: ConvSettings;  // 對話手感旋鈕
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
   capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
+  imageStyle?: string;     // 圖片生成風格描述（story_draft 生圖 prompt prefix）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
@@ -184,6 +185,9 @@ export interface TaskDoc {
   audioUrl?: string;       // audio_generation 完成後的 GCS 音檔網址
   scriptText?: string;     // script_draft 的腳本原文（可編修）
   voiceId?: string;        // script_draft 綁定的角色 voiceId，生成音檔時帶入
+  storyText?: string;      // story_draft 的故事原文（可編修）
+  parentTaskId?: string;   // image_generation 所屬的 story_draft task id
+  order?: number;          // 故事板中的圖片順序（1-based）
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過

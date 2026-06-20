@@ -785,6 +785,27 @@ def dispatch_script_draft(user_id: str, character_id: str, voice_id: str, text: 
     return task_id
 
 
+def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str) -> str:
+    """直接寫 Firestore story_draft task，不走 media-worker。回傳 taskId。"""
+    _ensure_init()
+    db = firestore.client()
+    task_ref = db.collection("tasks").document()
+    task_ref.set({
+        "userId": user_id,
+        "characterId": character_id,
+        "type": "story_draft",
+        "intent": intent,
+        "storyText": text,
+        "params": {},
+        "status": "draft",
+        "notified": False,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+    })
+    task_id = task_ref.id
+    logger.info(f"[task] story_draft created task={task_id} intent={intent[:60]!r}")
+    return task_id
+
+
 def dispatch_task_job(user_id: str, character_id: str, task_type: str, intent: str, params: dict) -> str:
     """建 Firestore tasks doc，然後非同步呼叫 media-worker API，回傳 taskId。"""
     _ensure_init()
