@@ -194,7 +194,6 @@ export default function StoryDetailPage() {
   const [addLoading, setAddLoading] = useState(false);
 
   const phaseATriggered = useRef(false);
-  const phaseBTriggered = useRef(false);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/stories/${storyId}`).then(r => r.json()).catch(() => null);
@@ -202,15 +201,11 @@ export default function StoryDetailPage() {
       setStory(r);
       if (!storyDraft) setStoryDraft(r.storyText || '');
       setLoaded(true);
-      // pending + 沒有故事文字 → 自動觸發 Phase A（可能 enqueueStoryDraftJob 沒成功）
+      // pending + 沒有故事文字 → 自動觸發 Phase A（enqueueStoryDraftJob 可能沒成功）
+      // Phase B 由 generate-story 的 after() 直接串聯，不在 client 觸發（避免重複）
       if (r.status === 'pending' && !r.storyText && !phaseATriggered.current) {
         phaseATriggered.current = true;
         fetch(`/api/tasks/${storyId}/generate-story`, { method: 'POST' }).catch(() => {});
-      }
-      // scripting（Phase A 完成）且還沒有 cards → 自動觸發 Phase B
-      if (r.status === 'scripting' && r.cards.length === 0 && !phaseBTriggered.current) {
-        phaseBTriggered.current = true;
-        fetch(`/api/tasks/${storyId}/generate-scripts`, { method: 'POST' }).catch(() => {});
       }
     } else if (r?.error === 'not_found') {
       router.push('/stories');
