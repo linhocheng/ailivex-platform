@@ -77,6 +77,10 @@ export default function ChatPage() {
               <Dot color="#6f8c5f" size={6} /> 線上 · 記得你
             </div>
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Link href="/gallery" style={iconBtn} title="媒體庫"><Icon name="image" size={18} /></Link>
+            <Link href="/stories" style={iconBtn} title="故事板"><Icon name="doc" size={18} /></Link>
+          </div>
           {char?.hasVoice && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Link href={`/realtime/${characterId}`}

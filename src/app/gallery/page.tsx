@@ -128,178 +128,52 @@ function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onD
 }
 
 // ── 故事草稿卡 ───────────────────────────────────────────────────────
-function StoryDraftCard({ task, images, onDelete, onGenerated, onAddImage }: {
-  task: MediaTask;
-  images: MediaTask[];
-  onDelete: (t: MediaTask) => void;
-  onGenerated: () => void;
-  onAddImage: (storyTaskId: string, prompt: string) => Promise<void>;
-}) {
-  const [text, setText] = useState(task.storyText || '');
-  const [loading, setLoading] = useState(false);
-  const [lastError, setLastError] = useState('');
-  const [addPrompt, setAddPrompt] = useState('');
-  const [showAdd, setShowAdd] = useState(false);
-  const [addLoading, setAddLoading] = useState(false);
+const STORY_STATUS: Record<string, { label: string; color: string; dot: string }> = {
+  pending:   { label: '排隊中',   color: 'var(--muted)',    dot: 'rgba(255,255,255,0.3)' },
+  running:   { label: '寫作中',   color: '#c2954e',         dot: '#c2954e' },
+  scripting: { label: '寫作中',   color: '#c2954e',         dot: '#c2954e' },
+  scripted:  { label: '故事完成', color: '#8c7ec2',         dot: '#8c7ec2' },
+  ready:     { label: '圖卡就緒', color: 'var(--accent-2)', dot: '#6f8c5f' },
+  done:      { label: '完成',     color: 'var(--accent-2)', dot: '#6f8c5f' },
+  failed:    { label: '失敗',     color: '#b5654a',         dot: '#b5654a' },
+};
 
-  const sorted = [...images].sort((a, b) => a.order - b.order);
-  const hasActive = images.some(i => i.status === 'pending' || i.status === 'running');
-
-  async function generate() {
-    if (!text.trim()) return;
-    setLoading(true);
-    setLastError('');
-    const r = await fetch(`/api/tasks/${task.id}/generate-storyboard`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    }).then(r => r.json()).catch(() => null);
-    setLoading(false);
-    if (r?.ok) { onGenerated(); }
-    else { setLastError(r?.error ? `生成失敗：${r.error}` : '生成失敗，請稍後再試。'); }
-  }
-
-  async function addOne() {
-    if (!addPrompt.trim()) return;
-    setAddLoading(true);
-    await onAddImage(task.id, addPrompt.trim());
-    setAddPrompt('');
-    setShowAdd(false);
-    setAddLoading(false);
-    onGenerated();
-  }
-
-  const nextOrder = sorted.length > 0 ? sorted[sorted.length - 1].order + 1 : 1;
+function StoryDraftCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTask) => void }) {
+  const st = STORY_STATUS[task.status] || STORY_STATUS.pending;
+  const inProgress = task.status === 'pending' || task.status === 'running' || task.status === 'scripting';
 
   return (
     <div className="ax-enter" style={{ padding: '18px 20px', borderRadius: 10, background: 'var(--panel)',
       border: '1px solid color-mix(in oklab, #6b9e7a 28%, var(--border))' }}>
-      {/* 標頭 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <div style={{ width: 36, height: 36, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
           background: 'rgba(107,158,122,0.12)', color: '#6b9e7a', border: '1px solid rgba(107,158,122,0.28)' }}>
           <Icon name="image" size={18} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {task.intent || '故事草稿'}
+            {task.intent || '故事板'}
           </div>
           <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(task.createdAt)}</div>
         </div>
-        <Tag color="#6b9e7a"><Dot color="#6b9e7a" size={6} />故事草稿</Tag>
+        <Tag color="#6b9e7a"><Dot color="#6b9e7a" size={6} />故事板</Tag>
       </div>
 
-      {/* 故事文字 */}
-      <textarea value={text} onChange={e => setText(e.target.value)} rows={5}
-        style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.7,
-          background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 7,
-          padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: 12 }} />
-      {lastError && <div style={{ fontSize: 12.5, color: '#b5654a', marginBottom: 10 }}>{lastError}</div>}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: sorted.length ? 20 : 0 }}>
-        <RowButton onClick={() => onDelete(task)} icon="trash">刪除草稿</RowButton>
-        <RowButton onClick={generate} icon="image" primary>
-          {loading ? '分析中…' : sorted.length > 0 ? '重新生成圖卡' : '生成圖卡'}
-        </RowButton>
-      </div>
-
-      {/* 故事板圖片 */}
-      {sorted.length > 0 && (
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 18 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--muted)', marginBottom: 12, letterSpacing: '0.04em' }}>
-            故事板 · {sorted.length} 張{hasActive && ' · 生成中…'}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {sorted.map(img => <StoryImageRow key={img.id} img={img} onDelete={onDelete} />)}
-          </div>
-
-          {/* 加一張 */}
-          {showAdd ? (
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <input value={addPrompt} onChange={e => setAddPrompt(e.target.value)}
-                placeholder={`第 ${nextOrder} 張的畫面描述…`}
-                onKeyDown={e => { if (e.key === 'Enter') addOne(); if (e.key === 'Escape') setShowAdd(false); }}
-                style={{ flex: 1, fontSize: 13, padding: '8px 12px', borderRadius: 7, border: '1px solid var(--border)',
-                  background: 'rgba(60,52,40,0.04)', color: 'var(--text)', fontFamily: 'inherit' }} />
-              <RowButton onClick={addOne} icon="image" primary>{addLoading ? '…' : '加入'}</RowButton>
-              <RowButton onClick={() => setShowAdd(false)} icon="close">{''}</RowButton>
-            </div>
-          ) : (
-            <button onClick={() => setShowAdd(true)}
-              style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--muted)',
-                background: 'transparent', border: '1px dashed var(--border)', borderRadius: 7, padding: '8px 14px',
-                cursor: 'pointer', width: '100%', justifyContent: 'center' }}>
-              <Icon name="plus" size={14} />加一張
-            </button>
-          )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
+        <Tag color={st.color}><Dot color={st.dot} pulse={inProgress} size={6} />{st.label}</Tag>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
+          <Link href={`/stories/${task.id}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'color-mix(in oklab, var(--accent) 18%, transparent)',
+              border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)',
+              borderRadius: 6, padding: '7px 12px', fontSize: 13, fontWeight: 500,
+              color: 'var(--accent)', textDecoration: 'none', minHeight: 36 }}>
+            <Icon name="image" size={15} />前往故事板
+          </Link>
         </div>
-      )}
+      </div>
     </div>
-  );
-}
-
-// ── 故事板單張圖片列 ─────────────────────────────────────────────────
-function StoryImageRow({ img, onDelete }: { img: MediaTask; onDelete: (t: MediaTask) => void }) {
-  const [open, setOpen] = useState(false);
-  const st = STATUS[img.status] || STATUS.pending;
-  const inProgress = img.status === 'pending' || img.status === 'running';
-
-  return (
-    <>
-      <div className="ax-enter" style={{ display: 'flex', alignItems: 'center', gap: 12,
-        padding: '12px 14px', borderRadius: 8, background: 'rgba(60,52,40,0.025)', border: '1px solid var(--border)' }}>
-        {/* 順序徽章 */}
-        <div style={{ width: 28, height: 28, borderRadius: 6, flexShrink: 0, display: 'grid', placeItems: 'center',
-          background: 'rgba(60,52,40,0.08)', fontSize: 12, fontWeight: 600, color: 'var(--muted)' }}>
-          {img.order}
-        </div>
-
-        {/* 縮圖 or 進度 */}
-        {img.imageUrl ? (
-          <div onClick={() => setOpen(true)} style={{ width: 52, height: 52, borderRadius: 7, flexShrink: 0,
-            overflow: 'hidden', cursor: 'pointer', border: '1px solid var(--border)' }}>
-            <img src={img.imageUrl} alt={img.intent} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          </div>
-        ) : (
-          <div style={{ width: 52, height: 52, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
-            background: 'color-mix(in oklab, var(--accent) 10%, transparent)', border: '1px solid color-mix(in oklab, var(--accent) 20%, transparent)' }}>
-            {inProgress ? <Typing /> : <Icon name="image" size={20} style={{ color: 'var(--muted)' }} />}
-          </div>
-        )}
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 500, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {img.intent || `圖片 ${img.order}`}
-          </div>
-          {img.status === 'failed' && <div style={{ fontSize: 12, color: '#b5654a' }}>{img.error || '生成失敗'}</div>}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <Tag color={st.color}><Dot color={st.dot} pulse={inProgress} size={6} />{st.label}</Tag>
-          <RowButton onClick={() => onDelete(img)} icon="trash">{''}</RowButton>
-        </div>
-      </div>
-
-      {/* 燈箱 */}
-      {open && img.imageUrl && (
-        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center',
-          background: 'rgba(20,16,12,0.72)', padding: 'clamp(16px,5vw,48px)', backdropFilter: 'blur(4px)' }}>
-          <div onClick={e => e.stopPropagation()} style={{ maxWidth: 880, width: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <img src={img.imageUrl} alt={img.intent}
-              style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: 10,
-                boxShadow: '0 24px 60px rgba(0,0,0,0.4)', margin: '0 auto' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ color: '#f3f1ea', fontSize: 14 }}>{img.intent}</div>
-              <a href={img.imageUrl} target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, color: '#f3f1ea',
-                  background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: 6, padding: '8px 14px', textDecoration: 'none' }}>
-                <Icon name="external" size={15} />原圖
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
   );
 }
 
@@ -451,24 +325,8 @@ export default function Gallery() {
     else if (r.warnings?.length) console.warn('[gallery] 部分來源未清乾淨：', r.warnings);
   }
 
-  async function addStoryImage(storyTaskId: string, prompt: string) {
-    const r = await fetch(`/api/tasks/${storyTaskId}/generate-storyboard`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addOne: true, prompt }),
-    }).then(r => r.json()).catch(() => null);
-    if (!r?.ok) alert('加入失敗，請稍後再試。');
-  }
-
   // 分類
   const storyDrafts   = tasks.filter(t => t.type === 'story_draft');
-  const storyImgMap   = tasks.reduce<Record<string, MediaTask[]>>((acc, t) => {
-    if (t.type === 'image_generation' && t.parentTaskId) {
-      if (!acc[t.parentTaskId]) acc[t.parentTaskId] = [];
-      acc[t.parentTaskId].push(t);
-    }
-    return acc;
-  }, {});
   const standaloneImgs = tasks.filter(t => t.type === 'image_generation' && !t.parentTaskId);
   const imgActive  = standaloneImgs.filter(t => t.status === 'pending' || t.status === 'running');
   const imgFailed  = standaloneImgs.filter(t => t.status === 'failed');
@@ -476,9 +334,8 @@ export default function Gallery() {
   const drafts     = tasks.filter(t => t.type === 'script_draft');
   const audioTasks = tasks.filter(t => t.type === 'audio_generation');
 
-  const storyImgsFlat = Object.values(storyImgMap).flat();
   const anyActive = imgActive.length > 0 || audioTasks.some(t => t.status === 'pending' || t.status === 'running')
-    || storyImgsFlat.some(t => t.status === 'pending' || t.status === 'running');
+    || storyDrafts.some(t => t.status === 'pending' || t.status === 'running' || t.status === 'scripting');
   const hasContent = imgDone.length > 0 || drafts.length > 0 || audioTasks.length > 0
     || imgActive.length > 0 || imgFailed.length > 0 || storyDrafts.length > 0;
 
@@ -538,10 +395,7 @@ export default function Gallery() {
                     <SectionLabel>故事板</SectionLabel>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                       {storyDrafts.map(t => (
-                        <StoryDraftCard key={t.id} task={t}
-                          images={storyImgMap[t.id] || []}
-                          onDelete={del} onGenerated={load}
-                          onAddImage={addStoryImage} />
+                        <StoryDraftCard key={t.id} task={t} onDelete={del} />
                       ))}
                     </div>
                   </section>
