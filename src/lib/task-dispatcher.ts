@@ -35,6 +35,7 @@ const WORKER_ROUTES: Record<TaskCapability, (taskId: string, params: Record<stri
   web_search: enqueueWebSearchJob,
   script_draft: enqueueScriptDraftJob,
   story_draft: enqueueStoryDraftJob,
+  video_generation: enqueueVideoJob,
 };
 
 export interface DispatchResult {
@@ -89,6 +90,7 @@ const DISPATCH_MESSAGES: Record<TaskCapability, string> = {
   web_search: '我已派出搜尋任務，完成後我會告訴你結果。',
   script_draft: '腳本草稿已備妥，你可以去媒體庫確認後生成音檔。',
   story_draft: '故事板已開始生成，系統會自動寫故事、分析圖卡腳本，你可以去故事板頁面查看進度。',
+  video_generation: '分身短影音已開始生成，完成後你可以在媒體庫查看。',
 };
 
 // ── Worker 呼叫實作 ──────────────────────────────────────────────────
@@ -174,6 +176,10 @@ async function enqueueStoryDraftJob(taskId: string, _params: Record<string, unkn
     headers: { 'x-worker-secret': secret, 'Content-Type': 'application/json' },
     body: '{}',
   }).catch(err => console.error('[task-dispatcher] generate-story trigger failed:', err instanceof Error ? err.message : String(err)));
+}
+
+async function enqueueVideoJob(_taskId: string, _params: Record<string, unknown>): Promise<void> {
+  // video_generation 由用戶在媒體庫手動觸發（/api/tasks/[id]/generate-video），不走自動派送
 }
 
 async function enqueueWritingJob(_taskId: string, _params: Record<string, unknown>): Promise<void> {

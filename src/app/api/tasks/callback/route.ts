@@ -50,6 +50,7 @@ export async function POST(req: Request) {
     };
     if (body.mediaType === 'image') patch.imageUrl = body.result.url;
     if (body.mediaType === 'audio') patch.audioUrl = body.result.url;
+    if (body.mediaType === 'video') patch.videoUrl = body.result.url;
     await ref.update(patch);
   } else if (body.event === 'job.failed') {
     await ref.update({

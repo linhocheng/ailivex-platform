@@ -9,7 +9,7 @@ interface Char {
   id: string; name: string; avatarUrl: string; status: string;
   hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
-type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'story_draft' | 'writing' | 'web_search';
+type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'story_draft' | 'writing' | 'web_search' | 'video_generation';
 const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
   { value: 'image_generation', label: '製圖' },
   { value: 'audio_generation', label: '生音檔' },
@@ -17,6 +17,7 @@ const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
   { value: 'story_draft', label: '故事圖卡' },
   { value: 'writing', label: '寫文件' },
   { value: 'web_search', label: '網路搜尋' },
+  { value: 'video_generation', label: 'HeyGen 分身影片' },
 ];
 
 type EditState = {
@@ -25,6 +26,7 @@ type EditState = {
   aliases: string[];
   capabilities: TaskCapability[];
   imageStyle: string;
+  heygenAvatarId: string;
   avatar: { b64: string; type: string } | null;
 };
 
@@ -198,6 +200,7 @@ export default function AdminCharacters() {
     payload.aliases = editing.aliases.filter(a => a.trim());
     payload.capabilities = editing.capabilities;
     payload.imageStyle = editing.imageStyle;
+    payload.heygenAvatarId = editing.heygenAvatarId;
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
     const r = await fetch(`/api/admin/characters/${editing.id}`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -270,9 +273,9 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -371,6 +374,12 @@ export default function AdminCharacters() {
               <Field label="圖片風格（story_draft 用）">
                 <TextInput value={editing.imageStyle} onChange={e=>setEditing({...editing,imageStyle:e.target.value})}
                   placeholder="例：cinematic photography, warm tones, realistic" />
+              </Field>
+            )}
+            {editing.capabilities.includes('video_generation') && (
+              <Field label="HeyGen Avatar ID（video_generation 用）">
+                <TextInput value={editing.heygenAvatarId} onChange={e=>setEditing({...editing,heygenAvatarId:e.target.value})}
+                  placeholder="例：avatar_xxxxxxxxxxxxxxxx" />
               </Field>
             )}
             <Field label="靈魂（留空不更新）">

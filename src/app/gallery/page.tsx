@@ -14,6 +14,7 @@ interface MediaTask {
   status: string;
   imageUrl: string;
   audioUrl: string;
+  videoUrl: string;
   scriptText: string;
   voiceId: string;
   storyText: string;
@@ -178,10 +179,20 @@ function StoryDraftCard({ task, onDelete }: { task: MediaTask; onDelete: (t: Med
 }
 
 // ── 音檔卡 ────────────────────────────────────────────────────────────
-function AudioCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTask) => void }) {
+function AudioCard({ task, onDelete, onGenerated }: { task: MediaTask; onDelete: (t: MediaTask) => void; onGenerated: () => void }) {
   const [h, setH] = useState(false);
+  const [videoLoading, setVideoLoading] = useState(false);
   const inProgress = task.status === 'pending' || task.status === 'running';
   const st = STATUS[task.status] || STATUS.pending;
+
+  async function generateVideo() {
+    setVideoLoading(true);
+    const r = await fetch(`/api/tasks/${task.id}/generate-video`, { method: 'POST' })
+      .then(r => r.json()).catch(() => null);
+    setVideoLoading(false);
+    if (r?.ok) { onGenerated(); }
+    else { alert(r?.error === 'no_heygen_avatar' ? '角色尚未設定 HeyGen 分身，請先至後台設定。' : '生成失敗，請稍後再試。'); }
+  }
 
   return (
     <div className="ax-enter" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
@@ -209,6 +220,51 @@ function AudioCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTas
       {task.audioUrl && (
         <audio controls src={task.audioUrl}
           style={{ width: '100%', height: 36, borderRadius: 6, accentColor: 'var(--accent)' }} />
+      )}
+      {task.audioUrl && task.status === 'done' && (
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+          <RowButton onClick={generateVideo} icon="image" primary>
+            {videoLoading ? '送出中…' : '生成分身短影音'}
+          </RowButton>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 影片卡 ────────────────────────────────────────────────────────────────────
+function VideoCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTask) => void }) {
+  const inProgress = task.status === 'pending' || task.status === 'running';
+  const st = STATUS[task.status] || STATUS.pending;
+
+  return (
+    <div className="ax-enter" style={{ padding: '16px 18px', borderRadius: 10, background: 'var(--panel)',
+      border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: task.videoUrl ? 12 : 0 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
+          background: 'rgba(107,158,122,0.12)', color: '#6b9e7a',
+          border: '1px solid rgba(107,158,122,0.28)' }}>
+          <Icon name="image" size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {task.intent || '分身短影音'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>{fmt(task.completedAt || task.createdAt)}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {inProgress && <Typing />}
+          <Tag color={st.color}><Dot color={st.dot} pulse={inProgress} size={6} />{st.label}</Tag>
+          <RowButton onClick={() => onDelete(task)} icon="trash">刪除</RowButton>
+        </div>
+      </div>
+      {task.videoUrl && (
+        <video controls src={task.videoUrl} style={{ width: '100%', borderRadius: 7, maxHeight: 360 }} />
+      )}
+      {inProgress && !task.videoUrl && (
+        <div style={{ padding: '12px 0', fontSize: 13, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Typing />HeyGen 生成中（約 1–2 分鐘）…
+        </div>
       )}
     </div>
   );
@@ -333,11 +389,14 @@ export default function Gallery() {
   const imgDone    = standaloneImgs.filter(t => t.status === 'done' && t.imageUrl);
   const drafts     = tasks.filter(t => t.type === 'script_draft');
   const audioTasks = tasks.filter(t => t.type === 'audio_generation');
+  const videoTasks = tasks.filter(t => t.type === 'video_generation');
 
   const anyActive = imgActive.length > 0 || audioTasks.some(t => t.status === 'pending' || t.status === 'running')
-    || storyDrafts.some(t => t.status === 'pending' || t.status === 'running' || t.status === 'scripting');
+    || storyDrafts.some(t => t.status === 'pending' || t.status === 'running' || t.status === 'scripting')
+    || videoTasks.some(t => t.status === 'pending' || t.status === 'running');
   const hasContent = imgDone.length > 0 || drafts.length > 0 || audioTasks.length > 0
-    || imgActive.length > 0 || imgFailed.length > 0 || storyDrafts.length > 0;
+    || imgActive.length > 0 || imgFailed.length > 0 || storyDrafts.length > 0
+    || videoTasks.length > 0;
 
   useEffect(() => { load(); }, []);
 
@@ -418,7 +477,17 @@ export default function Gallery() {
                   <section>
                     <SectionLabel>音檔</SectionLabel>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {audioTasks.map(t => <AudioCard key={t.id} task={t} onDelete={del} />)}
+                      {audioTasks.map(t => <AudioCard key={t.id} task={t} onDelete={del} onGenerated={load} />)}
+                    </div>
+                  </section>
+                )}
+
+                {/* 分身短影音 */}
+                {videoTasks.length > 0 && (
+                  <section>
+                    <SectionLabel>分身短影音</SectionLabel>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {videoTasks.map(t => <VideoCard key={t.id} task={t} onDelete={del} />)}
                     </div>
                   </section>
                 )}

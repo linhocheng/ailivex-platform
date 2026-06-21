@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
 import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
 
-const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft'];
+const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
 import { enhanceSoul } from '@/lib/soul';
 
 export const runtime = 'nodejs';
@@ -28,6 +28,7 @@ export async function GET(_req: Request, { params }: Params) {
     aliases: c.aliases || [],
     capabilities: c.capabilities || [],
     imageStyle: c.imageStyle || '',
+    heygenAvatarId: c.heygenAvatarId || '',
     avatarUrl: c.avatarUrl || '',
     status: c.status,
   });
@@ -42,6 +43,7 @@ export async function PATCH(req: Request, { params }: Params) {
     convSettings?: ConvSettings; aliases?: string[];
     capabilities?: TaskCapability[];
     imageStyle?: string;
+    heygenAvatarId?: string;
     avatarBase64?: string; avatarContentType?: string;
     reEnhance?: boolean;
   } | null;
@@ -67,6 +69,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (Array.isArray(body?.aliases)) updates.aliases = body.aliases.map(s => s.trim()).filter(Boolean);
   if (Array.isArray(body?.capabilities)) updates.capabilities = body.capabilities.filter(c => ALL_CAPABILITIES.includes(c));
   if (body?.imageStyle !== undefined) updates.imageStyle = body.imageStyle.trim();
+  if (body?.heygenAvatarId !== undefined) updates.heygenAvatarId = body.heygenAvatarId.trim();
 
   // 重新提煉 soulCore
   if (body?.soulCore?.trim()) {

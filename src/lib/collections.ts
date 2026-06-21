@@ -45,7 +45,7 @@ export interface ConvSettings {
   temperature?: number;          // 0.1–1.0 LLM 溫度（越低越收斂/越不演）
 }
 
-export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft';
+export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft' | 'video_generation';
 
 export interface CharacterDoc {
   name: string;
@@ -58,6 +58,7 @@ export interface CharacterDoc {
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
   capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
   imageStyle?: string;     // 圖片生成風格描述（story_draft 生圖 prompt prefix）
+  heygenAvatarId?: string;  // HeyGen instant avatar ID
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
@@ -183,6 +184,7 @@ export interface TaskDoc {
   summary?: string;        // 完成後給角色讀的一句話摘要
   imageUrl?: string;       // image_generation 完成後的 GCS 圖片網址（圖庫直接讀這個）
   audioUrl?: string;       // audio_generation 完成後的 GCS 音檔網址
+  videoUrl?: string;        // video_generation 完成後的 HeyGen 影片網址
   scriptText?: string;     // script_draft 的腳本原文（可編修）
   voiceId?: string;        // script_draft 綁定的角色 voiceId，生成音檔時帶入
   storyText?: string;      // story_draft 的故事原文（可編修）
