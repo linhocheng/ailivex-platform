@@ -281,9 +281,7 @@ async def entrypoint(ctx: JobContext):
                 logger.info(f"[v14] script_draft dispatched: {task_id}")
                 return "腳本草稿已備妥，你可以去媒體庫確認並編修後，按「生成音檔」鈕產出音檔。"
             elif task_type == "story_draft":
-                brief = parsed_params.get("text", "") or parsed_params.get("brief", "")
-                if not brief:
-                    return "請提供故事主題或簡介（params.text）。"
+                brief = parsed_params.get("text", "") or parsed_params.get("brief", "") or intent
                 task_id = dispatch_story_draft(user_id, character_id, brief, intent)
                 logger.info(f"[v14] story_draft dispatched: {task_id} brief={brief[:60]!r}")
                 return "故事板已開始生成，系統會自動寫故事、分析圖卡腳本，你可以去故事板頁面查看進度。"

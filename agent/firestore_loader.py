@@ -849,12 +849,12 @@ def dispatch_task_job(user_id: str, character_id: str, task_type: str, intent: s
     })
     task_id = task_ref.id
 
-    _enqueue_media_task(task_id, task_type, params)
+    _enqueue_media_task(task_id, task_type, params, intent)
     logger.info(f"[task] created task={task_id} type={task_type!r} intent={intent[:60]!r}")
     return task_id
 
 
-def _enqueue_media_task(task_id: str, task_type: str, params: dict) -> None:
+def _enqueue_media_task(task_id: str, task_type: str, params: dict, intent: str = "") -> None:
     """背景 thread 呼叫 media-worker API，fire-and-forget。"""
     media_worker_url = os.environ.get("MEDIA_WORKER_URL", "").strip().rstrip("/")
     media_worker_key = os.environ.get("MEDIA_WORKER_KEY_AILIVEX", "").strip()
@@ -872,8 +872,15 @@ def _enqueue_media_task(task_id: str, task_type: str, params: dict) -> None:
             # 建 media-worker job
             if task_type == "image_generation":
                 media_type = "image"
+                prompt = (params.get("prompt") or params.get("intent") or intent or "").strip()
+                if not prompt:
+                    logger.error(f"[media] image_generation task={task_id} prompt 空字串，直接 fail")
+                    db.collection("tasks").document(task_id).update({
+                        "status": "failed", "error": "image prompt 為空，無法生圖"
+                    })
+                    return
                 input_data = {
-                    "prompt": params.get("prompt", params.get("intent", "")),
+                    "prompt": prompt,
                     "size": params.get("size", "1024x1024"),
                     "outputFormat": "png",
                 }

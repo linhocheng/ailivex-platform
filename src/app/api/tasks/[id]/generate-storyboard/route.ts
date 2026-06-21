@@ -159,7 +159,8 @@ async function analyzeStory(story: string, imageStyle: string): Promise<ImageSlo
     .filter((s): s is ImageSlot =>
       typeof s === 'object' && s !== null &&
       typeof (s as Record<string, unknown>).order === 'number' &&
-      typeof (s as Record<string, unknown>).prompt === 'string'
+      typeof (s as Record<string, unknown>).prompt === 'string' &&
+      ((s as Record<string, unknown>).prompt as string).trim().length > 0
     )
     .sort((a, b) => a.order - b.order);
 }
