@@ -91,7 +91,7 @@ export const VOICE_VERSIONS = [
   { id: 'v14', label: '14（腳本草稿音檔）', agentName: 'ailivex-realtime-v14' },
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v13';
+export const DEFAULT_VOICE_VERSION = 'v14';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {
