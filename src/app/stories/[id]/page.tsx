@@ -112,7 +112,7 @@ function CardRow({ card, onEdit, onDelete, onRegenerate, lightboxImg, setLightbo
               <Icon name="edit" size={14} />
             </button>
           )}
-          {card.status === 'done' && (
+          {(card.status === 'done' || card.status === 'failed') && (
             <button onClick={() => onRegenerate(card.id)} title="重新生成"
               style={{ display: 'grid', placeItems: 'center', width: 30, height: 30, borderRadius: 6,
                 background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--muted)' }}>
