@@ -23,6 +23,7 @@ export const maxDuration = 120;
 const MEDIA_WORKER_URL = cleanUrl(process.env.MEDIA_WORKER_URL);
 const MEDIA_WORKER_KEY = cleanSecret(process.env.MEDIA_WORKER_KEY_AILIVEX);
 const WEBHOOK_SECRET = cleanSecret(process.env.MEDIA_WORKER_WEBHOOK_SECRET);
+const IMAGE_SIZE = '1024x1024';
 
 function callbackUrl(): string {
   const base = process.env.PLATFORM_URL
@@ -40,7 +41,7 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id: taskId } = await params;
-  const body = await req.json().catch(() => ({})) as { text?: string; addOne?: boolean; prompt?: string };
+  const body = await req.json().catch(() => ({})) as { text?: string; addOne?: boolean; prompt?: string; intent?: string; cardType?: string };
 
   const db = getFirestore();
   const draftRef = db.collection(COL.tasks).doc(taskId);
@@ -58,16 +59,21 @@ export async function POST(
       .where('parentTaskId', '==', taskId)
       .get();
     const nextOrder = existingSnap.size + 1;
+    const cardType = body.cardType || 'realistic_photo';
+    const cardText = body.prompt.trim();
+    const intent = body.intent?.trim() || cardText;
     const imgRef = db.collection(COL.tasks).doc();
     await imgRef.set({
       userId: user.uid,
       characterId: draft.characterId,
       type: 'image_generation',
-      intent: body.prompt.trim(),
-      params: { prompt: body.prompt.trim(), size: '1024x1024' },
+      intent,
+      params: { prompt: cardText, size: IMAGE_SIZE },
       status: 'pending',
       parentTaskId: taskId,
       order: nextOrder,
+      cardText,
+      cardType,
       notified: false,
       createdAt: FieldValue.serverTimestamp(),
     });
@@ -103,7 +109,7 @@ export async function POST(
       characterId: draft.characterId,
       type: 'image_generation',
       intent: slot.title,
-      params: { prompt: slot.prompt, size: '1024x1024' },
+      params: { prompt: slot.prompt, size: IMAGE_SIZE },
       status: 'pending',
       parentTaskId: taskId,
       order: slot.order,
@@ -176,7 +182,7 @@ async function enqueueImage(taskId: string, prompt: string): Promise<void> {
       idempotencyKey: taskId,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { prompt, size: '1024x1024', outputFormat: 'png' },
+      input: { prompt, size: IMAGE_SIZE, outputFormat: 'png' },
       metadata: { taskId },
     }),
   });

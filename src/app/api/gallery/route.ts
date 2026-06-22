@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
-import { COL, type TaskDoc } from '@/lib/collections';
+import { COL, type TaskDoc, type TaskCapability } from '@/lib/collections';
 
 export const runtime = 'nodejs';
 
-const GALLERY_TYPES = ['image_generation', 'audio_generation', 'script_draft', 'story_draft'];
+const GALLERY_TYPES: TaskCapability[] = ['image_generation', 'audio_generation', 'script_draft', 'story_draft', 'video_generation'];
 
 function toMillis(v: TaskDoc['createdAt'] | undefined): number {
   if (!v) return 0;
@@ -35,6 +35,10 @@ export async function GET() {
     status: t.status as string,
     imageUrl: (t.imageUrl as string) || '',
     audioUrl: (t.audioUrl as string) || '',
+    videoUrl: (t.videoUrl as string) || '',
+    videoTaskId: (t.videoTaskId as string) || '',
+    klingVideoTaskId: (t.klingVideoTaskId as string) || '',
+    source: (t.source as string) || '',
     scriptText: (t.scriptText as string) || '',
     voiceId: (t.voiceId as string) || '',
     storyText: (t.storyText as string) || '',

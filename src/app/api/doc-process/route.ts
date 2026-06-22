@@ -64,8 +64,8 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const retryable = /bridge (5\d\d|fetch|network|timeout)/i.test(msg) || /ECONN|ETIMEDOUT|fetch failed/i.test(msg);
-    await jobRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch(() => {});
-    await docRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch(() => {});
+    await jobRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch((ue: unknown) => console.error('[doc-process] jobRef update failed:', ue));
+    await docRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch((ue: unknown) => console.error('[doc-process] docRef update failed:', ue));
     return NextResponse.json({ error: msg }, { status: retryable ? 500 : 200 });
   }
 }

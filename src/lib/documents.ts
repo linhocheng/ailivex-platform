@@ -4,8 +4,11 @@
  * 原 Cloud Tasks → Cloud Run 鏈路已廢棄（enqueue 從 Vercel 靜默失敗）。
  */
 import type { Firestore } from 'firebase-admin/firestore';
+import * as opencc from 'opencc-js';
 import { COL, type DocumentDoc, type JobDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+
+const toTraditional = opencc.Converter({ from: 'cn', to: 'tw' });
 
 export async function createDocumentJob(
   db: Firestore,
@@ -18,7 +21,7 @@ export async function createDocumentJob(
   const document: DocumentDoc = {
     userId,
     characterId,
-    title,
+    title: toTraditional(title),
     status: 'pending',
     createdAt: new Date(),
   };

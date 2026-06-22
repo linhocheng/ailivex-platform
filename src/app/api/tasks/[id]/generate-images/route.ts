@@ -8,7 +8,7 @@ import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
-import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
+import { COL, type TaskDoc, type CharacterDoc, type BrandLayoutDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 
 export const runtime = 'nodejs';
@@ -41,11 +41,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const storyTask = storySnap.data() as TaskDoc & Record<string, unknown>;
   if (storyTask.userId !== user.uid) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  // 取角色 imageStyle
+  // 取角色 imageStyle + 全版 Layout URL
   let imageStyle = '';
+  let layoutImageUrl = '';
   if (storyTask.characterId) {
     const cs = await db.collection(COL.characters).doc(storyTask.characterId as string).get();
     if (cs.exists) imageStyle = (cs.data() as CharacterDoc).imageStyle ?? '';
+  }
+  if (storyTask.brandLayoutId) {
+    const ls = await db.collection(COL.brandLayouts).doc(storyTask.brandLayoutId as string).get();
+    if (ls.exists) layoutImageUrl = (ls.data() as BrandLayoutDoc).imageUrl ?? '';
   }
 
   // 讀所有 scripted 子卡（可能含單張重新生成：status='failed' 也允許重試）
@@ -58,7 +63,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: 'card_not_found' }, { status: 404 });
     }
     const card = cardSnap.data() as TaskDoc & Record<string, unknown>;
-    await dispatchCard(db, body.cardId, card, imageStyle);
+    await dispatchCard(db, body.cardId, card, imageStyle, layoutImageUrl);
     return NextResponse.json({ ok: true, count: 1 });
   }
 
@@ -67,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   let dispatched = 0;
   for (const doc of scripted.docs) {
-    await dispatchCard(db, doc.id, doc.data() as TaskDoc & Record<string, unknown>, imageStyle);
+    await dispatchCard(db, doc.id, doc.data() as TaskDoc & Record<string, unknown>, imageStyle, layoutImageUrl);
     dispatched++;
   }
 
@@ -79,6 +84,7 @@ async function dispatchCard(
   cardId: string,
   card: TaskDoc & Record<string, unknown>,
   imageStyle: string,
+  layoutImageUrl: string,
 ) {
   if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) {
     throw new Error('MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX not set');
@@ -89,6 +95,10 @@ async function dispatchCard(
   const prefix = TYPE_PREFIX[cardType] || '';
   const styleStr = imageStyle ? `${imageStyle}, ` : '';
   const prompt = `${prefix}${styleStr}${cardText}`.trim();
+
+  // 組 referenceImageUrls：全版 Layout + 卡片產品圖
+  const productImageUrl = (card.productImageUrl as string) || '';
+  const referenceImageUrls = [layoutImageUrl, productImageUrl].filter(Boolean);
 
   const ref = db.collection(COL.tasks).doc(cardId);
   await ref.update({ status: 'pending', imageUrl: FieldValue.delete() });
@@ -101,7 +111,7 @@ async function dispatchCard(
       idempotencyKey: `${cardId}-${Date.now()}`,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { prompt, size: '1024x1024', outputFormat: 'png' },
+      input: { prompt, size: '1024x1024', outputFormat: 'png', referenceImageUrls },
       metadata: { taskId: cardId },
     }),
   });

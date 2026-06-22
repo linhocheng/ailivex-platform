@@ -45,12 +45,11 @@ export async function POST(
   if (draft.type !== 'script_draft') return NextResponse.json({ error: 'not_a_script_draft' }, { status: 400 });
 
   // 優先用前端傳來的（用戶可能編修過），fallback 到 draft 裡存的
-  const scriptText = (body.text ?? (draft as unknown as Record<string, unknown>).scriptText as string ?? '').trim();
+  const scriptText = (body.text ?? draft.scriptText ?? '').trim();
   if (!scriptText) return NextResponse.json({ error: 'empty_text' }, { status: 400 });
 
   // 取角色 voiceId（draft 存了 agent 當時的 voice_id，也可從 character doc 讀最新值）
-  const draftVoiceId = (draft as unknown as Record<string, unknown>).voiceId as string | undefined;
-  let voiceId = draftVoiceId ?? '';
+  let voiceId = draft.voiceId ?? '';
   if (!voiceId && draft.characterId) {
     const charSnap = await db.collection(COL.characters).doc(draft.characterId).get();
     if (charSnap.exists) {

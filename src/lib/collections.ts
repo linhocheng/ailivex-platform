@@ -16,6 +16,8 @@ export const COL = {
   documents: 'documents',
   jobs: 'jobs',
   tasks: 'tasks',
+  brandLayouts: 'brand_layouts',
+  brandProducts: 'brand_products',
 } as const;
 
 export type UserRole = 'user' | 'admin';
@@ -58,7 +60,8 @@ export interface CharacterDoc {
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
   capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
   imageStyle?: string;     // 圖片生成風格描述（story_draft 生圖 prompt prefix）
-  heygenAvatarId?: string;  // HeyGen instant avatar ID
+  heygenAvatarId?: string;   // HeyGen talking_photo_id
+  heygenAvatarUrl?: string;  // HeyGen 上傳後的預覽 URL（v3 image 欄位用）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
@@ -71,25 +74,39 @@ export interface AccessDoc {
 }
 
 /**
- * 語音 agent 版本登錄表 —— 單一真相源。
- * token route 據此派 RoomAgentDispatch.agentName；admin 後台據此列版本下拉。
- * 用戶端只進「語音通話」一個入口，看不到版本——派哪版由後台指派決定（缺省走 DEFAULT_VOICE_VERSION）。
- * 新增版本時：在 token route 加對應 agent 服務後，這裡補一列即可（不必再改 token route 的決策邏輯）。
+ * 語音 agent 版本登錄表 —— 單一真相源（封存備查）。
+ * 前台只顯示 DEFAULT_VOICE_VERSION（v14）；舊版本封存於此作為迭代紀錄。
+ * token route 只走 DEFAULT_VOICE_VERSION，不再逐版切換。
+ *
+ * 版本迭代歷史：
+ *   base  基礎 1:1 語音對話
+ *   v2    記憶連貫（lastSession 快照、時間感知）
+ *   v3    主動發話（3a 一吋蛋糕實驗）
+ *   v4    單機群聊（Soniox diarization 多人辨識）
+ *   v5    讓位偵測（偵測發話對象，交棒第三方時靜音）
+ *   v6    雙腦架構（判斷腦 Haiku / 開口腦 Sonnet）
+ *   v8    發言權控制（抓麥克風、讓位機制）        ← 無 v7
+ *   v9    LLM 發言權判斷（Haiku 決定搶話時機）
+ *   v10   多人硬化（回音過濾、講者名冊、3a 收斂）
+ *   v11   聲紋講者辨識（voiceprint 分群實驗，未正式上線）
+ *   v12   讀網址（通話中貼網址讓角色讀取摘要）
+ *   v13   任務派發（語音下指令生圖 / 生音檔）
+ *   v14   ★ LIVE — 腳本草稿 + 音檔生成（dispatch_task script_draft）
  */
 export const VOICE_VERSIONS = [
   { id: 'base', label: '基礎', agentName: 'ailivex-realtime' },
-  { id: 'v2', label: '2.0', agentName: 'ailivex-realtime-v2' },
-  { id: 'v3', label: '3.0', agentName: 'ailivex-realtime-v3' },
-  { id: 'v4', label: '4.0', agentName: 'ailivex-realtime-v4' },
-  { id: 'v5', label: '5.0', agentName: 'ailivex-realtime-v5' },
-  { id: 'v6', label: '6.0', agentName: 'ailivex-realtime-v6' },
-  { id: 'v8', label: '8.0', agentName: 'ailivex-realtime-v8' },
-  { id: 'v9', label: '9.0', agentName: 'ailivex-realtime-v9' },
-  { id: 'v10', label: '10', agentName: 'ailivex-realtime-v10' },
-  { id: 'v11', label: '11', agentName: 'ailivex-realtime-v11' },
-  { id: 'v12', label: '12（讀網址）', agentName: 'ailivex-realtime-v12' },
-  { id: 'v13', label: '13（任務派發）', agentName: 'ailivex-realtime-v13' },
-  { id: 'v14', label: '14（腳本草稿音檔）', agentName: 'ailivex-realtime-v14' },
+  { id: 'v2',  label: '2.0',  agentName: 'ailivex-realtime-v2' },
+  { id: 'v3',  label: '3.0',  agentName: 'ailivex-realtime-v3' },
+  { id: 'v4',  label: '4.0',  agentName: 'ailivex-realtime-v4' },
+  { id: 'v5',  label: '5.0',  agentName: 'ailivex-realtime-v5' },
+  { id: 'v6',  label: '6.0',  agentName: 'ailivex-realtime-v6' },
+  { id: 'v8',  label: '8.0',  agentName: 'ailivex-realtime-v8' },
+  { id: 'v9',  label: '9.0',  agentName: 'ailivex-realtime-v9' },
+  { id: 'v10', label: '10',   agentName: 'ailivex-realtime-v10' },
+  { id: 'v11', label: '11',   agentName: 'ailivex-realtime-v11' },
+  { id: 'v12', label: '12',   agentName: 'ailivex-realtime-v12' },
+  { id: 'v13', label: '13',   agentName: 'ailivex-realtime-v13' },
+  { id: 'v14', label: '14',   agentName: 'ailivex-realtime-v14' }, // LIVE
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v14';
@@ -172,6 +189,23 @@ export interface JobDoc {
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
+export interface BrandLayoutDoc {
+  characterId: string;
+  name: string;
+  imageUrl: string;
+  description: string;
+  isDefault: boolean;
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+export interface BrandProductDoc {
+  characterId: string;
+  name: string;
+  imageUrl: string;
+  tags: string[];
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
 export type TaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'draft' | 'submitted' | 'scripting' | 'ready' | 'scripted';
 
 export interface TaskDoc {
@@ -185,6 +219,9 @@ export interface TaskDoc {
   imageUrl?: string;       // image_generation 完成後的 GCS 圖片網址（圖庫直接讀這個）
   audioUrl?: string;       // audio_generation 完成後的 GCS 音檔網址
   videoUrl?: string;        // video_generation 完成後的 HeyGen 影片網址
+  videoTaskId?: string;     // audio_generation task 對應的 HeyGen video_generation task id
+  klingVideoTaskId?: string; // audio_generation task 對應的 Kling video_generation task id
+  source?: string;           // video_generation 來源：'heygen' | 'kling'
   scriptText?: string;     // script_draft 的腳本原文（可編修）
   voiceId?: string;        // script_draft 綁定的角色 voiceId，生成音檔時帶入
   storyText?: string;      // story_draft 的故事原文（可編修）
@@ -192,6 +229,8 @@ export interface TaskDoc {
   order?: number;          // 故事板中的圖片順序（1-based）
   cardText?: string;       // Phase B 產出：這張圖卡的文字說明
   cardType?: string;       // Phase B 產出：realistic_photo | infographic
+  brandLayoutId?: string;  // story_draft 層：套用的品牌 Layout id
+  productImageUrl?: string; // image_generation 層：這張卡片的產品圖 URL
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過

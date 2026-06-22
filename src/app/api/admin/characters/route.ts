@@ -3,7 +3,7 @@ import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
 import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
 import { enhanceSoul } from '@/lib/soul';
 
-const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search'];
+const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;

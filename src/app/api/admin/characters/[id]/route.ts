@@ -29,6 +29,7 @@ export async function GET(_req: Request, { params }: Params) {
     capabilities: c.capabilities || [],
     imageStyle: c.imageStyle || '',
     heygenAvatarId: c.heygenAvatarId || '',
+    heygenAvatarUrl: c.heygenAvatarUrl || '',
     avatarUrl: c.avatarUrl || '',
     status: c.status,
   });

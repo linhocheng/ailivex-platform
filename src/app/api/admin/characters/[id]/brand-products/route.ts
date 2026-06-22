@@ -1,0 +1,66 @@
+/**
+ * GET  /api/admin/characters/[id]/brand-products — 列出該角色所有產品圖
+ * POST /api/admin/characters/[id]/brand-products — 上傳新產品圖（binary image body）
+ *   headers: x-name, x-tags (comma-separated, optional)
+ */
+import { NextResponse } from 'next/server';
+import { getFirestore, getFirebaseAdmin } from '@/lib/firebase-admin';
+import { getCurrentUser } from '@/lib/session';
+import { COL, type BrandProductDoc } from '@/lib/collections';
+
+export const runtime = 'nodejs';
+
+type Params = { params: Promise<{ id: string }> };
+
+export async function GET(_req: Request, { params }: Params) {
+  const user = await getCurrentUser();
+  if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  const { id: characterId } = await params;
+  const db = getFirestore();
+  const snap = await db.collection(COL.brandProducts)
+    .where('characterId', '==', characterId)
+    .orderBy('createdAt', 'desc')
+    .get();
+
+  const products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return NextResponse.json({ products });
+}
+
+export async function POST(req: Request, { params }: Params) {
+  const user = await getCurrentUser();
+  if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  const { id: characterId } = await params;
+  const name = (req.headers.get('x-name') || '').trim();
+  const tagsRaw = (req.headers.get('x-tags') || '').trim();
+  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const contentType = req.headers.get('content-type') || 'image/jpeg';
+
+  if (!name) return NextResponse.json({ error: 'x-name 必填' }, { status: 400 });
+
+  const buf = await req.arrayBuffer();
+  if (!buf.byteLength) return NextResponse.json({ error: 'empty_body' }, { status: 400 });
+
+  const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+  if (!bucketName) return NextResponse.json({ error: 'FIREBASE_STORAGE_BUCKET not set' }, { status: 503 });
+
+  const db = getFirestore();
+  const docRef = db.collection(COL.brandProducts).doc();
+  const ext = contentType.includes('png') ? 'png' : 'jpg';
+  const gcsPath = `brand-assets/${characterId}/products/${docRef.id}.${ext}`;
+
+  const bucket = getFirebaseAdmin().storage().bucket(bucketName);
+  const file = bucket.file(gcsPath);
+  await file.save(Buffer.from(buf), { contentType, resumable: false });
+  await file.makePublic();
+  const imageUrl = `https://storage.googleapis.com/${bucketName}/${gcsPath}`;
+
+  const doc: BrandProductDoc = {
+    characterId, name, imageUrl, tags,
+    createdAt: new Date(),
+  };
+  await docRef.set(doc);
+
+  return NextResponse.json({ id: docRef.id, imageUrl });
+}

@@ -43,6 +43,7 @@ export async function GET(_req: Request, { params }: Params) {
       cardType: (c.cardType as string) || 'realistic_photo',
       status: c.status as string,
       imageUrl: (c.imageUrl as string) || '',
+      productImageUrl: (c.productImageUrl as string) || '',
       error: (c.error as string) || '',
       createdAt: toMillis(c.createdAt),
     };
@@ -54,6 +55,7 @@ export async function GET(_req: Request, { params }: Params) {
     characterId: t.characterId,
     status: t.status as string,
     storyText: (t.storyText as string) || '',
+    brandLayoutId: (t.brandLayoutId as string) || '',
     error: (t.error as string) || '',
     createdAt: toMillis(t.createdAt),
     cards,
@@ -65,7 +67,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  const body = await req.json().catch(() => ({})) as { storyText?: string };
+  const body = await req.json().catch(() => ({})) as { storyText?: string; brandLayoutId?: string };
 
   const db = getFirestore();
   const ref = db.collection(COL.tasks).doc(id);
@@ -74,6 +76,9 @@ export async function PATCH(req: Request, { params }: Params) {
   const task = snap.data() as TaskDoc;
   if (task.userId !== user.uid) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  if (body.storyText !== undefined) await ref.update({ storyText: body.storyText });
+  const patch: Record<string, unknown> = {};
+  if (body.storyText !== undefined) patch.storyText = body.storyText;
+  if (body.brandLayoutId !== undefined) patch.brandLayoutId = body.brandLayoutId;
+  if (Object.keys(patch).length) await ref.update(patch);
   return NextResponse.json({ ok: true });
 }

@@ -26,24 +26,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'LIVEKIT_* env 未設定' }, { status: 500 });
   }
 
-  const body = await req.json().catch(() => null) as { characterId?: string; v2?: boolean; v3?: boolean; v4?: boolean; v5?: boolean; v6?: boolean; v8?: boolean; v9?: boolean; v10?: boolean; v11?: boolean; v12?: boolean; v13?: boolean; v14?: boolean } | null;
+  const body = await req.json().catch(() => null) as { characterId?: string } | null;
   const characterId = body?.characterId?.trim();
   if (!characterId) return NextResponse.json({ error: 'characterId 必填' }, { status: 400 });
 
   const db = getFirestore();
   const userId = user.uid;
 
-  // 版本決策：用戶端看不到版本，派哪版由後台指派決定（缺省走 DEFAULT_VOICE_VERSION）。
-  // admin 例外：帶 vN flag 直接走該版（保留逐版測試能力，admin 無 access doc）。
+  // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（v14）。
+  // 一般用戶需有 access doc；admin 免 access doc 直接進。
   let voiceVersion: string | undefined;
-  if (user.role === 'admin') {
-    voiceVersion = body?.v14 ? 'v14' : body?.v13 ? 'v13' : body?.v12 ? 'v12' : body?.v11 ? 'v11' : body?.v10 ? 'v10' : body?.v9 ? 'v9' : body?.v8 ? 'v8' : body?.v6 ? 'v6' : body?.v5 ? 'v5' : body?.v4 ? 'v4' : body?.v3 ? 'v3' : body?.v2 ? 'v2' : undefined;
-  } else {
+  if (user.role !== 'admin') {
     const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
     if (!accessSnap.exists) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     voiceVersion = (accessSnap.data() as AccessDoc).voiceVersion;
   }
-  const agentName = agentNameForVersion(voiceVersion);
+  const agentName = agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION = v14
 
   const charSnap = await db.collection(COL.characters).doc(characterId).get();
   if (!charSnap.exists) return NextResponse.json({ error: '角色不存在' }, { status: 404 });

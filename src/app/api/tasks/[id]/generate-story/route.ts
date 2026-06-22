@@ -134,9 +134,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       if (!cards.length) throw new Error('Phase B: 解析出 0 張圖卡');
 
-      // 刪除舊的 scripted 子任務
+      // 刪除舊的 scripted / failed 子任務（重跑覆蓋，done 的留著）
       const oldSnap = await db.collection(COL.tasks)
-        .where('parentTaskId', '==', taskId).where('status', '==', 'scripted').get();
+        .where('parentTaskId', '==', taskId).where('status', 'in', ['scripted', 'failed']).get();
       const batch = db.batch();
       oldSnap.docs.forEach(d => batch.delete(d.ref));
       await batch.commit();

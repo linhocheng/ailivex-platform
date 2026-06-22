@@ -14,6 +14,7 @@ interface Card {
   cardType: string;
   status: string;
   imageUrl: string;
+  productImageUrl: string;
   error: string;
   createdAt: number;
 }
@@ -23,9 +24,23 @@ interface StoryDetail {
   characterId: string;
   status: string;
   storyText: string;
+  brandLayoutId: string;
   error: string;
   createdAt: number;
   cards: Card[];
+}
+interface BrandLayout {
+  id: string;
+  name: string;
+  description: string;
+  imageUrl: string;
+  isDefault: boolean;
+}
+interface BrandProduct {
+  id: string;
+  name: string;
+  imageUrl: string;
+  tags: string[];
 }
 
 const CARD_TYPE_LABEL: Record<string, string> = {
@@ -55,11 +70,13 @@ function PhaseStep({ label, done, active, waiting }: { label: string; done: bool
   );
 }
 
-function CardRow({ card, onEdit, onDelete, onRegenerate, lightboxImg, setLightboxImg }: {
+function CardRow({ card, onEdit, onDelete, onRegenerate, onSetProduct, onReload, lightboxImg, setLightboxImg }: {
   card: Card;
   onEdit: (id: string, field: string, val: string) => Promise<void>;
   onDelete: (id: string) => void;
   onRegenerate: (cardId: string) => void;
+  onSetProduct: (cardId: string) => void;
+  onReload: () => void;
   lightboxImg: string | null;
   setLightboxImg: (url: string | null) => void;
 }) {
@@ -155,6 +172,33 @@ function CardRow({ card, onEdit, onDelete, onRegenerate, lightboxImg, setLightbo
         </div>
       )}
 
+      {/* 產品圖 */}
+      <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: (card.imageUrl || (card.status === 'pending' || card.status === 'running') || card.status === 'failed') ? '1px solid var(--border)' : 'none' }}>
+        {card.productImageUrl ? (
+          <>
+            <img src={card.productImageUrl} alt="產品圖"
+              style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', flexShrink: 0 }} />
+            <span style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>已指定產品圖</span>
+            <button onClick={() => onSetProduct(card.id)} title="更換產品圖"
+              style={{ fontSize: 12, padding: '4px 9px', borderRadius: 5, border: '1px solid var(--border)',
+                background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>更換</button>
+            <button onClick={async () => { await fetch(`/api/tasks/${card.id}`, { method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productImageUrl: null }) }); onReload(); }}
+              title="移除產品圖"
+              style={{ fontSize: 12, padding: '4px 9px', borderRadius: 5, border: '1px solid var(--border)',
+                background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>移除</button>
+          </>
+        ) : (
+          <button onClick={() => onSetProduct(card.id)}
+            style={{ fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '5px 10px', borderRadius: 6, border: '1px dashed var(--border)',
+              background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+            <Icon name="image" size={13} />選產品圖（選填）
+          </button>
+        )}
+      </div>
+
       {/* 圖片 */}
       {card.imageUrl && (
         <div onClick={() => setLightboxImg(card.imageUrl)} style={{ cursor: 'pointer', overflow: 'hidden', maxHeight: 340 }}>
@@ -193,13 +237,34 @@ export default function StoryDetailPage() {
   const [addType, setAddType] = useState('realistic_photo');
   const [addLoading, setAddLoading] = useState(false);
 
+  // 品牌設定
+  const [brandLayouts, setBrandLayouts] = useState<BrandLayout[]>([]);
+  const [selectedLayoutId, setSelectedLayoutId] = useState('');
+  const [savingLayout, setSavingLayout] = useState(false);
+
+  // 產品圖 picker
+  const [productPickerCardId, setProductPickerCardId] = useState<string | null>(null);
+  const [brandProducts, setBrandProducts] = useState<BrandProduct[]>([]);
+  const [productUploading, setProductUploading] = useState(false);
+  const productFileRef = useRef<HTMLInputElement>(null);
+
   const phaseATriggered = useRef(false);
+
+  const loadBrandAssets = useCallback(async (characterId: string) => {
+    const [lRes, pRes] = await Promise.all([
+      fetch(`/api/brands/${characterId}/layouts`).then(r => r.json()).catch(() => ({ layouts: [] })),
+      fetch(`/api/brands/${characterId}/products`).then(r => r.json()).catch(() => ({ products: [] })),
+    ]);
+    setBrandLayouts(lRes.layouts ?? []);
+    setBrandProducts(pRes.products ?? []);
+  }, []);
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/stories/${storyId}`).then(r => r.json()).catch(() => null);
     if (r?.id) {
       setStory(r);
       if (!storyDraft) setStoryDraft(r.storyText || '');
+      setSelectedLayoutId(prev => prev || r.brandLayoutId || '');
       setLoaded(true);
       // pending + 沒有故事文字 → 自動觸發 Phase A（enqueueStoryDraftJob 可能沒成功）
       // Phase B 由 generate-story 的 after() 直接串聯，不在 client 觸發（避免重複）
@@ -214,6 +279,9 @@ export default function StoryDetailPage() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    if (story?.characterId) loadBrandAssets(story.characterId);
+  }, [story?.characterId, loadBrandAssets]);
+  useEffect(() => {
     if (!story) return;
     const needsPoll = story.status === 'pending' || story.status === 'scripting'
       || story.cards.some(c => c.status === 'pending' || c.status === 'running');
@@ -221,6 +289,39 @@ export default function StoryDetailPage() {
     const t = setInterval(load, 3000);
     return () => clearInterval(t);
   }, [story, load]);
+
+  async function saveLayoutId(layoutId: string) {
+    setSavingLayout(true);
+    setSelectedLayoutId(layoutId);
+    await fetch(`/api/stories/${storyId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brandLayoutId: layoutId }),
+    }).catch(() => {});
+    setSavingLayout(false);
+  }
+
+  async function setProductOnCard(cardId: string, url: string) {
+    await fetch(`/api/tasks/${cardId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productImageUrl: url }),
+    }).catch(() => {});
+    setProductPickerCardId(null);
+    load();
+  }
+
+  async function uploadTempProduct(file: File) {
+    if (!story) return;
+    setProductUploading(true);
+    const res = await fetch(`/api/brands/${story.characterId}/upload`, {
+      method: 'POST',
+      headers: { 'content-type': file.type || 'image/jpeg' },
+      body: file,
+    }).then(r => r.json()).catch(() => null);
+    setProductUploading(false);
+    if (res?.url && productPickerCardId) {
+      await setProductOnCard(productPickerCardId, res.url);
+    }
+  }
 
   async function saveStory() {
     if (!storyDraft.trim()) return;
@@ -278,7 +379,7 @@ export default function StoryDetailPage() {
     setAddLoading(true);
     await fetch(`/api/tasks/${storyId}/generate-storyboard`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ addOne: true, prompt: addText, intent: addTitle }),
+      body: JSON.stringify({ addOne: true, prompt: addText, intent: addTitle, cardType: addType }),
     }).catch(() => {});
     setAddTitle(''); setAddText(''); setAddType('realistic_photo'); setAddCard(false); setAddLoading(false);
     load();
@@ -300,9 +401,55 @@ export default function StoryDetailPage() {
   const imgDone = story.cards.filter(c => c.status === 'done').length;
   const scripted = story.cards.filter(c => c.status === 'scripted' || c.status === 'failed').length;
 
+  const pickerCard = productPickerCardId ? story?.cards.find(c => c.id === productPickerCardId) : null;
+
   return (
     <>
       <Ambient />
+      {/* 產品圖 Picker */}
+      {productPickerCardId && (
+        <div onClick={() => setProductPickerCardId(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+            background: 'rgba(20,16,12,0.72)', backdropFilter: 'blur(4px)' }}>
+          <div onClick={e => e.stopPropagation()}
+            style={{ width: '100%', maxWidth: 540, background: 'var(--bg)', borderRadius: '16px 16px 0 0',
+              border: '1px solid var(--border)', borderBottom: 'none', padding: '20px 20px 32px', maxHeight: '70vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>選擇產品圖{pickerCard ? ` · 圖卡 ${pickerCard.order}` : ''}</div>
+              <button onClick={() => setProductPickerCardId(null)}
+                style={{ fontSize: 13, color: 'var(--muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}>關閉</button>
+            </div>
+
+            {/* 上傳臨時圖 */}
+            <input ref={productFileRef} type="file" accept="image/*" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) uploadTempProduct(f); e.target.value = ''; }} />
+            <button onClick={() => productFileRef.current?.click()} disabled={productUploading}
+              style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px dashed var(--border)',
+                background: 'transparent', color: 'var(--muted)', cursor: productUploading ? 'not-allowed' : 'pointer',
+                fontSize: 13, marginBottom: 16 }}>
+              {productUploading ? '上傳中…' : '上傳臨時圖（僅此次使用）'}
+            </button>
+
+            {brandProducts.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+                {brandProducts.map(p => (
+                  <button key={p.id} onClick={() => setProductOnCard(productPickerCardId!, p.imageUrl)}
+                    style={{ padding: 0, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
+                      background: 'var(--panel)', cursor: 'pointer', textAlign: 'left' }}>
+                    <img src={p.imageUrl} alt={p.name}
+                      style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
+                    <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--muted)', lineHeight: 1.3 }}>{p.name}</div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: 13, padding: '20px 0' }}>
+                尚無產品圖，可從上方上傳臨時圖
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {lightboxImg && (
         <div onClick={() => setLightboxImg(null)} style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center',
           background: 'rgba(20,16,12,0.78)', padding: 'clamp(16px,5vw,48px)', backdropFilter: 'blur(4px)' }}>
@@ -347,6 +494,33 @@ export default function StoryDetailPage() {
                   active={imgActive > 0} waiting={imgActive === 0 && imgDone < story.cards.length} />
               </div>
             </div>
+
+            {/* 品牌設定 */}
+            {brandLayouts.length > 0 && (
+              <section className="ax-enter">
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.04em', marginBottom: 10 }}>品牌設定</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 13, color: 'var(--muted)' }}>版面風格</div>
+                  <select value={selectedLayoutId} onChange={e => saveLayoutId(e.target.value)}
+                    disabled={savingLayout}
+                    style={{ fontSize: 13, padding: '7px 11px', borderRadius: 7, border: '1px solid var(--border)',
+                      background: 'var(--panel)', color: 'var(--text)', cursor: 'pointer', flex: 1, maxWidth: 320 }}>
+                    <option value="">不套用版面</option>
+                    {brandLayouts.map(l => (
+                      <option key={l.id} value={l.id}>{l.name}{l.isDefault ? ' (預設)' : ''}</option>
+                    ))}
+                  </select>
+                  {selectedLayoutId && (() => {
+                    const layout = brandLayouts.find(l => l.id === selectedLayoutId);
+                    return layout ? (
+                      <img src={layout.imageUrl} alt={layout.name}
+                        style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
+                    ) : null;
+                  })()}
+                  {savingLayout && <span style={{ fontSize: 12, color: 'var(--muted)' }}>儲存中…</span>}
+                </div>
+              </section>
+            )}
 
             {/* Section A — 故事劇情 */}
             {(phaseA_done || phaseA_active) && (
@@ -411,6 +585,7 @@ export default function StoryDetailPage() {
                   {story.cards.map(card => (
                     <CardRow key={card.id} card={card}
                       onEdit={editCard} onDelete={deleteCard} onRegenerate={regenerateCard}
+                      onSetProduct={setProductPickerCardId} onReload={load}
                       lightboxImg={lightboxImg} setLightboxImg={setLightboxImg} />
                   ))}
                 </div>

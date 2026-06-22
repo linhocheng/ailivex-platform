@@ -26,9 +26,10 @@ export async function DELETE(_req: Request, { params }: Params) {
       const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
       if (bucketName) {
         const path = `documents/${user.uid}/${id}.html`;
-        await getFirebaseAdmin().storage().bucket(bucketName).file(path).delete().catch(() => {});
+        await getFirebaseAdmin().storage().bucket(bucketName).file(path).delete()
+          .catch((e: unknown) => console.error('[documents/delete] GCS delete failed, orphaned file:', path, e));
       }
-    } catch { /* GCS 刪失敗不擋主流程 */ }
+    } catch (e) { console.error('[documents/delete] GCS cleanup error:', e); }
   }
 
   // 刪關聯 job

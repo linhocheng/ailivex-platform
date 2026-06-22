@@ -471,13 +471,21 @@ export default function RealtimeCallPage() {
 
       {/* Top bar */}
       <header style={{ position:'relative', zIndex:3, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 22px' }}>
-        <Link href={`/chat/${characterId}`} style={{ width:38, height:38, borderRadius:7,
-          border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)',
-          color:'rgba(255,255,255,0.8)', display:'grid', placeItems:'center', flexShrink:0 }}>
-          <svg viewBox="0 0 24 24" style={{width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'}}>
-            <path d="M15 5l-7 7 7 7"/>
-          </svg>
-        </Link>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <Link href={`/chat/${characterId}`} style={{ width:38, height:38, borderRadius:7,
+            border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)',
+            color:'rgba(255,255,255,0.8)', display:'grid', placeItems:'center', flexShrink:0 }}>
+            <svg viewBox="0 0 24 24" style={{width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'}}>
+              <path d="M15 5l-7 7 7 7"/>
+            </svg>
+          </Link>
+          <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+            {HEALTH_ITEMS.map(h => (
+              <span key={h.key} style={{ width:7, height:7, borderRadius:'50%', display:'inline-block', flexShrink:0,
+                background: h.ok ? '#6f8c5f' : h.fail ? '#b5654a' : 'rgba(255,255,255,0.25)' }} />
+            ))}
+          </div>
+        </div>
         {/* Status dot — top right, no frame */}
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           {inCall && <span style={{ fontSize:12, color:'rgba(255,255,255,0.3)', fontVariantNumeric:'tabular-nums' }}>
@@ -565,18 +573,6 @@ export default function RealtimeCallPage() {
           </div>
         )}
 
-      </div>
-
-      {/* Health pills */}
-      <div style={{ position:'absolute', bottom:140, left:0, right:0, zIndex:3,
-        display:'flex', justifyContent:'center', gap:7, flexWrap:'wrap', padding:'0 20px' }}>
-        {HEALTH_ITEMS.map(h => (
-          <div key={h.key} style={{ display:'flex', alignItems:'center', gap:7, fontSize:12, color:'rgba(255,255,255,0.7)',
-            background:'rgba(10,10,10,0.5)', border:'1px solid rgba(255,255,255,0.1)', padding:'6px 11px', borderRadius:6, backdropFilter:'blur(8px)' }}>
-            <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, display:'inline-block',
-              background: h.ok ? '#6f8c5f' : h.fail ? '#b5654a' : 'rgba(255,255,255,0.3)' }} />
-          </div>
-        ))}
       </div>
 
       {/* Controls */}

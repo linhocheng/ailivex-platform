@@ -20,6 +20,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     cardText?: string;
     cardType?: string;
     intent?: string;
+    productImageUrl?: string | null;
   };
 
   const db = getFirestore();
@@ -34,6 +35,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (body.cardText !== undefined) patch.cardText = body.cardText;
   if (body.cardType !== undefined) patch.cardType = body.cardType;
   if (body.intent !== undefined) patch.intent = body.intent;
+  if (body.productImageUrl !== undefined) patch.productImageUrl = body.productImageUrl ?? '';
 
   if (!Object.keys(patch).length) return NextResponse.json({ ok: true });
   await ref.update(patch);

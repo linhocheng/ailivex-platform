@@ -9,6 +9,8 @@ interface Char {
   id: string; name: string; avatarUrl: string; status: string;
   hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
+interface BrandLayout { id: string; name: string; imageUrl: string; description: string; isDefault: boolean; }
+interface BrandProduct { id: string; name: string; imageUrl: string; tags: string[]; }
 type TaskCapability = 'image_generation' | 'audio_generation' | 'script_draft' | 'story_draft' | 'writing' | 'web_search' | 'video_generation';
 const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
   { value: 'image_generation', label: '製圖' },
@@ -27,6 +29,7 @@ type EditState = {
   capabilities: TaskCapability[];
   imageStyle: string;
   heygenAvatarId: string;
+  heygenAvatarUrl: string;
   avatar: { b64: string; type: string } | null;
 };
 
@@ -103,6 +106,55 @@ function ConvPanel({ cs, onChange }: { cs: ConvSettings; onChange: (v: ConvSetti
   );
 }
 
+function HeygenAvatarUpload({ charId, currentId, currentUrl, onUploaded }: {
+  charId: string;
+  currentId: string;
+  currentUrl: string;
+  onUploaded: (id: string, url: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const r = await fetch(`/api/admin/characters/${charId}/heygen-avatar`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'image/jpeg' },
+      body: file,
+    }).then(r => r.json()).catch(() => null);
+    setUploading(false);
+    if (r?.talkingPhotoId) onUploaded(r.talkingPhotoId, r.previewUrl || '');
+    else alert('上傳失敗，請稍後再試。');
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {currentUrl && (
+        <img
+          src={currentUrl}
+          alt="HeyGen 分身照"
+          style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }}
+        />
+      )}
+      {currentId && (
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+          ID: <code style={{ fontSize: 11 }}>{currentId}</code>
+        </div>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+      <button
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading}
+        style={{ ...inputBase, cursor: uploading ? 'not-allowed' : 'pointer', textAlign: 'center', color: 'var(--muted)' }}
+      >
+        {uploading ? '上傳中…' : currentId ? '重新上傳照片' : '上傳分身照片'}
+      </button>
+    </div>
+  );
+}
+
 export default function AdminCharacters() {
   const [list, setList] = useState<Char[]>([]);
   const [name, setName] = useState('');
@@ -123,11 +175,97 @@ export default function AdminCharacters() {
   const [testPlaying, setTestPlaying] = useState(false);
   const [editTestPlaying, setEditTestPlaying] = useState(false);
 
+  // Brand Assets
+  const [baCharId, setBaCharId] = useState<string | null>(null);
+  const [baCharName, setBaCharName] = useState('');
+  const [layouts, setLayouts] = useState<BrandLayout[]>([]);
+  const [products, setProducts] = useState<BrandProduct[]>([]);
+  const [baMsg, setBaMsg] = useState('');
+  const [baUploading, setBaUploading] = useState('');
+  const layoutFileRef = useRef<HTMLInputElement>(null);
+  const productFileRef = useRef<HTMLInputElement>(null);
+  const [layoutForm, setLayoutForm] = useState({ name: '', description: '', isDefault: false });
+  const [productForm, setProductForm] = useState({ name: '', tags: '' });
+
   async function load() {
     const r = await fetch('/api/admin/characters').then(r => r.json()).catch(() => ({ characters:[] }));
     setList(r.characters || []);
   }
   useEffect(() => { load(); }, []);
+
+  async function loadBrandAssets(charId: string) {
+    const [lr, pr] = await Promise.all([
+      fetch(`/api/admin/characters/${charId}/brand-layouts`).then(r => r.json()).catch(() => ({ layouts: [] })),
+      fetch(`/api/admin/characters/${charId}/brand-products`).then(r => r.json()).catch(() => ({ products: [] })),
+    ]);
+    setLayouts(lr.layouts || []);
+    setProducts(pr.products || []);
+  }
+
+  async function openBrandAssets(charId: string, charName: string) {
+    setBaCharId(charId); setBaCharName(charName); setBaMsg('');
+    setLayoutForm({ name: '', description: '', isDefault: false });
+    setProductForm({ name: '', tags: '' });
+    await loadBrandAssets(charId);
+  }
+
+  async function uploadLayout(charId: string, file: File) {
+    if (!layoutForm.name.trim()) { setBaMsg('請填寫 Layout 名稱'); return; }
+    setBaUploading('layout');
+    const r = await fetch(`/api/admin/characters/${charId}/brand-layouts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'image/jpeg',
+        'x-name': layoutForm.name.trim(),
+        'x-description': layoutForm.description.trim(),
+        'x-is-default': layoutForm.isDefault ? 'true' : 'false',
+      },
+      body: file,
+    }).then(r => r.json()).catch(() => null);
+    setBaUploading('');
+    if (r?.id) {
+      setLayoutForm({ name: '', description: '', isDefault: false });
+      if (layoutFileRef.current) layoutFileRef.current.value = '';
+      await loadBrandAssets(charId);
+    } else setBaMsg(r?.error || '上傳失敗');
+  }
+
+  async function setDefaultLayout(charId: string, layoutId: string) {
+    await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'PATCH' });
+    await loadBrandAssets(charId);
+  }
+
+  async function deleteLayout(charId: string, layoutId: string) {
+    if (!confirm('刪除此 Layout？')) return;
+    await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'DELETE' });
+    await loadBrandAssets(charId);
+  }
+
+  async function uploadProduct(charId: string, file: File) {
+    if (!productForm.name.trim()) { setBaMsg('請填寫產品名稱'); return; }
+    setBaUploading('product');
+    const r = await fetch(`/api/admin/characters/${charId}/brand-products`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'image/jpeg',
+        'x-name': productForm.name.trim(),
+        'x-tags': productForm.tags.trim(),
+      },
+      body: file,
+    }).then(r => r.json()).catch(() => null);
+    setBaUploading('');
+    if (r?.id) {
+      setProductForm({ name: '', tags: '' });
+      if (productFileRef.current) productFileRef.current.value = '';
+      await loadBrandAssets(charId);
+    } else setBaMsg(r?.error || '上傳失敗');
+  }
+
+  async function deleteProduct(charId: string, productId: string) {
+    if (!confirm('刪除此產品圖？')) return;
+    await fetch(`/api/admin/characters/${charId}/brand-products/${productId}`, { method: 'DELETE' });
+    await loadBrandAssets(charId);
+  }
 
   function onAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; if (!f) return;
@@ -273,12 +411,17 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
+                  </button>
+                  <button onClick={() => openBrandAssets(c.id, c.name)}
+                    style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
+                      background:'transparent', color:'var(--accent-2)', fontSize:12, cursor:'pointer' }}>
+                    品牌素材
                   </button>
                   <button onClick={() => deleteChar(c.id, c.name)}
                     style={{ width:28, height:28, borderRadius:6, border:'1px solid var(--border)', background:'transparent',
@@ -338,6 +481,107 @@ export default function AdminCharacters() {
         </div>
       </div>
 
+      {/* Brand Assets Modal */}
+      {baCharId && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }}
+          onClick={e => { if (e.target===e.currentTarget) setBaCharId(null); }}>
+          <div style={{ background:'var(--panel)', border:'1px solid var(--border-strong)', borderRadius:'var(--radius)',
+            padding:28, width:'100%', maxWidth:780, display:'flex', flexDirection:'column', gap:20,
+            maxHeight:'90vh', overflowY:'auto', boxShadow:'0 24px 60px -20px rgba(0,0,0,0.35)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <div style={{ fontSize:16, fontWeight:600 }}>品牌素材 — {baCharName}</div>
+              <button onClick={() => setBaCharId(null)}
+                style={{ width:32, height:32, borderRadius:6, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}>
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            {baMsg && <div style={{ fontSize:13, color:'#b5654a' }}>{baMsg}</div>}
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+              {/* Layouts */}
+              <div>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>全版 Layout</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
+                  {layouts.map(l => (
+                    <div key={l.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:7,
+                      border:'1px solid var(--border)', background:'rgba(60,52,40,0.02)' }}>
+                      <img src={l.imageUrl} alt={l.name} style={{ width:48, height:48, objectFit:'cover', borderRadius:6, flexShrink:0 }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.name}</div>
+                        {l.isDefault && <span style={{ fontSize:11, color:'var(--accent)', background:'color-mix(in oklab, var(--accent) 12%, transparent)', padding:'1px 6px', borderRadius:4 }}>預設</span>}
+                      </div>
+                      <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                        {!l.isDefault && (
+                          <button onClick={() => setDefaultLayout(baCharId, l.id)}
+                            style={{ padding:'3px 8px', borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', fontSize:11, cursor:'pointer' }}>
+                            設預設
+                          </button>
+                        )}
+                        <button onClick={() => deleteLayout(baCharId, l.id)}
+                          style={{ width:26, height:26, borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}
+                          onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
+                          onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
+                          <Icon name="trash" size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {layouts.length === 0 && <div style={{ fontSize:13, color:'var(--muted)' }}>尚無 Layout</div>}
+                </div>
+                <div style={{ borderTop:'1px solid var(--border)', paddingTop:12, display:'flex', flexDirection:'column', gap:8 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>新增 Layout</div>
+                  <input placeholder="名稱" value={layoutForm.name} onChange={e=>setLayoutForm({...layoutForm,name:e.target.value})}
+                    style={{ ...inputBase, fontSize:13 }} />
+                  <input placeholder="說明（選填）" value={layoutForm.description} onChange={e=>setLayoutForm({...layoutForm,description:e.target.value})}
+                    style={{ ...inputBase, fontSize:13 }} />
+                  <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, cursor:'pointer' }}>
+                    <input type="checkbox" checked={layoutForm.isDefault} onChange={e=>setLayoutForm({...layoutForm,isDefault:e.target.checked})} />
+                    設為預設版型
+                  </label>
+                  <input ref={layoutFileRef} type="file" accept="image/*" style={{ fontSize:12 }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadLayout(baCharId, f); }} />
+                  {baUploading==='layout' && <div style={{ fontSize:12, color:'var(--muted)' }}>上傳中…</div>}
+                </div>
+              </div>
+
+              {/* Products */}
+              <div>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>產品圖</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
+                  {products.map(p => (
+                    <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:7,
+                      border:'1px solid var(--border)', background:'rgba(60,52,40,0.02)' }}>
+                      <img src={p.imageUrl} alt={p.name} style={{ width:48, height:48, objectFit:'cover', borderRadius:6, flexShrink:0 }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</div>
+                        {p.tags.length > 0 && <div style={{ fontSize:11, color:'var(--muted)' }}>{p.tags.join('、')}</div>}
+                      </div>
+                      <button onClick={() => deleteProduct(baCharId, p.id)}
+                        style={{ width:26, height:26, borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer', flexShrink:0 }}
+                        onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
+                        onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
+                        <Icon name="trash" size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {products.length === 0 && <div style={{ fontSize:13, color:'var(--muted)' }}>尚無產品圖</div>}
+                </div>
+                <div style={{ borderTop:'1px solid var(--border)', paddingTop:12, display:'flex', flexDirection:'column', gap:8 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>新增產品圖</div>
+                  <input placeholder="產品名稱" value={productForm.name} onChange={e=>setProductForm({...productForm,name:e.target.value})}
+                    style={{ ...inputBase, fontSize:13 }} />
+                  <input placeholder="標籤（逗號分隔，選填）" value={productForm.tags} onChange={e=>setProductForm({...productForm,tags:e.target.value})}
+                    style={{ ...inputBase, fontSize:13 }} />
+                  <input ref={productFileRef} type="file" accept="image/*" style={{ fontSize:12 }}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadProduct(baCharId, f); }} />
+                  {baUploading==='product' && <div style={{ fontSize:12, color:'var(--muted)' }}>上傳中…</div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Modal */}
       {editing && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100 }}
@@ -377,9 +621,13 @@ export default function AdminCharacters() {
               </Field>
             )}
             {editing.capabilities.includes('video_generation') && (
-              <Field label="HeyGen Avatar ID（video_generation 用）">
-                <TextInput value={editing.heygenAvatarId} onChange={e=>setEditing({...editing,heygenAvatarId:e.target.value})}
-                  placeholder="例：avatar_xxxxxxxxxxxxxxxx" />
+              <Field label="HeyGen 分身照片">
+                <HeygenAvatarUpload
+                  charId={editing.id}
+                  currentId={editing.heygenAvatarId}
+                  currentUrl={editing.heygenAvatarUrl}
+                  onUploaded={(id, url) => setEditing({ ...editing, heygenAvatarId: id, heygenAvatarUrl: url })}
+                />
               </Field>
             )}
             <Field label="靈魂（留空不更新）">

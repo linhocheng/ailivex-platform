@@ -83,86 +83,12 @@ export default function ChatPage() {
           </div>
           {char?.hasVoice && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Link href={`/realtime/${characterId}`}
+              <Link href={`/realtime-v14/${characterId}`}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', fontSize: 13.5,
                   fontWeight: 500, borderRadius: 6, border: '1px solid var(--border-strong)',
                   background: 'rgba(60,52,40,0.03)', color: 'var(--text)' }}>
                 <Icon name="phone" size={16} />語音通話
               </Link>
-              {isAdmin && <>
-              <Link href={`/realtime-v2/${characterId}`} title="主動插話實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />2.0
-              </Link>
-              <Link href={`/realtime-v3/${characterId}`} title="主動發話 pipe-test 實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />3.0
-              </Link>
-              <Link href={`/realtime-v4/${characterId}`} title="單機群聊（多人辨識）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />4.0
-              </Link>
-              <Link href={`/realtime-v5/${characterId}`} title="發話對象偵測（讓位）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />5.0
-              </Link>
-              <Link href={`/realtime-v6/${characterId}`} title="背景思考 + 主動搶話實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />6.0
-              </Link>
-              <Link href={`/realtime-v8/${characterId}`} title="發言權控制（抓麥克風／讓位）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />8.0
-              </Link>
-              <Link href={`/realtime-v9/${characterId}`} title="LLM 發言權判斷（多人）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />9.0
-              </Link>
-              <Link href={`/realtime-v10/${characterId}`} title="多人房：回音過濾／講者身份／3a收斂 實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />10
-              </Link>
-              <Link href={`/realtime-v11/${characterId}`} title="聲紋講者辨識（voiceprint 分群）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />11
-              </Link>
-              <Link href={`/realtime-v12/${characterId}`} title="讀網址工作臺（通話中貼網址讓角色讀）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />12
-              </Link>
-              <Link href={`/realtime-v13/${characterId}`} title="任務派發（語音下指令生圖／生音檔）實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />13
-              </Link>
-              <Link href={`/realtime-v14/${characterId}`} title="腳本草稿＋音檔生成 實驗版"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '8px 12px', fontSize: 12.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px dashed var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--accent-2)' }}>
-                <Icon name="phone" size={15} />14
-              </Link>
-              </>}
             </div>
           )}
         </header>

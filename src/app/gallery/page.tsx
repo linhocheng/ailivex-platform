@@ -15,6 +15,9 @@ interface MediaTask {
   imageUrl: string;
   audioUrl: string;
   videoUrl: string;
+  videoTaskId: string;
+  klingVideoTaskId: string;
+  source: string;
   scriptText: string;
   voiceId: string;
   storyText: string;
@@ -179,19 +182,49 @@ function StoryDraftCard({ task, onDelete }: { task: MediaTask; onDelete: (t: Med
 }
 
 // ── 音檔卡 ────────────────────────────────────────────────────────────
-function AudioCard({ task, onDelete, onGenerated }: { task: MediaTask; onDelete: (t: MediaTask) => void; onGenerated: () => void }) {
+function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; tasks: MediaTask[]; onDelete: (t: MediaTask) => void; onGenerated: () => void }) {
   const [h, setH] = useState(false);
   const [videoLoading, setVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState('');
+  const [klingLoading, setKlingLoading] = useState(false);
+  const [klingError, setKlingError] = useState('');
   const inProgress = task.status === 'pending' || task.status === 'running';
+  const linkedVideo = tasks.find(t => t.id === task.videoTaskId);
+  const videoFailed = linkedVideo?.status === 'failed';
+  const linkedKling = tasks.find(t => t.id === task.klingVideoTaskId);
+  const klingFailed = linkedKling?.status === 'failed';
   const st = STATUS[task.status] || STATUS.pending;
 
   async function generateVideo() {
     setVideoLoading(true);
+    setVideoError('');
     const r = await fetch(`/api/tasks/${task.id}/generate-video`, { method: 'POST' })
-      .then(r => r.json()).catch(() => null);
+      .then(res => res.json()).catch(() => null);
     setVideoLoading(false);
     if (r?.ok) { onGenerated(); }
-    else { alert(r?.error === 'no_heygen_avatar' ? '角色尚未設定 HeyGen 分身，請先至後台設定。' : '生成失敗，請稍後再試。'); }
+    else {
+      setVideoError(
+        r?.error === 'no_heygen_avatar' || r?.error === 'no_avatar_url'
+          ? '角色尚未設定 HeyGen 分身照片，請先至後台上傳。'
+          : '生成失敗，請稍後再試。'
+      );
+    }
+  }
+
+  async function generateKlingVideo() {
+    setKlingLoading(true);
+    setKlingError('');
+    const r = await fetch(`/api/tasks/${task.id}/generate-video-kling`, { method: 'POST' })
+      .then(res => res.json()).catch(() => null);
+    setKlingLoading(false);
+    if (r?.ok) { onGenerated(); }
+    else {
+      setKlingError(
+        r?.error === 'no_avatar_url' ? '角色尚未設定頭像，請先至後台上傳。'
+        : r?.error === 'fal_not_configured' ? 'Kling 尚未設定（FAL_KEY 缺失）。'
+        : '生成失敗，請稍後再試。'
+      );
+    }
   }
 
   return (
@@ -222,10 +255,57 @@ function AudioCard({ task, onDelete, onGenerated }: { task: MediaTask; onDelete:
           style={{ width: '100%', height: 36, borderRadius: 6, accentColor: 'var(--accent)' }} />
       )}
       {task.audioUrl && task.status === 'done' && (
-        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
-          <RowButton onClick={generateVideo} icon="image" primary>
-            {videoLoading ? '送出中…' : '生成分身短影音'}
-          </RowButton>
+        <div style={{ marginTop: 8 }}>
+          {(videoError || klingError) && (
+            <div style={{ fontSize: 12.5, color: '#b5654a', marginBottom: 8, padding: '8px 10px',
+              background: 'rgba(181,101,74,0.08)', borderRadius: 6, border: '1px solid rgba(181,101,74,0.2)' }}>
+              {videoError || klingError}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            {/* HeyGen 按鈕 */}
+            {task.videoTaskId && !videoFailed ? (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Dot color="var(--accent-2)" size={6} />HeyGen 已送出
+              </div>
+            ) : (
+              <button onClick={generateVideo} disabled={videoLoading}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: videoFailed ? 'color-mix(in oklab, #b5654a 18%, transparent)' : 'rgba(60,52,40,0.045)',
+                  border: `1px solid ${videoFailed ? 'color-mix(in oklab, #b5654a 35%, transparent)' : 'var(--border)'}`,
+                  borderRadius: 6, padding: '7px 12px', fontSize: 13, fontWeight: 500,
+                  color: videoFailed ? '#b5654a' : 'var(--muted)',
+                  cursor: videoLoading ? 'not-allowed' : 'pointer',
+                  opacity: videoLoading ? 0.7 : 1, minHeight: 36, transition: 'opacity .2s' }}>
+                {videoLoading ? <><Typing />生成中…</> : videoFailed
+                  ? <><Icon name="image" size={15} />重試 HeyGen</>
+                  : <><Icon name="image" size={15} />HeyGen</>}
+              </button>
+            )}
+            {/* Kling 按鈕 */}
+            {task.klingVideoTaskId && !klingFailed ? (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Dot color="var(--accent-2)" size={6} />Kling 已送出
+              </div>
+            ) : (
+              <button onClick={generateKlingVideo} disabled={klingLoading}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: klingFailed
+                    ? 'color-mix(in oklab, #b5654a 18%, transparent)'
+                    : 'color-mix(in oklab, var(--accent) 18%, transparent)',
+                  border: `1px solid ${klingFailed
+                    ? 'color-mix(in oklab, #b5654a 35%, transparent)'
+                    : 'color-mix(in oklab, var(--accent) 35%, transparent)'}`,
+                  borderRadius: 6, padding: '7px 12px', fontSize: 13, fontWeight: 500,
+                  color: klingFailed ? '#b5654a' : 'var(--accent)',
+                  cursor: klingLoading ? 'not-allowed' : 'pointer',
+                  opacity: klingLoading ? 0.7 : 1, minHeight: 36, transition: 'opacity .2s' }}>
+                {klingLoading ? <><Typing />生成中…</> : klingFailed
+                  ? <><Icon name="image" size={15} />重試 Kling</>
+                  : <><Icon name="image" size={15} />Kling 生成</>}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -263,7 +343,7 @@ function VideoCard({ task, onDelete }: { task: MediaTask; onDelete: (t: MediaTas
       )}
       {inProgress && !task.videoUrl && (
         <div style={{ padding: '12px 0', fontSize: 13, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Typing />HeyGen 生成中（約 1–2 分鐘）…
+          <Typing />{task.source === 'kling' ? 'Kling 生成中（約 2–4 分鐘）…' : 'HeyGen 生成中（約 1–2 分鐘）…'}
         </div>
       )}
     </div>
@@ -406,6 +486,26 @@ export default function Gallery() {
     return () => clearInterval(t);
   }, [anyActive]);
 
+  // Kling 補救：偵測 running > 10 分鐘的 Kling video task，主動去查 fal.ai 補寫結果
+  const recoveringRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const now = Date.now();
+    const stuckKling = videoTasks.filter(t =>
+      t.source === 'kling' && t.status === 'running' && now - t.createdAt > 10 * 60 * 1000
+    );
+    for (const t of stuckKling) {
+      if (recoveringRef.current.has(t.id)) continue;
+      recoveringRef.current.add(t.id);
+      fetch(`/api/tasks/${t.id}/kling-recover`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'done' || data.status === 'failed') load();
+          else recoveringRef.current.delete(t.id); // 還在跑，下次繼續檢查
+        })
+        .catch(() => recoveringRef.current.delete(t.id));
+    }
+  }, [videoTasks]);
+
   return (
     <>
       <Ambient />
@@ -477,7 +577,7 @@ export default function Gallery() {
                   <section>
                     <SectionLabel>音檔</SectionLabel>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {audioTasks.map(t => <AudioCard key={t.id} task={t} onDelete={del} onGenerated={load} />)}
+                      {audioTasks.map(t => <AudioCard key={t.id} task={t} tasks={tasks} onDelete={del} onGenerated={load} />)}
                     </div>
                   </section>
                 )}

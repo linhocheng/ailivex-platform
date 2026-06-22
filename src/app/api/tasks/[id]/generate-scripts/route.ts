@@ -54,10 +54,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const cards = await analyzeStory(storyText, imageStyle);
       if (!cards.length) throw new Error('LLM returned empty card list');
 
-      // 刪除該 story 舊有的 scripted 子任務（重新分析時覆蓋）
+      // 刪除該 story 舊有的 scripted / failed 子任務（重新分析時覆蓋，done 的留著）
       const oldSnap = await db.collection(COL.tasks)
         .where('parentTaskId', '==', taskId)
-        .where('status', '==', 'scripted')
+        .where('status', 'in', ['scripted', 'failed'])
         .get();
       const batch = db.batch();
       oldSnap.docs.forEach(d => batch.delete(d.ref));

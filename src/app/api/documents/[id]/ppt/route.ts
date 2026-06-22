@@ -14,6 +14,8 @@ interface ServiceAccount {
 }
 
 // ── JWT + token ───────────────────────────────────────────────────────────────
+const JWT_EXPIRY_SECONDS = 3600;
+
 function buildJwt(sa: ServiceAccount): string {
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
@@ -25,7 +27,7 @@ function buildJwt(sa: ServiceAccount): string {
     ].join(' '),
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
-    exp: now + 3600,
+    exp: now + JWT_EXPIRY_SECONDS,
   })).toString('base64url');
   const unsigned = `${header}.${claims}`;
   const sign = createSign('RSA-SHA256');

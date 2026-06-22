@@ -16,10 +16,10 @@ export async function POST(req: Request) {
       const userId = parts.slice(3).join('-');
       if (userId) {
         const db = getFirestore();
-        await upsertRelationship(db, userId, characterId).catch(() => {});
+        await upsertRelationship(db, userId, characterId).catch((e: unknown) => console.error('[voice-end] upsertRelationship failed:', e));
       }
     }
-  } catch { /* voice-end 失敗不影響通話收尾 */ }
+  } catch (e) { console.error('[voice-end] unexpected error:', e); }
 
   return NextResponse.json({ ok: true });
 }
