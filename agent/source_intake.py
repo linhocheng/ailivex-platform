@@ -117,8 +117,8 @@ async def _process_source(
         session.input.set_audio_enabled(True)
         session.generate_reply(instructions=(
             f"你剛讀完對方分享的『{title}』，資料已經在你腦裡了。"
-            "主動開口，說你看到了什麼、你的即時反應或想法，"
-            "口氣平實像聊天，不要逐條報告、不要念稿，然後把話交回給對方。"
+            "用你這個角色自然的方式開口，說你看到了什麼、你的即時反應或想法，"
+            "不要逐條報告、不要念稿，然後把話交回給對方。"
         ))
     except Exception as e:
         logger.warning(f"[source] resume failed: {e}")
