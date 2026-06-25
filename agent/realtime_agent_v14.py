@@ -257,7 +257,11 @@ async def entrypoint(ctx: JobContext):
             "script_draft：你必須先自己把口播稿逐字寫出來（每一句都是對著鏡頭說的話，不是主題說明或撰寫指引），"
             "再把這段完整口播稿文字放入 params.text，系統會直接拿這段話生成音檔。"
             "建立後告知對方去媒體庫確認腳本再生成音檔。"
-            "story_draft：params 必須包含 'text'（故事主題或簡介，20-100字即可，系統後台自動生成完整故事和圖卡腳本）。建立後告知對方去故事板頁面查看進度。"
+            "story_draft：params 必須包含 'text'（故事主題或簡介，20-100字即可，系統後台自動生成完整故事和圖卡腳本）。"
+            "可選：'card_count'（整數，1-12，指定產出幾張圖卡，預設讓 AI 自動決定）；"
+            "'story_length'（'short'=短故事3-4段、'medium'=中等5-8段（預設）、'long'=長故事8-12段）。"
+            "如果用戶說「我要五張」「給我三張圖」等，把數字填入 card_count；說「短一點」填 short、「長一點」填 long。"
+            "建立後告知對方去故事板頁面查看進度。"
             "image_generation：params 包含 'prompt'。"
             "audio_generation：直接生成，params 包含 'text'。通常先走 script_draft 讓對方確認。"
             "intent 用一句話描述任務目的。呼叫後系統背景執行，口頭告知對方任務已安排。"
@@ -284,8 +288,10 @@ async def entrypoint(ctx: JobContext):
                 return "腳本草稿已備妥，你可以去媒體庫確認並編修後，按「生成音檔」鈕產出音檔。"
             elif task_type == "story_draft":
                 brief = parsed_params.get("text", "") or parsed_params.get("brief", "") or intent
-                task_id = dispatch_story_draft(user_id, character_id, brief, intent)
-                logger.info(f"[v14] story_draft dispatched: {task_id} brief={brief[:60]!r}")
+                card_count = int(parsed_params.get("card_count", 0) or 0)
+                story_length = parsed_params.get("story_length", "medium") or "medium"
+                task_id = dispatch_story_draft(user_id, character_id, brief, intent, card_count=card_count, story_length=story_length)
+                logger.info(f"[v14] story_draft dispatched: {task_id} brief={brief[:60]!r} card_count={card_count} story_length={story_length}")
                 return "故事板已開始生成，系統會自動寫故事、分析圖卡腳本，你可以去故事板頁面查看進度。"
             elif task_type == "audio_generation":
                 # 自動注入角色 voiceId，不讓 LLM 猜
@@ -303,13 +309,11 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"dispatch_task_tool failed: {e}")
             return "任務派發失敗，請稍後再試。"
 
-    # v2 深度版：深度靠「真的在聽」，但口氣要平實，別演
+    # 語音格式規則：只管格式，不管個性——個性由靈魂決定
     system_prompt += (
-        "\n\n【在場與口氣】"
-        "真的在聽對方說什麼，聽出話裡的情緒和潛台詞——但用最平實、內斂、口語的方式回應，"
-        "像私下跟老朋友隨口閒聊。不要說法、不要開示、不要金句、不要戲劇化或拖長的語氣。"
-        "深刻的東西用最普通的話帶過，越不費力越自然。不確定就誠實，不要客套、不要 AI 腔、不好演。"
-        "這是即時語音，一口氣自然把話說完，**不要分段、不要空行、不要換行**，像講話不是寫字。"
+        "\n\n【語音格式】"
+        "這是即時語音通話，說話要連貫自然，一口氣把話說完。"
+        "不要分段換行，不要 Markdown 符號，不要說「（思考）」「（停頓）」這類括號 stage directions。"
     )
     tools = [remember_tool, write_document_tool]
     if char_capabilities:
@@ -429,13 +433,13 @@ async def entrypoint(ctx: JobContext):
     try:
         await session.generate_reply(
             instructions=(
-                "接通了，說第一句話。像老朋友重新接上線那樣自然開口。"
+                "接通了，說第一句話。用你這個角色最自然的方式開口。"
                 "**第一優先**：看【上次聊到最後】那段原話——如果對方結尾說了『等一下／待會再聊 X』、"
                 "或有明顯沒聊完的事，那就是你開口第一個要接的，直接從那件**最新**的事接回來，"
                 "**絕對不要扯回更早、更舊的話題**（例如對方早就聊過、已經告一段落的事）。"
                 "接的時候像突然想起、想延續，**不要逐句複述、不要報告上次聊了什麼、不要把記憶當清單念**。"
                 "只有在真的沒有未完的線、或硬接會尷尬時，才順著當下問候（這個時間點、隔多久沒聊）。"
-                "一句話就好，口氣平實，留白讓對方接。"
+                "一句話就好，留白讓對方接。"
             ),
         )
         logger.info("Initial greeting sent")

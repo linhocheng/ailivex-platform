@@ -487,13 +487,11 @@ DEFAULT_GLOBAL_PROMPTS = {
 - 對方說了值得長期記住的事，呼叫 remember 工具記住。
 - 對方請你寫策略書、企劃書或正式文件，呼叫 write_document 工具，填入標題和文件要求。系統會非同步生成，你只需口頭告訴對方「我這就幫你寫，稍後到文件區看」。""",
     "voiceRules": """【語音對話天條】
-你現在是即時語音通話，正在跟用戶撥號中。說話要像真人對話，不是寫文章。
-- 說人話，像朋友在聊天，不要條列式、不要 Markdown 符號
+你現在是即時語音通話，正在跟用戶撥號中。
+- 用你這個角色自然的語言和語氣說話，不要寫文章、不要條列式、不要 Markdown 符號
 - 一次說一個完整的想法，可以延伸，但不要長篇大論
-- 說完自然問一個問題讓對話有來有往
-- 用簡體中文回覆（TTS 發音穩定）
 - 不要說「（思考）」「（停頓）」這類括號 stage directions
-- 數字用中文念法(例如「三百五」不是「350」)""",
+- 數字用中文念法（例如「三百五」不是「350」）""",
 }
 
 
@@ -785,12 +783,19 @@ def dispatch_script_draft(user_id: str, character_id: str, voice_id: str, text: 
     return task_id
 
 
-def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str) -> str:
+def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str, card_count: int = 0, story_length: str = "medium") -> str:
     """寫 Firestore story_draft task，然後 fire-and-forget 觸發 Phase A。回傳 taskId。
     text 傳角色的簡介/主題（不是完整故事），Phase A 的 LLM 會根據 intent 生成完整故事。
+    card_count: 0 = AI 自動決定；1-12 = 指定張數。
+    story_length: 'short' | 'medium' | 'long'
     """
     _ensure_init()
     db = firestore.client()
+    params: dict = {"brief": text}
+    if card_count and 1 <= card_count <= 12:
+        params["cardCount"] = card_count
+    if story_length in ("short", "medium", "long"):
+        params["storyLength"] = story_length
     task_ref = db.collection("tasks").document()
     task_ref.set({
         "userId": user_id,
@@ -798,7 +803,7 @@ def dispatch_story_draft(user_id: str, character_id: str, text: str, intent: str
         "type": "story_draft",
         "intent": intent,
         "storyText": "",   # Phase A 填充
-        "params": {"brief": text},
+        "params": params,
         "status": "pending",
         "notified": False,
         "createdAt": firestore.SERVER_TIMESTAMP,
