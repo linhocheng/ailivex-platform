@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
 import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
-import { enhanceSoul } from '@/lib/soul';
+
 
 const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
 
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   if (!name || !soul || soul.length < 10)
     return NextResponse.json({ error: '角色名與靈魂（至少 10 字）必填' }, { status: 400 });
 
-  const soulCore = body?.soulCore?.trim() || await enhanceSoul(name, soul);
+  const soulCore = body?.soulCore?.trim() || soul;
 
   const db = getFirestore();
   const ref = db.collection(COL.characters).doc();

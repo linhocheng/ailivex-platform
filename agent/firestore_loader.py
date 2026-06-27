@@ -266,6 +266,7 @@ def extract_and_save_memories(
 importance：1-10
 
 只提取真正有價值的信息。閒聊不提取。沒有就回傳空陣列。
+content 欄位一律用繁體中文輸出。
 
 <result>
 [{{"content": "...", "type": "fact", "importance": 7}}]

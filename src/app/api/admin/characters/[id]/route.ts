@@ -3,7 +3,7 @@ import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
 import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
 
 const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
-import { enhanceSoul } from '@/lib/soul';
+
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -72,11 +72,11 @@ export async function PATCH(req: Request, { params }: Params) {
   if (body?.imageStyle !== undefined) updates.imageStyle = body.imageStyle.trim();
   if (body?.heygenAvatarId !== undefined) updates.heygenAvatarId = body.heygenAvatarId.trim();
 
-  // 重新提煉 soulCore
+  // soul 改了 → soulCore 直接等於新 soul（不再自動鍛造）
   if (body?.soulCore?.trim()) {
     updates.soulCore = body.soulCore.trim();
-  } else if (body?.reEnhance && soul) {
-    updates.soulCore = await enhanceSoul(name || existing.name, soul);
+  } else if (soul) {
+    updates.soulCore = soul;
   }
 
   // 換頭像
