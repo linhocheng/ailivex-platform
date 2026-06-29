@@ -44,6 +44,7 @@ export async function POST(req: Request) {
 
   const audioFile = formData.get('audioFile') as File | null;
   const characterId = ((formData.get('characterId') as string) ?? '').trim();
+  const heygenEngine = (formData.get('heygenEngine') as string) === 'avatar_iii' ? 'avatar_iii' : 'avatar_iv';
 
   if (!audioFile || audioFile.size === 0) {
     return NextResponse.json({ error: 'missing_audio_file' }, { status: 400 });
@@ -126,7 +127,7 @@ export async function POST(req: Request) {
       idempotencyKey: videoRef.id,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { avatarId: char.heygenAvatarId, audioUrl },
+      input: { avatarId: char.heygenAvatarId, audioUrl, heygenEngine },
       metadata: { taskId: videoRef.id },
     }),
   });

@@ -33,10 +33,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id: taskId } = await params;
-  const body = await req.json().catch(() => ({})) as { motionPrompt?: string };
+  const body = await req.json().catch(() => ({})) as { motionPrompt?: string; heygenEngine?: string };
   const motionPrompt = typeof body.motionPrompt === 'string' && body.motionPrompt.trim()
     ? body.motionPrompt.trim()
     : undefined;
+  const heygenEngine = body.heygenEngine === 'avatar_iii' ? 'avatar_iii' : 'avatar_iv';
   const db = getFirestore();
 
   const snap = await db.collection(COL.tasks).doc(taskId).get();
@@ -96,7 +97,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       idempotencyKey: videoRef.id,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { avatarId, audioUrl: task.audioUrl, motionPrompt },
+      input: { avatarId, audioUrl: task.audioUrl, motionPrompt, heygenEngine },
       metadata: { taskId: videoRef.id },
     }),
   });

@@ -156,6 +156,7 @@ function AudioPanel({ chars, onCreated }: { chars: ConvertChar[]; onCreated: (id
 function VideoPanel({ chars, onCreated }: { chars: ConvertChar[]; onCreated: (id: string, label: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [charId, setCharId] = useState('');
+  const [heygenEngine, setHeygenEngine] = useState<'avatar_iv' | 'avatar_iii'>('avatar_iv');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -183,6 +184,7 @@ function VideoPanel({ chars, onCreated }: { chars: ConvertChar[]; onCreated: (id
     const fd = new FormData();
     fd.append('audioFile', file);
     fd.append('characterId', charId);
+    fd.append('heygenEngine', heygenEngine);
     const r = await fetch('/api/convert/video', { method: 'POST', body: fd })
       .then(r => r.json()).catch(() => null);
     setLoading(false);
@@ -298,6 +300,21 @@ function VideoPanel({ chars, onCreated }: { chars: ConvertChar[]; onCreated: (id
           {error}
         </div>
       )}
+
+      <div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>HeyGen 模型版本</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['avatar_iv', 'avatar_iii'] as const).map(v => (
+            <button key={v} onClick={() => setHeygenEngine(v)}
+              style={{ padding: '6px 14px', borderRadius: 7, fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+                background: heygenEngine === v ? 'rgba(107,158,122,0.14)' : 'rgba(60,52,40,0.03)',
+                border: `1px solid ${heygenEngine === v ? 'rgba(107,158,122,0.45)' : 'var(--border)'}`,
+                color: heygenEngine === v ? '#6b9e7a' : 'var(--muted)' }}>
+              {v === 'avatar_iv' ? '模型四' : '模型三'}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <button onClick={submit} disabled={!file || !charId || loading || avatarChars.length === 0}
         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,

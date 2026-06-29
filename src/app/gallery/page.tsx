@@ -187,6 +187,7 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState('');
   const [motionPrompt, setMotionPrompt] = useState('speak warmly to camera with a gentle smile, occasionally nod and use light hand gestures to emphasize key points');
+  const [heygenEngine, setHeygenEngine] = useState<'avatar_iv' | 'avatar_iii'>('avatar_iv');
   const [klingLoading, setKlingLoading] = useState(false);
   const [klingError, setKlingError] = useState('');
   const inProgress = task.status === 'pending' || task.status === 'running';
@@ -202,7 +203,7 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
     const r = await fetch(`/api/tasks/${task.id}/generate-video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ motionPrompt: motionPrompt.trim() }),
+      body: JSON.stringify({ motionPrompt: motionPrompt.trim(), heygenEngine }),
     }).then(res => res.json()).catch(() => null);
     setVideoLoading(false);
     if (r?.ok) { onGenerated(); }
@@ -268,6 +269,18 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
           )}
           {!(task.videoTaskId && !videoFailed) && (
             <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>HeyGen 模型版本</div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                {(['avatar_iv', 'avatar_iii'] as const).map(v => (
+                  <button key={v} onClick={() => setHeygenEngine(v)}
+                    style={{ padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                      background: heygenEngine === v ? 'color-mix(in oklab, var(--accent) 18%, transparent)' : 'rgba(60,52,40,0.045)',
+                      border: `1px solid ${heygenEngine === v ? 'color-mix(in oklab, var(--accent) 40%, transparent)' : 'var(--border)'}`,
+                      color: heygenEngine === v ? 'var(--accent)' : 'var(--muted)' }}>
+                    {v === 'avatar_iv' ? '模型四' : '模型三'}
+                  </button>
+                ))}
+              </div>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>動作描述（Motion Prompt）</div>
               <textarea
                 value={motionPrompt}
