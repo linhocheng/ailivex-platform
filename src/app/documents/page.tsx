@@ -120,7 +120,9 @@ export default function Documents() {
           <nav style={{ display:'flex', alignItems:'center', gap:6 }}>
             <NavLink href="/lobby">大廳</NavLink>
             <NavLink href="/documents" active icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" icon="image">圖庫</NavLink>
+            <NavLink href="/gallery" icon="image">媒體庫</NavLink>
+            <NavLink href="/stories" icon="image">故事板</NavLink>
+            <NavLink href="/convert" icon="audio">素材轉換區</NavLink>
             <LogoutButton style={{ display:'inline-flex', alignItems:'center', gap:7, background:'rgba(60,52,40,0.045)',
               border:'1px solid var(--border)', borderRadius:6, padding:'8px 14px', fontSize:13,
               fontWeight:500, color:'var(--text)', cursor:'pointer' }}>
