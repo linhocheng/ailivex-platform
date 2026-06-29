@@ -1,4 +1,5 @@
 'use client';
+// [封存] 此頁面不再接收流量，僅作歷史參考。現役版本：/realtime-v14/
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';

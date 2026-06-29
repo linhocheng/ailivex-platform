@@ -24,8 +24,8 @@ export default function AdminAccess() {
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    fetch('/api/admin/users').then(r => r.json()).then(r => setUsers(r.users || [])).catch(() => {});
-    fetch('/api/admin/characters').then(r => r.json()).then(r => setChars(r.characters || [])).catch(() => {});
+    fetch('/api/admin/users').then(r => r.json()).then(r => setUsers(r.users || [])).catch(e => console.error('[admin/access] 載入用戶失敗', e));
+    fetch('/api/admin/characters').then(r => r.json()).then(r => setChars(r.characters || [])).catch(e => console.error('[admin/access] 載入角色失敗', e));
   }, []);
 
   const loadAccess = useCallback(async (userId: string) => {

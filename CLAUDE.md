@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repo. Written in English; domain t
 team's Traditional Chinese (判斷腦, floor-gate, 回音過濾, 名冊, 一吋蛋糕) — match that vocabulary.
 
 > ⚠️ **`README.md` is stale.** It documents voice versions v1–v4 and calls v2 "現役". Reality: the
-> live agent is **v10**. Trust the **code and `git log`**, not the README, for current state.
+> live agent is **v14**. Trust the **code and `git log`**, not the README, for current state.
 
 ---
 
@@ -57,7 +57,7 @@ hangup  ──POST /api/voice-end──▶ relationship upsert
 ```
 src/app/            Next.js App Router
   api/              all backend routes (dialogue, livekit/token, tts, voice-end, doc-process, admin/*, …)
-  realtime*/        voice-call pages: realtime (base), realtime-v2 … realtime-v10  (NOTE: no v7)
+  realtime*/        voice-call pages: realtime (base), realtime-v2 … realtime-v14  (NOTE: no v7; v2–v13 are archived, traffic goes to v14)
   chat/ lobby/ documents/ login/ admin/*
 src/lib/            logic core (see cheat-sheet below)
 agent/              ⭐ LIVE Python voice agents — versioned (main_vN.py, realtime_agent_vN.py, cloudbuild-vN.yaml)
@@ -87,7 +87,7 @@ This is the most important thing to understand before touching voice code.
   In `cloudbuild-vN.yaml` the service name `ailivex-realtime-agent-vN` appears **twice** (the `run deploy` step
   AND the revision-cleanup bash step) — update both; the shared image path is version-less, don't rename it.
 
-**Current production = v10.** Lineage (`src/app/api/livekit/token/route.ts:19-27`):
+**Current production = v14.** Lineage (`src/lib/collections.ts` — `DEFAULT_VOICE_VERSION`):
 
 | ver | agent_name | adds |
 |---|---|---|
@@ -99,7 +99,11 @@ This is the most important thing to understand before touching voice code.
 | v6 | `…-v6` | dual-brain: 判斷腦 Haiku (judge) / 開口腦 Sonnet (speak) |
 | v8 | `…-v8` | floor control (grab mic when addressed / yield on handoff) |
 | v9 | `…-v9` | LLM floor-gate (Haiku decides speaking rights) |
-| **v10** | `…-v10` | multi-party hardening: 回音過濾 (echo filter) / 講者名冊 (speaker roster) / 3a 收斂 |
+| v10 | `…-v10` | multi-party hardening: 回音過濾 (echo filter) / 講者名冊 (speaker roster) / 3a 收斂 |
+| v11 | `…-v11` | voiceprint speaker ID (experimental, not in default traffic) |
+| v12 | `…-v12` | 讀網址（通話中讀取 URL 摘要）|
+| v13 | `…-v13` | task dispatch via voice (image / audio) |
+| **v14** ★ | `…-v14` | script_draft + story_draft dispatch (LIVE — DEFAULT_VOICE_VERSION) |
 
 > **No v7** — versions jump v6 → v8. The base agent is unversioned (`agent/main.py`,
 > `agent/realtime_agent.py`).
@@ -161,7 +165,7 @@ Collections (all bound to `(userId, characterId)` unless noted):
 (`tool:remember`) + create doc jobs → `appendMessages` → `after()` (post-response): extract memories
 + upsert relationship + dispatch doc jobs → `trackCost`.
 
-**Voice** (`agent/realtime_agent_v10.py`): the turn-path Sonnet 4.6 uses the **direct
+**Voice** (`agent/realtime_agent_v14.py`): the turn-path Sonnet 4.6 uses the **direct
 `ANTHROPIC_API_KEY`** (bridge can't stream and lacks tool_use). The **off-path** calls — 判斷腦
 (`_run_inner_judgment`, Haiku), 3a proactive speech, and shutdown memory/lastSession extraction — are
 **bridge-preferred with direct fallback**. Tools are native `@function_tool` (`remember`,
@@ -218,7 +222,7 @@ node scripts/reset-admin-pw.mjs [password]
 
 ## Environment & secrets
 
-Secrets live in **GCP Secret Manager** and are injected at deploy (see `agent/cloudbuild-v10.yaml`).
+Secrets live in **GCP Secret Manager** and are injected at deploy (see `agent/cloudbuild-v14.yaml`).
 **Never commit `.env*`.** Keys referenced across the codebase:
 
 - Firebase/GCP: `FIREBASE_SERVICE_ACCOUNT_JSON`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_PROJECT_ID`

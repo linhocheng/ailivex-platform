@@ -67,7 +67,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  const body = await req.json().catch(() => ({})) as { storyText?: string; brandLayoutId?: string };
+  const body = await req.json().catch(() => ({})) as { storyText?: string; brandLayoutId?: string; skipImages?: boolean };
 
   const db = getFirestore();
   const ref = db.collection(COL.tasks).doc(id);
@@ -75,6 +75,19 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!snap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const task = snap.data() as TaskDoc;
   if (task.userId !== user.uid) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  if (body.skipImages) {
+    // 略過生圖：把所有 scripted 圖卡標為 done，並把故事標為 done
+    const cardsSnap = await db.collection(COL.tasks).where('parentTaskId', '==', id).get();
+    const batch = db.batch();
+    cardsSnap.docs.forEach(d => {
+      const c = d.data() as TaskDoc;
+      if (c.status === 'scripted') batch.update(d.ref, { status: 'done' });
+    });
+    batch.update(ref, { status: 'done' });
+    await batch.commit();
+    return NextResponse.json({ ok: true });
+  }
 
   const patch: Record<string, unknown> = {};
   if (body.storyText !== undefined) patch.storyText = body.storyText;

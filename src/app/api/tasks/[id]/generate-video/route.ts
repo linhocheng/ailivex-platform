@@ -33,6 +33,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
   const { id: taskId } = await params;
+  const body = await req.json().catch(() => ({})) as { motionPrompt?: string };
+  const motionPrompt = typeof body.motionPrompt === 'string' && body.motionPrompt.trim()
+    ? body.motionPrompt.trim()
+    : undefined;
   const db = getFirestore();
 
   const snap = await db.collection(COL.tasks).doc(taskId).get();
@@ -54,13 +58,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await db.collection(COL.tasks).doc(taskId).update({ videoTaskId: FieldValue.delete() });
   }
 
-  // 查角色，優先用 HeyGen 專用分身圖，fallback 到角色頭像
+  const DEFAULT_AVATAR_ID = '4ff5316df3734ebd897609d2d391dbb8';
+
+  // 查角色，優先用角色的 heygenAvatarId，沒有就用預設
   const charSnap = await db.collection(COL.characters).doc(task.characterId as string).get();
   if (!charSnap.exists) return NextResponse.json({ error: 'character_not_found' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
 
-  const avatarUrl = char.heygenAvatarUrl ?? char.avatarUrl;
-  if (!avatarUrl) return NextResponse.json({ error: 'no_avatar_url' }, { status: 400 });
+  const avatarId = char.heygenAvatarId || DEFAULT_AVATAR_ID;
 
   if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) {
     return NextResponse.json({ error: 'media_worker_not_configured' }, { status: 503 });
@@ -73,7 +78,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     characterId: task.characterId,
     type: 'video_generation',
     intent: task.intent || '分身短影音',
-    params: { avatarUrl, audioUrl: task.audioUrl },
+    params: { avatarId, audioUrl: task.audioUrl },
     status: 'pending',
     notified: false,
     createdAt: FieldValue.serverTimestamp(),
@@ -91,7 +96,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       idempotencyKey: videoRef.id,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { avatarUrl, audioUrl: task.audioUrl },
+      input: { avatarId, audioUrl: task.audioUrl, motionPrompt },
       metadata: { taskId: videoRef.id },
     }),
   });

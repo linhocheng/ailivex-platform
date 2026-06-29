@@ -2,7 +2,7 @@
  * POST /api/tasks/[id]/generate-images  (Phase C)
  *
  * 對所有 status='scripted' 的子圖卡排隊送 media-worker（逐張）。
- * 圖片 prompt = cardType prefix + imageStyle + cardText（確定性組合，不再呼叫 LLM）。
+ * 圖片 prompt = 瞬 (Shùn) 增強版 prompt，以 cardText 為原料轉譯為專業生圖指令。
  */
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -10,8 +10,10 @@ import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc, type BrandLayoutDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { enhanceImagePrompt } from '@/lib/image-prompt-enhancer';
 
 export const runtime = 'nodejs';
+export const maxDuration = 120;
 
 const MEDIA_WORKER_URL = cleanUrl(process.env.MEDIA_WORKER_URL);
 const MEDIA_WORKER_KEY = cleanSecret(process.env.MEDIA_WORKER_KEY_AILIVEX);
@@ -70,13 +72,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const scripted = await query.where('status', 'in', ['scripted', 'failed']).get();
   if (scripted.empty) return NextResponse.json({ ok: true, count: 0 });
 
-  let dispatched = 0;
-  for (const doc of scripted.docs) {
-    await dispatchCard(db, doc.id, doc.data() as TaskDoc & Record<string, unknown>, imageStyle, layoutImageUrl);
-    dispatched++;
-  }
+  await Promise.all(
+    scripted.docs.map(doc =>
+      dispatchCard(db, doc.id, doc.data() as TaskDoc & Record<string, unknown>, imageStyle, layoutImageUrl)
+    )
+  );
 
-  return NextResponse.json({ ok: true, count: dispatched });
+  return NextResponse.json({ ok: true, count: scripted.docs.length });
 }
 
 async function dispatchCard(
@@ -92,12 +94,15 @@ async function dispatchCard(
 
   const cardType = (card.cardType as string) || 'realistic_photo';
   const cardText = (card.cardText as string) || (card.intent as string) || '';
-  const prefix = TYPE_PREFIX[cardType] || '';
-  const styleStr = imageStyle ? `${imageStyle}, ` : '';
-  const prompt = `${prefix}${styleStr}${cardText}`.trim();
-
-  // 組 referenceImageUrls：全版 Layout + 卡片產品圖
   const productImageUrl = (card.productImageUrl as string) || '';
+
+  // 瞬 (Shùn) 將 cardText 轉譯為專業生圖 prompt
+  const prompt = await enhanceImagePrompt(
+    cardText,
+    cardType as 'realistic_photo' | 'infographic',
+    imageStyle,
+    !!productImageUrl,
+  );
   const referenceImageUrls = [layoutImageUrl, productImageUrl].filter(Boolean);
 
   const ref = db.collection(COL.tasks).doc(cardId);
@@ -111,7 +116,13 @@ async function dispatchCard(
       idempotencyKey: `${cardId}-${Date.now()}`,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { prompt, size: '1024x1024', outputFormat: 'png', referenceImageUrls },
+      input: {
+        prompt,
+        size: '1024x1024',
+        outputFormat: 'png',
+        referenceImageUrls,
+        provider: 'openai',
+      },
       metadata: { taskId: cardId },
     }),
   });

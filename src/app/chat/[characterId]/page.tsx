@@ -27,8 +27,8 @@ export default function ChatPage() {
   useEffect(() => {
     fetch(`/api/conversation/${characterId}`).then(r => r.json())
       .then(r => { if (r.character) setChar(r.character); setMsgs(r.messages || []); })
-      .catch(() => {});
-    fetch('/api/me').then(r => r.json()).then(r => setIsAdmin(r.role === 'admin')).catch(() => {});
+      .catch(e => console.error('[chat] 載入對話失敗', e));
+    fetch('/api/me').then(r => r.json()).then(r => setIsAdmin(r.role === 'admin')).catch(e => console.error('[chat] 載入用戶資訊失敗', e));
   }, [characterId]);
 
   useEffect(() => {

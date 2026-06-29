@@ -41,9 +41,9 @@ export async function POST(req: Request, { params }: Params) {
   const talkingPhotoId = data.data?.talking_photo_id;
   if (!talkingPhotoId) return NextResponse.json({ error: 'no_talking_photo_id' }, { status: 502 });
 
-  // 2. 存一份到 GCS → 永久穩定 URL
+  // 2. 存一份到 GCS → 永久穩定 URL（timestamp 確保每次 URL 不同，避免瀏覽器快取舊圖）
   const ext = contentType.includes('png') ? 'png' : 'jpg';
-  const gcsPath = `characters/${charId}/heygen-avatar.${ext}`;
+  const gcsPath = `characters/${charId}/heygen-avatar-${Date.now()}.${ext}`;
   const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
   if (!bucketName) return NextResponse.json({ error: 'FIREBASE_STORAGE_BUCKET not set' }, { status: 503 });
   const bucket = getFirebaseAdmin().storage().bucket(bucketName);

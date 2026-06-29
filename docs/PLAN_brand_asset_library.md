@@ -143,19 +143,19 @@ GCS 路徑：
 - [x] 儲存選擇到 `TaskDoc`（`brandLayoutId`、`productImageUrl`）
 - [x] 新增 user-accessible API routes（`/api/brands/[characterId]/layouts|products|upload`）
 
-### Phase 4 — media-worker：支援參考圖（1–2 天）
+### Phase 4 — media-worker：支援參考圖（1–2 天）✅ 2026-06-22
 
-- [ ] `src/providers/types.ts` 的 `ImageInput` 新增 `referenceImageUrls?: string[]`
-- [ ] `openai-image.ts` 切換為 gpt-image-2 **edit 模式**（支援參考圖）
-  - 或：新增 fal.ai FLUX + IP-Adapter provider（品質更好但需測試）
-- [ ] `worker.ts` 處理 `referenceImageUrls` 並傳給 provider
+- [x] `src/providers/types.ts` 的 `ImageInput` 新增 `referenceImageUrls?: string[]`
+- [x] `openai-image.ts` — refs 非空時走 `/v1/images/edits`（FormData multipart）；空時走原有 generations
+- [x] `worker.ts` 傳遞 `referenceImageUrls` 給 provider
+- [x] Cloud Run deploy 完成（tag: phase4-brand）
 
-### Phase 5 — 制圖 Route 整合（1 天）
+### Phase 5 — 制圖 Route 整合（1 天）✅ 2026-06-22（併入 Phase 4）
 
-- [ ] `generate-images/route.ts` 的 `dispatchCard` 函數：
-  - [ ] 讀 `brandLayoutId` → 查 `brand_layouts` → 取 `imageUrl`
-  - [ ] 讀 `productImageUrl`（卡片層級）
-  - [ ] 組裝 `referenceImageUrls: [layoutUrl, productUrl].filter(Boolean)` 傳給 media-worker
+- [x] `generate-images/route.ts` 的 `dispatchCard` 函數：
+  - [x] 讀 `brandLayoutId` → 查 `brand_layouts` → 取 `imageUrl`
+  - [x] 讀 `productImageUrl`（卡片層級）
+  - [x] 組裝 `referenceImageUrls: [layoutUrl, productUrl].filter(Boolean)` 傳給 media-worker
 
 ### Phase 6 — 測試（1 天）
 

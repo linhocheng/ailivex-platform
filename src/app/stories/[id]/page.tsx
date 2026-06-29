@@ -84,7 +84,12 @@ function CardRow({ card, onEdit, onDelete, onRegenerate, onSetProduct, onReload,
   const [draftText, setDraftText] = useState(card.cardText);
   const [draftType, setDraftType] = useState(card.cardType);
   const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const inProgress = card.status === 'pending' || card.status === 'running';
+
+  // 一旦 server 狀態變成 pending/running，本地 loading 就可以交棒
+  useEffect(() => { if (inProgress) setRegenerating(false); }, [inProgress]);
 
   async function save() {
     setSaving(true);
@@ -129,18 +134,38 @@ function CardRow({ card, onEdit, onDelete, onRegenerate, onSetProduct, onReload,
               <Icon name="edit" size={14} />
             </button>
           )}
-          {(card.status === 'done' || card.status === 'failed') && (
-            <button onClick={() => onRegenerate(card.id)} title="重新生成"
+          {(card.status === 'done' || card.status === 'failed' || regenerating) && (
+            <button
+              onClick={() => { setRegenerating(true); onRegenerate(card.id); }}
+              disabled={regenerating || inProgress}
+              title="重新生成"
               style={{ display: 'grid', placeItems: 'center', width: 30, height: 30, borderRadius: 6,
-                background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--muted)' }}>
+                background: 'transparent', border: '1px solid var(--border)',
+                cursor: (regenerating || inProgress) ? 'not-allowed' : 'pointer',
+                color: 'var(--muted)', opacity: regenerating ? 0.4 : 1 }}>
               <Icon name="refresh" size={14} />
             </button>
           )}
-          <button onClick={() => onDelete(card.id)} title="刪除"
-            style={{ display: 'grid', placeItems: 'center', width: 30, height: 30, borderRadius: 6,
-              background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--muted)' }}>
-            <Icon name="trash" size={14} />
-          </button>
+          {deleteConfirm ? (
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <button onClick={() => { onDelete(card.id); setDeleteConfirm(false); }}
+                style={{ fontSize: 11, padding: '4px 9px', borderRadius: 5, border: '1px solid rgba(181,101,74,0.45)',
+                  background: 'rgba(181,101,74,0.1)', color: '#b5654a', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                確認刪除
+              </button>
+              <button onClick={() => setDeleteConfirm(false)}
+                style={{ fontSize: 11, padding: '4px 7px', borderRadius: 5, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+                取消
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setDeleteConfirm(true)} title="刪除"
+              style={{ display: 'grid', placeItems: 'center', width: 30, height: 30, borderRadius: 6,
+                background: 'transparent', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--muted)' }}>
+              <Icon name="trash" size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -231,11 +256,13 @@ export default function StoryDetailPage() {
   const [savingStory, setSavingStory] = useState(false);
   const [lightboxImg, setLightboxImg] = useState<string | null>(null);
   const [genImgLoading, setGenImgLoading] = useState(false);
+  const [skipImgLoading, setSkipImgLoading] = useState(false);
   const [addCard, setAddCard] = useState(false);
   const [addTitle, setAddTitle] = useState('');
   const [addText, setAddText] = useState('');
   const [addType, setAddType] = useState('realistic_photo');
   const [addLoading, setAddLoading] = useState(false);
+  const [regenConfirm, setRegenConfirm] = useState<'story' | 'scripts' | null>(null);
 
   // 品牌設定
   const [brandLayouts, setBrandLayouts] = useState<BrandLayout[]>([]);
@@ -334,13 +361,13 @@ export default function StoryDetailPage() {
   }
 
   async function regenStory() {
-    if (!confirm('重新生成劇情會覆蓋現有文字，確定嗎？')) return;
+    setRegenConfirm(null);
     await fetch(`/api/tasks/${storyId}/generate-story`, { method: 'POST' });
     load();
   }
 
   async function regenScripts() {
-    if (!confirm('重新分析腳本會覆蓋現有圖卡文字，確定嗎？')) return;
+    setRegenConfirm(null);
     await fetch(`/api/tasks/${storyId}/generate-scripts`, { method: 'POST' });
     load();
   }
@@ -349,6 +376,16 @@ export default function StoryDetailPage() {
     setGenImgLoading(true);
     await fetch(`/api/tasks/${storyId}/generate-images`, { method: 'POST' });
     setGenImgLoading(false);
+    load();
+  }
+
+  async function skipImages() {
+    setSkipImgLoading(true);
+    await fetch(`/api/stories/${storyId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skipImages: true }),
+    }).catch(() => {});
+    setSkipImgLoading(false);
     load();
   }
 
@@ -369,7 +406,6 @@ export default function StoryDetailPage() {
   }
 
   async function deleteCard(id: string) {
-    if (!confirm('確定刪除這張圖卡？')) return;
     await fetch(`/api/gallery/${id}`, { method: 'DELETE' }).catch(() => {});
     load();
   }
@@ -529,11 +565,26 @@ export default function StoryDetailPage() {
                   <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.04em' }}>故事劇情</div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     {phaseA_done && (
-                      <button onClick={regenStory} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                        fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)',
-                        background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
-                        <Icon name="refresh" size={13} />重新生成
-                      </button>
+                      regenConfirm === 'story' ? (
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={regenStory}
+                            style={{ fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(181,101,74,0.45)',
+                              background: 'rgba(181,101,74,0.1)', color: '#b5654a', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                            確認覆蓋
+                          </button>
+                          <button onClick={() => setRegenConfirm(null)}
+                            style={{ fontSize: 12.5, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)',
+                              background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setRegenConfirm('story')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                          fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                          background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+                          <Icon name="refresh" size={13} />重新生成
+                        </button>
+                      )
                     )}
                     {phaseA_done && (
                       <button onClick={saveStory} disabled={savingStory} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -566,11 +617,26 @@ export default function StoryDetailPage() {
                     圖卡腳本 {story.cards.length > 0 && `· ${story.cards.length} 張`}
                   </div>
                   {phaseB_done && (
-                    <button onClick={regenScripts} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                      fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)',
-                      background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
-                      <Icon name="refresh" size={13} />重新分析
-                    </button>
+                    regenConfirm === 'scripts' ? (
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button onClick={regenScripts}
+                          style={{ fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid rgba(181,101,74,0.45)',
+                            background: 'rgba(181,101,74,0.1)', color: '#b5654a', cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                          確認覆蓋
+                        </button>
+                        <button onClick={() => setRegenConfirm(null)}
+                          style={{ fontSize: 12.5, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)',
+                            background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setRegenConfirm('scripts')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
+                        fontSize: 12.5, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                        background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>
+                        <Icon name="refresh" size={13} />重新分析
+                      </button>
+                    )
                   )}
                 </div>
 
@@ -633,14 +699,24 @@ export default function StoryDetailPage() {
 
                 {/* 生成圖卡大按鈕 */}
                 {scripted > 0 && (
-                  <button onClick={generateImages} disabled={genImgLoading}
-                    style={{ marginTop: 16, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      fontSize: 15, fontWeight: 600, padding: '14px', borderRadius: 10, border: 'none',
-                      background: 'var(--accent)', color: '#fff', cursor: genImgLoading ? 'not-allowed' : 'pointer',
-                      opacity: genImgLoading ? 0.7 : 1 }}>
-                    <Icon name="image" size={18} />
-                    {genImgLoading ? '排隊中…' : `生成圖卡（${scripted} 張待生成）`}
-                  </button>
+                  <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
+                    <button onClick={generateImages} disabled={genImgLoading || skipImgLoading}
+                      style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                        fontSize: 15, fontWeight: 600, padding: '14px', borderRadius: 10, border: 'none',
+                        background: 'var(--accent)', color: '#fff', cursor: (genImgLoading || skipImgLoading) ? 'not-allowed' : 'pointer',
+                        opacity: (genImgLoading || skipImgLoading) ? 0.7 : 1 }}>
+                      <Icon name="image" size={18} />
+                      {genImgLoading ? '排隊中…' : `生成圖卡（${scripted} 張待生成）`}
+                    </button>
+                    <button onClick={skipImages} disabled={genImgLoading || skipImgLoading}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        fontSize: 13, fontWeight: 500, padding: '14px 16px', borderRadius: 10,
+                        border: '1px solid var(--border)', background: 'var(--panel)', color: 'var(--muted)',
+                        cursor: (genImgLoading || skipImgLoading) ? 'not-allowed' : 'pointer',
+                        opacity: (genImgLoading || skipImgLoading) ? 0.6 : 1, whiteSpace: 'nowrap' }}>
+                      {skipImgLoading ? '處理中…' : '不用生圖'}
+                    </button>
+                  </div>
                 )}
               </section>
             )}

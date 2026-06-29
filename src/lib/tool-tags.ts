@@ -109,7 +109,11 @@ export const TOOL_INSTRUCTIONS = `
     標記夾帶後，口頭說「草稿已存到媒體庫，確認後按生成音檔」。
   story_draft（故事板）流程：
     當對方請你做一個故事板、圖卡故事、圖文故事時，在回覆中夾帶：
-    [[DISPATCH type="story_draft" intent="一句話說明故事主題" params='{"brief":"故事的核心概念或簡介（20-100字）"}']][[/DISPATCH]]
+    [[DISPATCH type="story_draft" intent="一句話說明故事主題" params='{"brief":"故事的核心概念或簡介（20-100字）","cardCount":4,"storyLength":"medium"}']][[/DISPATCH]]
+    params 說明：
+      brief（必填）：故事核心概念或簡介，20-100字。
+      cardCount（選填，整數1-12）：指定圖卡張數。對方說「三張」填3、「五張」填5；沒說就省略此欄。
+      storyLength（選填）："short"（短故事3-4段）、"medium"（中等5-8段，預設）、"long"（長故事8-12段）。對方說「短一點」填"short"、「長一點」填"long"；沒說就省略此欄。
     系統會自動：(A)寫完整故事劇情 → (B)分析圖卡腳本 → (C)等用戶觸發生圖。
     你只需口頭說「故事板已開始生成，稍後去故事板頁面查看進度」，不需要在對話裡寫故事。
   其餘 type 系統背景執行，你只需口頭說「我已安排，完成後會告訴你」。

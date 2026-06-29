@@ -51,7 +51,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     try {
-      const cards = await analyzeStory(storyText, imageStyle);
+      const taskParams = (task.params as Record<string, unknown>) ?? {};
+      const cardCount = typeof taskParams.cardCount === 'number' && taskParams.cardCount >= 1 ? taskParams.cardCount : 0;
+      const cards = await analyzeStory(storyText, imageStyle, cardCount);
       if (!cards.length) throw new Error('LLM returned empty card list');
 
       // 刪除該 story 舊有的 scripted / failed 子任務（重新分析時覆蓋，done 的留著）
@@ -92,15 +94,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({ ok: true, queued: true });
 }
 
-async function analyzeStory(story: string, imageStyle: string): Promise<CardSlot[]> {
+async function analyzeStory(story: string, imageStyle: string, cardCount = 0): Promise<CardSlot[]> {
   const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY ?? '', { bridgeTimeoutMs: 160_000 });
   const styleHint = imageStyle ? `角色圖片風格偏好：${imageStyle}。` : '';
+  const cardCountInstruction = cardCount >= 1
+    ? `必須產出剛好 ${cardCount} 張圖卡（用戶指定）。`
+    : '決定需要幾張圖片（4到10張）才能完整說完這個故事。';
 
   const resp = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 3000,
     system: (
-      '你是一個視覺故事板規劃師。分析故事文字，決定需要幾張圖片（4到10張）才能完整說完這個故事，'
+      `你是一個視覺故事板規劃師。分析故事文字，${cardCountInstruction}`
       + '並為每張圖片寫說明文字，同時決定最適合的呈現方式（寫實照片或資訊圖表）。\n'
       + '輸出格式：在 <result> 標籤內放 JSON 陣列。只輸出 <result> 標籤，不要其他說明。'
     ),

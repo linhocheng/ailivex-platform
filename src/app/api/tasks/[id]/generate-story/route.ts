@@ -63,6 +63,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // 快速回 200；A+B 在同一個 after() 內跑，不靠 HTTP 鏈
   after(async () => {
     const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY ?? '', { bridgeTimeoutMs: 150_000 });
+    const taskParams = (task.params as Record<string, unknown>) ?? {};
+    const cardCount = typeof taskParams.cardCount === 'number' && taskParams.cardCount >= 1 ? taskParams.cardCount : 0;
+    const storyLength = (taskParams.storyLength as string) || 'medium';
+    const storySpec = storyLength === 'short'
+      ? { words: '200-350 字', paragraphs: '3-4 個段落' }
+      : storyLength === 'long'
+        ? { words: '800-1200 字', paragraphs: '8-12 個段落' }
+        : { words: '500-800 字', paragraphs: '5-8 個段落' };
 
     // ── Phase A：生成故事 ──────────────────────────────────────
     let storyText = '';
@@ -76,10 +84,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         messages: [{
           role: 'user',
           content: (
-            `請根據以下主題，寫一篇完整的故事（約 500-800 字）。\n`
-            + `主題：${task.intent || (task.params as Record<string, unknown>)?.brief || '一個精彩的故事'}\n\n`
+            `請根據以下主題，寫一篇完整的故事（約 ${storySpec.words}）。\n`
+            + `主題：${task.intent || taskParams?.brief || '一個精彩的故事'}\n\n`
             + `要求：\n`
-            + `- 分成 5-8 個段落，每段有清楚的場景或情節推進\n`
+            + `- 分成 ${storySpec.paragraphs}，每段有清楚的場景或情節推進\n`
             + `- 有畫面感，適合後續生成圖片\n`
             + `- 直接寫故事本文，不要標題、不要前言說明`
           ),
@@ -96,11 +104,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // ── Phase B：分析圖卡腳本 ─────────────────────────────────
     try {
       const styleHint = imageStyle ? `角色圖片風格偏好：${imageStyle}。` : '';
+      const cardCountInstruction = cardCount >= 1
+        ? `必須產出剛好 ${cardCount} 張圖卡（用戶指定）。`
+        : '決定需要幾張圖片（4到10張）才能完整說完這個故事。';
       const bResp = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 3000,
         system: (
-          '你是一個視覺故事板規劃師。分析故事文字，決定需要幾張圖片（4到10張）才能完整說完這個故事，'
+          `你是一個視覺故事板規劃師。分析故事文字，${cardCountInstruction}`
           + '並為每張圖片寫說明文字，同時決定最適合的呈現方式（寫實照片或資訊圖表）。\n'
           + '輸出格式：在 <result> 標籤內放 JSON 陣列。只輸出 <result> 標籤，不要其他說明。'
         ),

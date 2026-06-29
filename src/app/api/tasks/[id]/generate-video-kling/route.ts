@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
+import { imageSize } from 'image-size';
 
 export const runtime = 'nodejs';
 
@@ -38,6 +39,23 @@ async function generateMotionPrompt(text: string): Promise<string> {
     return c.type === 'text' ? c.text.trim() : fallbackPrompt(text);
   } catch {
     return fallbackPrompt(text);
+  }
+}
+
+async function probeAspectRatio(url: string): Promise<string> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return '9:16';
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const result = imageSize(buf);
+    const w = result.width ?? 1;
+    const h = result.height ?? 1;
+    const ratio = w / h;
+    if (ratio < 0.65) return '9:16';
+    if (ratio > 1.45) return '16:9';
+    return '1:1';
+  } catch {
+    return '9:16';
   }
 }
 
@@ -87,6 +105,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? await generateMotionPrompt(scriptText)
     : 'speaks naturally with warm expressions and gentle gestures';
 
+  const aspectRatio = await probeAspectRatio(imageUrl);
+
   // 建立 video_generation task
   const videoRef = db.collection(COL.tasks).doc();
   await videoRef.set({
@@ -118,6 +138,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         image_url: imageUrl,
         audio_url: task.audioUrl as string,
         prompt: motionPrompt,
+        aspect_ratio: aspectRatio,
       }),
     }
   );

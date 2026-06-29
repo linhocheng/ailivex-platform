@@ -186,6 +186,7 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
   const [h, setH] = useState(false);
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState('');
+  const [motionPrompt, setMotionPrompt] = useState('speak warmly to camera with a gentle smile, occasionally nod and use light hand gestures to emphasize key points');
   const [klingLoading, setKlingLoading] = useState(false);
   const [klingError, setKlingError] = useState('');
   const inProgress = task.status === 'pending' || task.status === 'running';
@@ -198,8 +199,11 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
   async function generateVideo() {
     setVideoLoading(true);
     setVideoError('');
-    const r = await fetch(`/api/tasks/${task.id}/generate-video`, { method: 'POST' })
-      .then(res => res.json()).catch(() => null);
+    const r = await fetch(`/api/tasks/${task.id}/generate-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motionPrompt: motionPrompt.trim() }),
+    }).then(res => res.json()).catch(() => null);
     setVideoLoading(false);
     if (r?.ok) { onGenerated(); }
     else {
@@ -260,6 +264,19 @@ function AudioCard({ task, tasks, onDelete, onGenerated }: { task: MediaTask; ta
             <div style={{ fontSize: 12.5, color: '#b5654a', marginBottom: 8, padding: '8px 10px',
               background: 'rgba(181,101,74,0.08)', borderRadius: 6, border: '1px solid rgba(181,101,74,0.2)' }}>
               {videoError || klingError}
+            </div>
+          )}
+          {!(task.videoTaskId && !videoFailed) && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>動作描述（Motion Prompt）</div>
+              <textarea
+                value={motionPrompt}
+                onChange={e => setMotionPrompt(e.target.value)}
+                rows={2}
+                style={{ width: '100%', fontSize: 12.5, padding: '7px 10px', borderRadius: 6,
+                  background: 'rgba(60,52,40,0.045)', border: '1px solid var(--border)',
+                  color: 'var(--text)', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+              />
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

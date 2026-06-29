@@ -13,54 +13,66 @@ export const runtime = 'nodejs';
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, { params }: Params) {
-  const user = await getCurrentUser();
-  if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  try {
+    const user = await getCurrentUser();
+    if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  const { id: characterId } = await params;
-  const db = getFirestore();
-  const snap = await db.collection(COL.brandProducts)
-    .where('characterId', '==', characterId)
-    .orderBy('createdAt', 'desc')
-    .get();
+    const { id: characterId } = await params;
+    const db = getFirestore();
+    const snap = await db.collection(COL.brandProducts)
+      .where('characterId', '==', characterId)
+      .orderBy('createdAt', 'desc')
+      .get();
 
-  const products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  return NextResponse.json({ products });
+    const products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return NextResponse.json({ products });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[brand-products GET]', msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request, { params }: Params) {
-  const user = await getCurrentUser();
-  if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  try {
+    const user = await getCurrentUser();
+    if (user?.role !== 'admin') return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
-  const { id: characterId } = await params;
-  const name = (req.headers.get('x-name') || '').trim();
-  const tagsRaw = (req.headers.get('x-tags') || '').trim();
-  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
-  const contentType = req.headers.get('content-type') || 'image/jpeg';
+    const { id: characterId } = await params;
+    const name = decodeURIComponent(req.headers.get('x-name') || '').trim();
+    const tagsRaw = decodeURIComponent(req.headers.get('x-tags') || '').trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const contentType = req.headers.get('content-type') || 'image/jpeg';
+    if (!contentType.startsWith('image/')) return NextResponse.json({ error: '僅允許上傳圖片' }, { status: 400 });
 
-  if (!name) return NextResponse.json({ error: 'x-name 必填' }, { status: 400 });
+    if (!name) return NextResponse.json({ error: 'x-name 必填' }, { status: 400 });
 
-  const buf = await req.arrayBuffer();
-  if (!buf.byteLength) return NextResponse.json({ error: 'empty_body' }, { status: 400 });
+    const buf = await req.arrayBuffer();
+    if (!buf.byteLength) return NextResponse.json({ error: 'empty_body' }, { status: 400 });
 
-  const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
-  if (!bucketName) return NextResponse.json({ error: 'FIREBASE_STORAGE_BUCKET not set' }, { status: 503 });
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
+    if (!bucketName) return NextResponse.json({ error: 'FIREBASE_STORAGE_BUCKET not set' }, { status: 503 });
 
-  const db = getFirestore();
-  const docRef = db.collection(COL.brandProducts).doc();
-  const ext = contentType.includes('png') ? 'png' : 'jpg';
-  const gcsPath = `brand-assets/${characterId}/products/${docRef.id}.${ext}`;
+    const db = getFirestore();
+    const docRef = db.collection(COL.brandProducts).doc();
+    const ext = contentType.includes('png') ? 'png' : 'jpg';
+    const gcsPath = `brand-assets/${characterId}/products/${docRef.id}.${ext}`;
 
-  const bucket = getFirebaseAdmin().storage().bucket(bucketName);
-  const file = bucket.file(gcsPath);
-  await file.save(Buffer.from(buf), { contentType, resumable: false });
-  await file.makePublic();
-  const imageUrl = `https://storage.googleapis.com/${bucketName}/${gcsPath}`;
+    const bucket = getFirebaseAdmin().storage().bucket(bucketName);
+    const file = bucket.file(gcsPath);
+    await file.save(Buffer.from(buf), { contentType, resumable: false });
+    const imageUrl = `https://storage.googleapis.com/${bucketName}/${gcsPath}`;
 
-  const doc: BrandProductDoc = {
-    characterId, name, imageUrl, tags,
-    createdAt: new Date(),
-  };
-  await docRef.set(doc);
+    const doc: BrandProductDoc = {
+      characterId, name, imageUrl, tags,
+      createdAt: new Date(),
+    };
+    await docRef.set(doc);
 
-  return NextResponse.json({ id: docRef.id, imageUrl });
+    return NextResponse.json({ id: docRef.id, imageUrl });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[brand-products POST]', msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }

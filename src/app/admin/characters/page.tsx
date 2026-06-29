@@ -160,7 +160,7 @@ export default function AdminCharacters() {
   const [name, setName] = useState('');
   const [soul, setSoul] = useState('');
   const [voiceId, setVoiceId] = useState('');
-  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({});
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({ emotion: 'neutral' });
   const [convSettings, setConvSettings] = useState<ConvSettings>({});
   const [soulCore, setSoulCore] = useState('');
   const [avatar, setAvatar] = useState<{ b64: string; type: string } | null>(null);
@@ -183,9 +183,17 @@ export default function AdminCharacters() {
   const [baMsg, setBaMsg] = useState('');
   const [baUploading, setBaUploading] = useState('');
   const layoutFileRef = useRef<HTMLInputElement>(null);
-  const productFileRef = useRef<HTMLInputElement>(null);
   const [layoutForm, setLayoutForm] = useState({ name: '', description: '', isDefault: false });
-  const [productForm, setProductForm] = useState({ name: '', tags: '' });
+  const [layoutFile, setLayoutFile] = useState<File | null>(null);
+  const [layoutPreview, setLayoutPreview] = useState<string | null>(null);
+  const [baDeleteConfirmId, setBaDeleteConfirmId] = useState<string | null>(null);
+  const [charDeleteConfirmId, setCharDeleteConfirmId] = useState<string | null>(null);
+
+  // Product bulk upload queue
+  type QueueItem = { id: string; file: File; status: 'queued' | 'uploading' | 'done' | 'error'; previewUrl: string; name: string };
+  const [productQueue, setProductQueue] = useState<QueueItem[]>([]);
+  const [isDraggingProduct, setIsDraggingProduct] = useState(false);
+  const productDropRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const r = await fetch('/api/admin/characters').then(r => r.json()).catch(() => ({ characters:[] }));
@@ -205,7 +213,7 @@ export default function AdminCharacters() {
   async function openBrandAssets(charId: string, charName: string) {
     setBaCharId(charId); setBaCharName(charName); setBaMsg('');
     setLayoutForm({ name: '', description: '', isDefault: false });
-    setProductForm({ name: '', tags: '' });
+    setProductQueue([]);
     await loadBrandAssets(charId);
   }
 
@@ -216,54 +224,69 @@ export default function AdminCharacters() {
       method: 'POST',
       headers: {
         'Content-Type': file.type || 'image/jpeg',
-        'x-name': layoutForm.name.trim(),
-        'x-description': layoutForm.description.trim(),
+        'x-name': encodeURIComponent(layoutForm.name.trim()),
+        'x-description': encodeURIComponent(layoutForm.description.trim()),
         'x-is-default': layoutForm.isDefault ? 'true' : 'false',
       },
       body: file,
     }).then(r => r.json()).catch(() => null);
     setBaUploading('');
     if (r?.id) {
+      setBaMsg('');
       setLayoutForm({ name: '', description: '', isDefault: false });
+      setLayoutFile(null); setLayoutPreview(null);
       if (layoutFileRef.current) layoutFileRef.current.value = '';
       await loadBrandAssets(charId);
     } else setBaMsg(r?.error || '上傳失敗');
   }
 
   async function setDefaultLayout(charId: string, layoutId: string) {
-    await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'PATCH' });
+    const r = await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'PATCH' })
+      .then(r => r.json()).catch(() => null);
+    if (r?.error) { setBaMsg(r.error); return; }
     await loadBrandAssets(charId);
   }
 
   async function deleteLayout(charId: string, layoutId: string) {
-    if (!confirm('刪除此 Layout？')) return;
-    await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'DELETE' });
+    const r = await fetch(`/api/admin/characters/${charId}/brand-layouts/${layoutId}`, { method: 'DELETE' })
+      .then(r => r.json()).catch(() => null);
+    if (r?.error) { setBaMsg(r.error); return; }
     await loadBrandAssets(charId);
   }
 
-  async function uploadProduct(charId: string, file: File) {
-    if (!productForm.name.trim()) { setBaMsg('請填寫產品名稱'); return; }
-    setBaUploading('product');
+  async function uploadQueueItem(queueId: string, file: File, name: string, charId: string): Promise<void> {
+    setProductQueue(q => q.map(i => i.id === queueId ? { ...i, status: 'uploading' } : i));
     const r = await fetch(`/api/admin/characters/${charId}/brand-products`, {
       method: 'POST',
       headers: {
         'Content-Type': file.type || 'image/jpeg',
-        'x-name': productForm.name.trim(),
-        'x-tags': productForm.tags.trim(),
+        'x-name': encodeURIComponent(name),
       },
       body: file,
-    }).then(r => r.json()).catch(() => null);
-    setBaUploading('');
-    if (r?.id) {
-      setProductForm({ name: '', tags: '' });
-      if (productFileRef.current) productFileRef.current.value = '';
-      await loadBrandAssets(charId);
-    } else setBaMsg(r?.error || '上傳失敗');
+    }).then(res => res.json()).catch(() => null);
+    setProductQueue(q => q.map(i => i.id === queueId ? { ...i, status: r?.id ? 'done' : 'error' } : i));
+  }
+
+  async function addProductFiles(files: FileList | File[], charId: string) {
+    if (!charId) return;
+    const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (!arr.length) return;
+    const items: QueueItem[] = arr.map(f => ({
+      id: Math.random().toString(36).slice(2),
+      file: f,
+      status: 'queued' as const,
+      previewUrl: URL.createObjectURL(f),
+      name: f.name.replace(/\.[^.]+$/, ''),
+    }));
+    setProductQueue(q => [...q, ...items]);
+    await Promise.allSettled(items.map(item => uploadQueueItem(item.id, item.file, item.name, charId)));
+    await loadBrandAssets(charId);
   }
 
   async function deleteProduct(charId: string, productId: string) {
-    if (!confirm('刪除此產品圖？')) return;
-    await fetch(`/api/admin/characters/${charId}/brand-products/${productId}`, { method: 'DELETE' });
+    const r = await fetch(`/api/admin/characters/${charId}/brand-products/${productId}`, { method: 'DELETE' })
+      .then(r => r.json()).catch(() => null);
+    if (r?.error) { setBaMsg(r.error); return; }
     await loadBrandAssets(charId);
   }
 
@@ -361,11 +384,10 @@ export default function AdminCharacters() {
     else setEditMsg(r?.error || '提煉失敗');
   }
 
-  async function deleteChar(id: string, charName: string) {
-    if (!confirm(`確定要刪除「${charName}」？此操作無法復原。`)) return;
+  async function deleteChar(id: string) {
     const r = await fetch(`/api/admin/characters/${id}`, { method:'DELETE' }).then(r => r.json()).catch(() => null);
-    if (r?.ok) load();
-    else alert(r?.error || '刪除失敗');
+    if (r?.ok) { setCharDeleteConfirmId(null); load(); }
+    else { setCharDeleteConfirmId(null); setMsg(r?.error || '刪除失敗'); }
   }
 
   return (
@@ -411,9 +433,9 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:r.voiceSettings, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -423,13 +445,28 @@ export default function AdminCharacters() {
                       background:'transparent', color:'var(--accent-2)', fontSize:12, cursor:'pointer' }}>
                     品牌素材
                   </button>
-                  <button onClick={() => deleteChar(c.id, c.name)}
-                    style={{ width:28, height:28, borderRadius:6, border:'1px solid var(--border)', background:'transparent',
-                      color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}
-                    onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
-                    onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
-                    <Icon name="trash" size={13} />
-                  </button>
+                  {charDeleteConfirmId === c.id ? (
+                    <div style={{ display:'flex', gap:4 }}>
+                      <button onClick={() => deleteChar(c.id)}
+                        style={{ fontSize:11, padding:'3px 9px', borderRadius:5, border:'1px solid rgba(181,101,74,0.45)',
+                          background:'rgba(181,101,74,0.1)', color:'#b5654a', cursor:'pointer', fontWeight:500 }}>
+                        確認刪除
+                      </button>
+                      <button onClick={() => setCharDeleteConfirmId(null)}
+                        style={{ fontSize:11, padding:'3px 7px', borderRadius:5, border:'1px solid var(--border)',
+                          background:'transparent', color:'var(--muted)', cursor:'pointer' }}>
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setCharDeleteConfirmId(c.id)}
+                      style={{ width:28, height:28, borderRadius:6, border:'1px solid var(--border)', background:'transparent',
+                        color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}
+                      onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
+                      onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
+                      <Icon name="trash" size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -497,84 +534,217 @@ export default function AdminCharacters() {
             </div>
             {baMsg && <div style={{ fontSize:13, color:'#b5654a' }}>{baMsg}</div>}
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24 }}>
               {/* Layouts */}
-              <div>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>全版 Layout</div>
-                <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>全版 Layout</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:16 }}>
                   {layouts.map(l => (
-                    <div key={l.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:7,
-                      border:'1px solid var(--border)', background:'rgba(60,52,40,0.02)' }}>
-                      <img src={l.imageUrl} alt={l.name} style={{ width:48, height:48, objectFit:'cover', borderRadius:6, flexShrink:0 }} />
+                    <div key={l.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', borderRadius:8,
+                      border:'1px solid var(--border)', background:'var(--panel-2)' }}>
+                      <img src={l.imageUrl} alt={l.name} style={{ width:44, height:44, objectFit:'cover', borderRadius:6, flexShrink:0, border:'1px solid var(--border)' }} />
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.name}</div>
-                        {l.isDefault && <span style={{ fontSize:11, color:'var(--accent)', background:'color-mix(in oklab, var(--accent) 12%, transparent)', padding:'1px 6px', borderRadius:4 }}>預設</span>}
+                        {l.isDefault && (
+                          <span style={{ display:'inline-block', marginTop:3, fontSize:11, color:'var(--accent)',
+                            background:'color-mix(in oklab, var(--accent) 12%, transparent)',
+                            padding:'1px 7px', borderRadius:4, fontWeight:500 }}>預設</span>
+                        )}
                       </div>
-                      <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                      <div style={{ display:'flex', gap:5, flexShrink:0, alignItems:'center' }}>
                         {!l.isDefault && (
                           <button onClick={() => setDefaultLayout(baCharId, l.id)}
-                            style={{ padding:'3px 8px', borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', fontSize:11, cursor:'pointer' }}>
+                            style={{ padding:'4px 9px', borderRadius:5, border:'1px solid var(--border)',
+                              background:'transparent', color:'var(--muted)', fontSize:11, cursor:'pointer', whiteSpace:'nowrap' }}>
                             設預設
                           </button>
                         )}
-                        <button onClick={() => deleteLayout(baCharId, l.id)}
-                          style={{ width:26, height:26, borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}
-                          onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
-                          onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
-                          <Icon name="trash" size={12} />
-                        </button>
+                        {baDeleteConfirmId === `layout:${l.id}` ? (
+                          <div style={{ display:'flex', gap:4 }}>
+                            <button onClick={() => { deleteLayout(baCharId, l.id); setBaDeleteConfirmId(null); }}
+                              style={{ fontSize:11, padding:'4px 9px', borderRadius:5, border:'1px solid rgba(181,101,74,0.45)',
+                                background:'rgba(181,101,74,0.1)', color:'#b5654a', cursor:'pointer', fontWeight:500, whiteSpace:'nowrap' }}>
+                              確認刪除
+                            </button>
+                            <button onClick={() => setBaDeleteConfirmId(null)}
+                              style={{ fontSize:11, padding:'4px 7px', borderRadius:5, border:'1px solid var(--border)',
+                                background:'transparent', color:'var(--muted)', cursor:'pointer' }}>
+                              取消
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setBaDeleteConfirmId(`layout:${l.id}`)}
+                            style={{ width:28, height:28, borderRadius:5, border:'1px solid var(--border)',
+                              background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer' }}
+                            onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
+                            onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
+                            <Icon name="trash" size={13} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
-                  {layouts.length === 0 && <div style={{ fontSize:13, color:'var(--muted)' }}>尚無 Layout</div>}
+                  {layouts.length === 0 && (
+                    <div style={{ fontSize:13, color:'var(--muted)', padding:'12px 0', textAlign:'center',
+                      border:'1px dashed var(--border)', borderRadius:8 }}>尚無 Layout</div>
+                  )}
                 </div>
-                <div style={{ borderTop:'1px solid var(--border)', paddingTop:12, display:'flex', flexDirection:'column', gap:8 }}>
+
+                {/* 新增 Layout 表單 */}
+                <div style={{ borderTop:'1px solid var(--border)', paddingTop:14, display:'flex', flexDirection:'column', gap:9 }}>
                   <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>新增 Layout</div>
                   <input placeholder="名稱" value={layoutForm.name} onChange={e=>setLayoutForm({...layoutForm,name:e.target.value})}
                     style={{ ...inputBase, fontSize:13 }} />
                   <input placeholder="說明（選填）" value={layoutForm.description} onChange={e=>setLayoutForm({...layoutForm,description:e.target.value})}
                     style={{ ...inputBase, fontSize:13 }} />
-                  <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, cursor:'pointer' }}>
+                  <label style={{ display:'flex', alignItems:'center', gap:7, fontSize:12.5, cursor:'pointer', color:'var(--muted)' }}>
                     <input type="checkbox" checked={layoutForm.isDefault} onChange={e=>setLayoutForm({...layoutForm,isDefault:e.target.checked})} />
                     設為預設版型
                   </label>
-                  <input ref={layoutFileRef} type="file" accept="image/*" style={{ fontSize:12 }}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadLayout(baCharId, f); }} />
-                  {baUploading==='layout' && <div style={{ fontSize:12, color:'var(--muted)' }}>上傳中…</div>}
+                  <input ref={layoutFileRef} type="file" accept="image/*" style={{ display:'none' }}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setLayoutFile(f);
+                      setLayoutPreview(URL.createObjectURL(f));
+                    }} />
+                  {layoutPreview ? (
+                    <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
+                      <img src={layoutPreview} alt="預覽" style={{ width:64, height:64, objectFit:'cover', borderRadius:7, border:'1px solid var(--border)', flexShrink:0 }} />
+                      <div style={{ flex:1, display:'flex', flexDirection:'column', gap:6 }}>
+                        <div style={{ fontSize:12, color:'var(--muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {layoutFile?.name}
+                        </div>
+                        <div style={{ display:'flex', gap:6 }}>
+                          <button
+                            onClick={() => baCharId && layoutFile && uploadLayout(baCharId, layoutFile)}
+                            disabled={baUploading==='layout'}
+                            style={{ flex:1, padding:'7px 0', borderRadius:6, border:'none',
+                              background:'var(--accent)', color:'#fff', fontSize:12.5, cursor: baUploading==='layout' ? 'not-allowed' : 'pointer', fontWeight:500 }}>
+                            {baUploading==='layout' ? '上傳中…' : '上傳'}
+                          </button>
+                          <button onClick={() => { setLayoutFile(null); setLayoutPreview(null); if (layoutFileRef.current) layoutFileRef.current.value=''; }}
+                            style={{ padding:'7px 10px', borderRadius:6, border:'1px solid var(--border)',
+                              background:'transparent', color:'var(--muted)', fontSize:12, cursor:'pointer' }}>
+                            移除
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => layoutFileRef.current?.click()}
+                      style={{ padding:'9px', borderRadius:7, border:'1px dashed var(--border)',
+                        background:'transparent', color:'var(--muted)', fontSize:13, cursor:'pointer',
+                        display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+                      <Icon name="upload" size={14} />選擇圖片
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Products */}
-              <div>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>產品圖</div>
-                <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:14 }}>
-                  {products.map(p => (
-                    <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 10px', borderRadius:7,
-                      border:'1px solid var(--border)', background:'rgba(60,52,40,0.02)' }}>
-                      <img src={p.imageUrl} alt={p.name} style={{ width:48, height:48, objectFit:'cover', borderRadius:6, flexShrink:0 }} />
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</div>
-                        {p.tags.length > 0 && <div style={{ fontSize:11, color:'var(--muted)' }}>{p.tags.join('、')}</div>}
+              <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>產品圖</div>
+
+                {/* Grid display */}
+                {products.length > 0 && (
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:16 }}>
+                    {products.map(p => (
+                      <div key={p.id} style={{ position:'relative', aspectRatio:'1', borderRadius:8, overflow:'hidden',
+                        border:'1px solid var(--border)', background:'var(--panel-2)' }}
+                        onMouseEnter={e => {
+                          const btn = e.currentTarget.querySelector<HTMLElement>('.prod-del-btn');
+                          if (btn) btn.style.opacity = '1';
+                        }}
+                        onMouseLeave={e => {
+                          const btn = e.currentTarget.querySelector<HTMLElement>('.prod-del-btn');
+                          if (btn) btn.style.opacity = '0';
+                          setBaDeleteConfirmId(null);
+                        }}>
+                        <img src={p.imageUrl} alt={p.name}
+                          style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
+                        <div className="prod-del-btn" style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.45)',
+                          display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:6,
+                          opacity:0, transition:'opacity 0.15s' }}>
+                          <div style={{ fontSize:11, color:'#fff', fontWeight:500, textAlign:'center', padding:'0 6px',
+                            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'100%' }}>{p.name}</div>
+                          {baDeleteConfirmId === `product:${p.id}` ? (
+                            <div style={{ display:'flex', gap:4 }}>
+                              <button onClick={() => { deleteProduct(baCharId!, p.id); setBaDeleteConfirmId(null); }}
+                                style={{ fontSize:11, padding:'3px 8px', borderRadius:4,
+                                  border:'1px solid rgba(181,101,74,0.7)', background:'rgba(181,101,74,0.85)',
+                                  color:'#fff', cursor:'pointer', fontWeight:500 }}>
+                                刪除
+                              </button>
+                              <button onClick={() => setBaDeleteConfirmId(null)}
+                                style={{ fontSize:11, padding:'3px 7px', borderRadius:4,
+                                  border:'1px solid rgba(255,255,255,0.3)', background:'transparent',
+                                  color:'#fff', cursor:'pointer' }}>
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setBaDeleteConfirmId(`product:${p.id}`)}
+                              style={{ padding:'4px 10px', borderRadius:5, border:'1px solid rgba(255,255,255,0.4)',
+                                background:'transparent', color:'#fff', fontSize:11, cursor:'pointer' }}>
+                              移除
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <button onClick={() => deleteProduct(baCharId, p.id)}
-                        style={{ width:26, height:26, borderRadius:5, border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', display:'grid', placeItems:'center', cursor:'pointer', flexShrink:0 }}
-                        onMouseEnter={e=>(e.currentTarget as HTMLButtonElement).style.color='#b5654a'}
-                        onMouseLeave={e=>(e.currentTarget as HTMLButtonElement).style.color='var(--muted)'}>
-                        <Icon name="trash" size={12} />
-                      </button>
-                    </div>
-                  ))}
-                  {products.length === 0 && <div style={{ fontSize:13, color:'var(--muted)' }}>尚無產品圖</div>}
-                </div>
-                <div style={{ borderTop:'1px solid var(--border)', paddingTop:12, display:'flex', flexDirection:'column', gap:8 }}>
-                  <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)' }}>新增產品圖</div>
-                  <input placeholder="產品名稱" value={productForm.name} onChange={e=>setProductForm({...productForm,name:e.target.value})}
-                    style={{ ...inputBase, fontSize:13 }} />
-                  <input placeholder="標籤（逗號分隔，選填）" value={productForm.tags} onChange={e=>setProductForm({...productForm,tags:e.target.value})}
-                    style={{ ...inputBase, fontSize:13 }} />
-                  <input ref={productFileRef} type="file" accept="image/*" style={{ fontSize:12 }}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadProduct(baCharId, f); }} />
-                  {baUploading==='product' && <div style={{ fontSize:12, color:'var(--muted)' }}>上傳中…</div>}
+                    ))}
+                  </div>
+                )}
+                {products.length === 0 && productQueue.filter(i => i.status !== 'done').length === 0 && (
+                  <div style={{ fontSize:13, color:'var(--muted)', padding:'12px 0', textAlign:'center',
+                    border:'1px dashed var(--border)', borderRadius:8, marginBottom:16 }}>尚無產品圖</div>
+                )}
+
+                {/* Upload queue status */}
+                {productQueue.length > 0 && (
+                  <div style={{ display:'flex', flexDirection:'column', gap:4, marginBottom:12 }}>
+                    {productQueue.filter(i => i.status !== 'done').map(item => (
+                      <div key={item.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px',
+                        borderRadius:6, border:'1px solid var(--border)', background:'var(--panel-2)', fontSize:12 }}>
+                        <img src={item.previewUrl} alt={item.name}
+                          style={{ width:28, height:28, objectFit:'cover', borderRadius:4, border:'1px solid var(--border)', flexShrink:0 }} />
+                        <div style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--muted)' }}>
+                          {item.name}
+                        </div>
+                        <div style={{ flexShrink:0, fontSize:11,
+                          color: item.status === 'error' ? '#b5654a' : item.status === 'uploading' ? 'var(--accent)' : 'var(--muted)' }}>
+                          {item.status === 'uploading' ? '上傳中…' : item.status === 'error' ? '失敗' : '佇列中'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Drop zone */}
+                <div style={{ borderTop:'1px solid var(--border)', paddingTop:14 }}>
+                  <div style={{ fontSize:12, fontWeight:600, color:'var(--muted)', marginBottom:9 }}>批量上傳產品圖</div>
+                  <input ref={productDropRef} type="file" accept="image/*" multiple style={{ display:'none' }}
+                    onChange={e => { if (e.target.files && baCharId) { addProductFiles(e.target.files, baCharId); e.target.value = ''; } }} />
+                  <div
+                    onClick={() => productDropRef.current?.click()}
+                    onDragOver={e => { e.preventDefault(); setIsDraggingProduct(true); }}
+                    onDragLeave={() => setIsDraggingProduct(false)}
+                    onDrop={e => {
+                      e.preventDefault();
+                      setIsDraggingProduct(false);
+                      if (e.dataTransfer.files && baCharId) addProductFiles(e.dataTransfer.files, baCharId);
+                    }}
+                    style={{ padding:'20px 12px', borderRadius:8,
+                      border: `2px dashed ${isDraggingProduct ? 'var(--accent)' : 'var(--border)'}`,
+                      background: isDraggingProduct ? 'color-mix(in oklab, var(--accent) 6%, transparent)' : 'transparent',
+                      color: isDraggingProduct ? 'var(--accent)' : 'var(--muted)',
+                      fontSize:13, cursor:'pointer', textAlign:'center',
+                      display:'flex', flexDirection:'column', alignItems:'center', gap:6,
+                      transition:'border-color 0.15s, background 0.15s, color 0.15s' }}>
+                    <Icon name="upload" size={18} />
+                    <div>拖放圖片到這裡，或點選選擇</div>
+                    <div style={{ fontSize:11, opacity:0.65 }}>支援多選 · 自動以檔名命名</div>
+                  </div>
                 </div>
               </div>
             </div>
