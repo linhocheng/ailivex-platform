@@ -1,3 +1,6 @@
+# task harness scratchpad
+.task_scratchpad_*.json
+
 # dependencies
 /node_modules
 node_modules/
