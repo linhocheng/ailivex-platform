@@ -62,9 +62,14 @@ export async function POST(req: Request) {
   if (!charSnap.exists) return NextResponse.json({ error: 'character_not_found' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
 
-  if (!char.heygenAvatarId) {
+  const avatarImageUrl = char.heygenAvatarUrl || char.avatarUrl;
+  if (!avatarImageUrl) {
     return NextResponse.json({ error: 'no_heygen_avatar' }, { status: 400 });
   }
+
+  // avatar_iii 引擎需要專屬訓練，無 V3 則降回 avatar_iv
+  const resolvedEngine = (heygenEngine === 'avatar_iii' && char.heygenAvatarIdV3)
+    ? 'avatar_iii' : 'avatar_iv';
 
   const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
   if (!bucketName) return NextResponse.json({ error: 'storage_not_configured' }, { status: 503 });
@@ -85,7 +90,7 @@ export async function POST(req: Request) {
   const bucket = getFirebaseAdmin().storage().bucket(bucketName);
   const gcsFile = bucket.file(gcsPath);
   await gcsFile.save(buffer, { metadata: { contentType } });
-  await gcsFile.makePublic();
+  // bucket 已設 allUsers:objectViewer（uniform bucket-level access），不需 makePublic()
   const audioUrl = `https://storage.googleapis.com/${bucketName}/${gcsPath}`;
 
   // 建立 audio task（已完成，只作為 audioUrl 容器供 HeyGen 讀取）
@@ -109,7 +114,7 @@ export async function POST(req: Request) {
     characterId,
     type: 'video_generation',
     intent: `${char.name} 分身影片`,
-    params: { avatarId: char.heygenAvatarId, audioUrl },
+    params: { avatarUrl: avatarImageUrl, audioUrl },
     status: 'pending',
     source: 'heygen',
     notified: false,
@@ -127,7 +132,7 @@ export async function POST(req: Request) {
       idempotencyKey: videoRef.id,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { avatarId: char.heygenAvatarId, audioUrl, heygenEngine },
+      input: { avatarUrl: avatarImageUrl, audioUrl, heygenEngine: resolvedEngine },
       metadata: { taskId: videoRef.id },
     }),
   });

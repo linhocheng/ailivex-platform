@@ -59,14 +59,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await db.collection(COL.tasks).doc(taskId).update({ videoTaskId: FieldValue.delete() });
   }
 
-  const DEFAULT_AVATAR_ID = '4ff5316df3734ebd897609d2d391dbb8';
-
-  // 查角色，優先用角色的 heygenAvatarId，沒有就用預設
   const charSnap = await db.collection(COL.characters).doc(task.characterId as string).get();
   if (!charSnap.exists) return NextResponse.json({ error: 'character_not_found' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
 
-  const avatarId = char.heygenAvatarId || DEFAULT_AVATAR_ID;
+  // avatar_iii 引擎需要專屬訓練，無 V3 則降回 avatar_iv
+  const resolvedEngine = (heygenEngine === 'avatar_iii' && char.heygenAvatarIdV3)
+    ? 'avatar_iii' : 'avatar_iv';
+  const avatarImageUrl = char.heygenAvatarUrl || char.avatarUrl;
 
   if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) {
     return NextResponse.json({ error: 'media_worker_not_configured' }, { status: 503 });
@@ -79,7 +79,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     characterId: task.characterId,
     type: 'video_generation',
     intent: task.intent || '分身短影音',
-    params: { avatarId, audioUrl: task.audioUrl },
+    params: { avatarUrl: avatarImageUrl, audioUrl: task.audioUrl },
     status: 'pending',
     notified: false,
     createdAt: FieldValue.serverTimestamp(),
@@ -97,7 +97,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       idempotencyKey: videoRef.id,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { avatarId, audioUrl: task.audioUrl, motionPrompt, heygenEngine },
+      input: { avatarUrl: avatarImageUrl, audioUrl: task.audioUrl, motionPrompt, heygenEngine: resolvedEngine },
       metadata: { taskId: videoRef.id },
     }),
   });
