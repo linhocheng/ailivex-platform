@@ -24,6 +24,7 @@ export async function GET() {
     avatarUrl: string;
     voiceId: string;
     heygenAvatarId: string;
+    hasAvatarV3: boolean;
   }> = [];
 
   for (const chunk of chunks) {
@@ -37,6 +38,7 @@ export async function GET() {
         avatarUrl: c.avatarUrl || '',
         voiceId: c.voiceIdMinimax || '',
         heygenAvatarId: c.heygenAvatarId || '',
+        hasAvatarV3: !!c.heygenAvatarIdV3,
       });
     }
   }

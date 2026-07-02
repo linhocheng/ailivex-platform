@@ -1,0 +1,46 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '-f'
+      - 'cloud-run/podcast-worker/Dockerfile'
+      - -t
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA
+      - -t
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:latest
+      - cloud-run/podcast-worker
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - --all-tags
+      - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ailivex-podcast-worker
+      - --image=asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA
+      - --region=asia-east1
+      - --platform=managed
+      - --allow-unauthenticated
+      - --no-cpu-throttling
+      - --min-instances=1
+      - --max-instances=3
+      - --memory=512Mi
+      - --cpu=1
+      - --concurrency=3
+      - --timeout=3600
+      - --service-account=ailivex-app@$PROJECT_ID.iam.gserviceaccount.com
+      - --set-env-vars=FIREBASE_PROJECT_ID=ailivex-2026,BRIDGE_URL=https://bridge-direct.soul-polaroid.work
+      - >-
+        --set-secrets=BRIDGE_SECRET=BRIDGE_SECRET:latest,WORKER_SECRET=WORKER_SECRET:latest
+
+images:
+  - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA
+  - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY

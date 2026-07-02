@@ -10,6 +10,25 @@ import { COL, type TaskDoc } from '@/lib/collections';
 
 export const runtime = 'nodejs';
 
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  const { id } = await params;
+  const db = getFirestore();
+  const snap = await db.collection(COL.tasks).doc(id).get();
+  if (!snap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  const task = snap.data() as TaskDoc;
+  if (task.userId !== user.uid) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  return NextResponse.json({
+    status: task.status,
+    podcastScript: task.podcastScript ?? null,
+    error: task.error ?? null,
+  });
+}
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -36,8 +55,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (body.cardType !== undefined) patch.cardType = body.cardType;
   if (body.intent !== undefined) patch.intent = body.intent;
   if (body.productImageUrl !== undefined) patch.productImageUrl = body.productImageUrl ?? '';
+  if ((body as { podcastScript?: unknown }).podcastScript !== undefined)
+    patch.podcastScript = (body as { podcastScript: unknown }).podcastScript;
 
   if (!Object.keys(patch).length) return NextResponse.json({ ok: true });
   await ref.update(patch);
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+
+  const { id } = await params;
+  const db = getFirestore();
+  const ref = db.collection(COL.tasks).doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const task = snap.data() as TaskDoc;
+  if (task.userId !== user.uid) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+
+  await ref.delete();
   return NextResponse.json({ ok: true });
 }

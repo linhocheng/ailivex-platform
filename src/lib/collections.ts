@@ -47,7 +47,13 @@ export interface ConvSettings {
   temperature?: number;          // 0.1–1.0 LLM 溫度（越低越收斂/越不演）
 }
 
-export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft' | 'video_generation';
+export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft' | 'video_generation' | 'podcast_generation';
+
+export interface PodcastLine {
+  speaker: string;
+  characterId: string;
+  text: string;
+}
 
 export interface CharacterDoc {
   name: string;
@@ -60,7 +66,8 @@ export interface CharacterDoc {
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
   capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
   imageStyle?: string;     // 圖片生成風格描述（story_draft 生圖 prompt prefix）
-  heygenAvatarId?: string;   // HeyGen talking_photo_id
+  heygenAvatarId?: string;    // HeyGen talking_photo_id（avatar_iv 引擎）
+  heygenAvatarIdV3?: string;  // HeyGen talking_photo_id（avatar_iii 引擎，需分開訓練）
   heygenAvatarUrl?: string;  // HeyGen 上傳後的預覽 URL（v3 image 欄位用）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
@@ -232,6 +239,13 @@ export interface TaskDoc {
   brandLayoutId?: string;  // story_draft 層：套用的品牌 Layout id
   productImageUrl?: string; // image_generation 層：這張卡片的產品圖 URL
   resultRef?: string;      // 指向真正結果的路徑，例如 "mw_jobs/xxx"
+  // podcast_generation 專屬
+  podcastCharacterIds?: string[];
+  podcastTopic?: string;
+  podcastWordCount?: number;
+  podcastFocus?: string;
+  podcastScript?: PodcastLine[];
+  podcastPhase?: string;   // 'script_done' | 'audio_done'
   error?: string;
   notified: boolean;       // 是否已被注入 lastSession 通知過
   createdAt: FirebaseFirestore.Timestamp | Date;

@@ -4,6 +4,7 @@
  * Body: { text: string; voiceId: string }
  */
 import { NextResponse } from 'next/server';
+import { normalizeTTSText } from '@/lib/tts-normalize';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -62,6 +63,7 @@ export async function POST(req: Request) {
 
   if (!text || !voiceId) return NextResponse.json({ error: 'text 與 voiceId 必填' }, { status: 400 });
 
+  const normalizedText = normalizeTTSText(text);
   const apiKey = process.env.MINIMAX_API_KEY;
   const groupId = process.env.MINIMAX_GROUP_ID;
   if (!apiKey || !groupId) return NextResponse.json({ error: 'MiniMax 未設定' }, { status: 500 });
@@ -77,7 +79,7 @@ export async function POST(req: Request) {
     },
     body: JSON.stringify({
       model: 'speech-02-turbo',
-      text,
+      text: normalizedText,
       stream: true,
       stream_options: { exclude_aggregated_audio: true },
       language_boost: null,

@@ -36,6 +36,8 @@ const WORKER_ROUTES: Record<TaskCapability, (taskId: string, params: Record<stri
   script_draft: enqueueScriptDraftJob,
   story_draft: enqueueStoryDraftJob,
   video_generation: enqueueVideoJob,
+  // podcast_generation 由素材轉換區直接呼叫，不走 task-dispatcher
+  podcast_generation: async () => {},
 };
 
 export interface DispatchResult {
@@ -91,6 +93,7 @@ const DISPATCH_MESSAGES: Record<TaskCapability, string> = {
   script_draft: '腳本草稿已備妥，你可以去媒體庫確認後生成音檔。',
   story_draft: '故事板已開始生成，系統會自動寫故事、分析圖卡腳本，你可以去故事板頁面查看進度。',
   video_generation: '分身短影音已開始生成，完成後你可以在媒體庫查看。',
+  podcast_generation: 'Podcast 已生成，可前往素材轉換區查看。',
 };
 
 // ── Worker 呼叫實作 ──────────────────────────────────────────────────
