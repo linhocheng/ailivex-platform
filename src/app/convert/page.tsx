@@ -83,7 +83,7 @@ function AudioPanel({ chars, onCreated }: { chars: ConvertChar[]; onCreated: (id
         </div>
         <div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>新增口播稿</div>
-          <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>輸入文字，選擇角色語音生成音檔</div>
+          <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>輸入文字稿，以角色語音產出音檔</div>
         </div>
       </div>
 
@@ -790,7 +790,7 @@ export default function ConvertPage() {
           <div style={{ maxWidth: 900, margin: '0 auto' }}>
 
             <div className="ax-enter" style={{ marginBottom: 36 }}>
-              <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>素材轉換區</h1>
+              <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>語音製作</h1>
               <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>
                 口播稿生成音檔、多角色 Podcast、上傳音檔合成角色分身影片
               </p>

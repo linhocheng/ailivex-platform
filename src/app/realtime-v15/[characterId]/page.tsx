@@ -458,9 +458,9 @@ export default function RealtimeCallPage() {
   const min = Math.floor(elapsed / 60), sec = elapsed % 60;
 
   const stateLabel: Record<CallState, string> = {
-    idle: '( 通話 )', connecting: '( 連線中 )', connected: '( 進房 )',
+    idle: '( 通話 )', connecting: '( 連線中 )', connected: '( 接通中 )',
     'waiting-agent': '( 等待中 )', 'in-call': '( 通話中 )', finalizing: '( 整理記憶中… )',
-    disconnected: '( 已掛斷 )', error: '( 錯誤 )',
+    disconnected: '( 已掛斷 )', error: '( 連線異常 )',
   };
 
   const speaking = agentPhase === 'speaking';
@@ -558,8 +558,8 @@ export default function RealtimeCallPage() {
             <div className="ax-enter" style={{ margin:'-6px 0 16px', padding:'10px 18px', borderRadius:10,
               background:'rgba(194,149,78,0.12)', border:'1px solid rgba(194,149,78,0.35)',
               backdropFilter:'blur(8px)', display:'inline-block' }}>
-              <div style={{ fontSize:14, fontWeight:500, color:'#e8c88f' }}>您的語音對話點數已用盡</div>
-              <div style={{ fontSize:12, color:'rgba(255,255,255,0.55)', marginTop:3 }}>如需繼續與{characterName || '角色'}通話，請聯繫管理員加值</div>
+              <div style={{ fontSize:14, fontWeight:500, color:'#e8c88f' }}>您的語音通話時數已用罄</div>
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.55)', marginTop:3 }}>如需增購時數，請聯繫您的服務窗口</div>
             </div>
           )}
           {webSearch && (
@@ -616,7 +616,7 @@ export default function RealtimeCallPage() {
         <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
           <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
           {canConnect
-            ? <CircleControl icon="phone" label={quotaExhausted ? '點數已用盡' : '接通'} onClick={handleConnect} big primary disabled={quotaExhausted} />
+            ? <CircleControl icon="phone" label={quotaExhausted ? '時數已用罄' : '接通'} onClick={handleConnect} big primary disabled={quotaExhausted} />
             : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
           <div style={{ width:56 }} />
         </div>

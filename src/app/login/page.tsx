@@ -42,15 +42,15 @@ export default function LoginPage() {
           <div style={{ maxWidth: 460 }} className="ax-enter">
             <h1 style={{ fontSize: 'clamp(32px,3.2vw,44px)', lineHeight: 1.12, margin: '0 0 20px',
               fontWeight: 600, letterSpacing: '-0.01em' }}>
-              與有<span style={{ color: 'var(--accent)' }}>靈魂</span>的<br />AI 角色相遇
+              與記得您的<br /><span style={{ color: 'var(--accent)' }}>AI 團隊</span>共事
             </h1>
             <div style={{ width: 40, height: 2, background: 'var(--accent)', marginBottom: 20, opacity: 0.7 }} />
             <p style={{ fontSize: 15.5, color: 'var(--muted)', lineHeight: 1.8, margin: 0, maxWidth: 380, fontWeight: 300 }}>
-              ailiveX 不是聊天機器人。每個角色都記得你、認識你，並能與你並肩生成策略、企劃與想法。
+              每位角色都保有與您合作的完整脈絡——延續每一次討論，為您產出策略、企劃與內容。
             </p>
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--muted)', letterSpacing: '0.06em', fontWeight: 300 }}>
-            沉浸式 AI 角色互動平台 · v1.0
+            AILIVE X — 沉浸式 AI 協作平台
           </div>
         </div>
 
@@ -61,7 +61,7 @@ export default function LoginPage() {
             <div className="ax-login-mark" style={{ display: 'none', marginBottom: 26 }}><Wordmark size={20} /></div>
             <div style={{ marginBottom: 30 }}>
               <h2 style={{ fontSize: 24, margin: '0 0 8px', fontWeight: 600 }}>歡迎回來</h2>
-              <p style={{ fontSize: 14, color: 'var(--muted)', margin: 0 }}>登入以進入你的角色空間</p>
+              <p style={{ fontSize: 14, color: 'var(--muted)', margin: 0 }}>登入以進入您的工作空間</p>
             </div>
             <div style={{ display: 'grid', gap: 16 }}>
               <Field label="帳號">

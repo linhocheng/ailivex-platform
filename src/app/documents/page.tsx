@@ -116,7 +116,7 @@ export default function Documents() {
             <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:28, gap:16 }} className="ax-enter">
               <div>
                 <h1 style={{ fontSize:30, margin:0, fontWeight:600, letterSpacing:'-0.02em' }}>我的文件</h1>
-                <p style={{ fontSize:14.5, color:'var(--muted)', margin:'7px 0 0' }}>角色為你生成的策略書、企劃書與報告</p>
+                <p style={{ fontSize:14.5, color:'var(--muted)', margin:'7px 0 0' }}>角色為您產出的策略書、企劃書與報告</p>
               </div>
               <div style={{ fontSize:12, color:'var(--muted)', display:'flex', alignItems:'center', gap:14 }}>
                 {quota && quota.docsLimit !== null && (
@@ -131,8 +131,8 @@ export default function Documents() {
             </div>
 
             {!loaded ? null : docs.length === 0 ? (
-              <EmptyState icon="doc" title="還沒有文件"
-                desc="在對話中告訴角色幫你寫一份策略書或企劃書，完成後會出現在這裡。" />
+              <EmptyState icon="doc" title="尚無文件"
+                desc="在對話中向角色提出需求（例如：請幫我擬一份行銷企劃），完成後將陳列於此。" />
             ) : (
               <div style={{ display:'flex', flexDirection:'column', gap:11 }}>
                 {docs.map((d, i) => (

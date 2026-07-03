@@ -112,7 +112,7 @@ export async function POST(req: Request) {
   }
   // 角色答應了但額度不夠 → 誠實告知，不能讓「說要生成」變成空頭支票
   if (docQuotaHit) {
-    reply += '\n\n（文件生成額度已用完，這次沒有建立文件。需要更多額度請聯繫管理員。）';
+    reply += '\n\n（文件產出額度已用罄，本次未建立文件。如需增購請聯繫您的服務窗口。）';
   }
 
   // dispatches 移到 after() — enqueueStoryDraftJob 需要 await fetch，在 after() 裡才保證 lambda 存活

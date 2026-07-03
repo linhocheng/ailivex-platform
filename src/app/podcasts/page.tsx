@@ -27,7 +27,7 @@ export default function PodcastsPage() {
         <main style={{ flex: 1, overflowY: 'auto', padding: '40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 940, margin: '0 auto' }}>
             <div style={{ marginBottom: 28 }} className="ax-enter">
-              <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>Podcast 素材</h1>
+              <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>Podcast 製作</h1>
               <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>
                 你生成過的 Podcast 腳本與音檔都收集在這裡，可編輯、可下載
               </p>

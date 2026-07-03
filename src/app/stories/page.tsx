@@ -93,7 +93,7 @@ export default function StoriesPage() {
             <div className="ax-enter" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, gap: 16 }}>
               <div>
                 <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>故事板</h1>
-                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>角色生成的故事圖卡 pipeline</p>
+                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>與角色共創的故事，在此產出為圖卡</p>
               </div>
               {anyActive && (
                 <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -103,7 +103,7 @@ export default function StoriesPage() {
             </div>
 
             {!loaded ? null : stories.length === 0 ? (
-              <EmptyState icon="image" title="還沒有故事"
+              <EmptyState icon="image" title="尚無故事"
                 desc="在對話中告訴角色幫你建立一個故事板，完成後會出現在這裡。" />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

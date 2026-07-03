@@ -14,8 +14,8 @@ const NAV_ITEMS = [
   { key: 'documents', href: '/documents', label: '我的文件',  icon: 'doc' },
   { key: 'gallery',   href: '/gallery',   label: '媒體庫',    icon: 'image' },
   { key: 'stories',   href: '/stories',   label: '故事板',    icon: 'image' },
-  { key: 'convert',   href: '/convert',   label: '素材轉換區', icon: 'audio' },
-  { key: 'podcasts',  href: '/podcasts',  label: 'Podcast 素材', icon: 'audio' },
+  { key: 'convert',   href: '/convert',   label: '語音製作', icon: 'audio' },
+  { key: 'podcasts',  href: '/podcasts',  label: 'Podcast 製作', icon: 'audio' },
 ];
 
 function NavLink({ children, href, active, icon }: { children: React.ReactNode; href: string; active?: boolean; icon?: string }) {

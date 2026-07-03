@@ -541,7 +541,7 @@ export default function Gallery() {
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, gap: 16 }} className="ax-enter">
               <div>
                 <h1 style={{ fontSize: 30, margin: 0, fontWeight: 600, letterSpacing: '-0.02em' }}>媒體庫</h1>
-                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>角色為你生成的圖片、音檔與腳本草稿</p>
+                <p style={{ fontSize: 14.5, color: 'var(--muted)', margin: '7px 0 0' }}>角色為您產出的圖片、音檔與腳本</p>
               </div>
               {anyActive && (
                 <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -551,7 +551,7 @@ export default function Gallery() {
             </div>
 
             {!loaded ? null : !hasContent ? (
-              <EmptyState icon="image" title="媒體庫還是空的"
+              <EmptyState icon="image" title="尚無媒體素材"
                 desc="在對話中告訴角色幫你畫圖、寫腳本或生成音檔，完成後會出現在這裡。" />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>

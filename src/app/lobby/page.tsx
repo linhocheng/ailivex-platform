@@ -25,14 +25,14 @@ export default function Lobby() {
         <main style={{ flex: 1, overflowY: 'auto', padding: '44px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 1100, margin: '0 auto' }}>
             <div style={{ marginBottom: 34 }} className="ax-enter">
-              <div style={{ fontSize: 13, color: 'var(--accent-2)', fontWeight: 500, letterSpacing: '0.08em', marginBottom: 8 }}>你的角色空間</div>
-              <h1 style={{ fontSize: 32, margin: '0 0 8px', fontWeight: 600, letterSpacing: '-0.02em' }}>選擇一位角色，開始對話</h1>
-              <p style={{ fontSize: 15, color: 'var(--muted)', margin: 0 }}>他們都記得你 — 繼續未完的對話，或開啟新的話題。</p>
+              <div style={{ fontSize: 13, color: 'var(--accent-2)', fontWeight: 500, letterSpacing: '0.08em', marginBottom: 8 }}>您的角色空間</div>
+              <h1 style={{ fontSize: 32, margin: '0 0 8px', fontWeight: 600, letterSpacing: '-0.02em' }}>選擇一位角色，接續對話</h1>
+              <p style={{ fontSize: 15, color: 'var(--muted)', margin: 0 }}>每位角色都記得與您的每一次交流——接續未完的討論，或展開新的主題。</p>
             </div>
 
             {!loaded ? null : chars.length === 0 ? (
-              <EmptyState icon="mask" title="還沒有被指派任何角色"
-                desc="你的帳號目前尚未取得任何角色的存取權限。請聯絡管理者為你開通。" />
+              <EmptyState icon="mask" title="尚未開通角色"
+                desc="您的帳號尚未開通任何角色，請聯繫您的服務窗口。" />
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(248px, 1fr))', gap: 18 }}>
                 {chars.map((c, i) => <CharCard key={c.id} char={c} delay={i * 0.05} />)}
