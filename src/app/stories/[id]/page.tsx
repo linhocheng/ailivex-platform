@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Wordmark, Icon, Dot, Typing, Ambient } from '@/app/_components/ui';
+import { Icon, Dot, Typing, Ambient } from '@/app/_components/ui';
 import { LogoutButton } from '@/app/_components/LogoutButton';
+import { TextFilterBadge } from '@/app/_components/TextFilterBadge';
+import { FrontNav } from '@/app/_components/FrontNav';
 
 interface Card {
   id: string;
@@ -176,6 +178,9 @@ function CardRow({ card, onEdit, onDelete, onRegenerate, onSetProduct, onReload,
             style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.6,
               background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 7,
               padding: '9px 12px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: 10 }} />
+          <div style={{ marginTop: -6, marginBottom: 10 }}>
+            <TextFilterBadge text={draftText} onRewritten={setDraftText} />
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <select value={draftType} onChange={e => setDraftType(e.target.value)}
               style={{ fontSize: 13, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)',
@@ -263,6 +268,7 @@ export default function StoryDetailPage() {
   const [addType, setAddType] = useState('realistic_photo');
   const [addLoading, setAddLoading] = useState(false);
   const [regenConfirm, setRegenConfirm] = useState<'story' | 'scripts' | null>(null);
+  const [opError, setOpError] = useState('');
 
   // 品牌設定
   const [brandLayouts, setBrandLayouts] = useState<BrandLayout[]>([]);
@@ -318,20 +324,24 @@ export default function StoryDetailPage() {
   }, [story, load]);
 
   async function saveLayoutId(layoutId: string) {
-    setSavingLayout(true);
+    setSavingLayout(true); setOpError('');
+    const prev = selectedLayoutId;
     setSelectedLayoutId(layoutId);
-    await fetch(`/api/stories/${storyId}`, {
+    const r = await fetch(`/api/stories/${storyId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ brandLayoutId: layoutId }),
-    }).catch(() => {});
+    }).catch(() => null);
     setSavingLayout(false);
+    if (!r?.ok) { setSelectedLayoutId(prev); setOpError('版型儲存失敗，請重試。'); }
   }
 
   async function setProductOnCard(cardId: string, url: string) {
-    await fetch(`/api/tasks/${cardId}`, {
+    setOpError('');
+    const r = await fetch(`/api/tasks/${cardId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ productImageUrl: url }),
-    }).catch(() => {});
+    }).catch(() => null);
+    if (!r?.ok) setOpError('產品圖設定失敗，請重試。');
     setProductPickerCardId(null);
     load();
   }
@@ -352,12 +362,13 @@ export default function StoryDetailPage() {
 
   async function saveStory() {
     if (!storyDraft.trim()) return;
-    setSavingStory(true);
-    await fetch(`/api/stories/${storyId}`, {
+    setSavingStory(true); setOpError('');
+    const r = await fetch(`/api/stories/${storyId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storyText: storyDraft }),
-    }).catch(() => {});
+    }).catch(() => null);
     setSavingStory(false);
+    if (!r?.ok) setOpError('劇情儲存失敗，內容還在編輯框裡，請再按一次儲存。');
   }
 
   async function regenStory() {
@@ -380,12 +391,13 @@ export default function StoryDetailPage() {
   }
 
   async function skipImages() {
-    setSkipImgLoading(true);
-    await fetch(`/api/stories/${storyId}`, {
+    setSkipImgLoading(true); setOpError('');
+    const r = await fetch(`/api/stories/${storyId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ skipImages: true }),
-    }).catch(() => {});
+    }).catch(() => null);
     setSkipImgLoading(false);
+    if (!r?.ok) setOpError('略過生圖失敗，請重試。');
     load();
   }
 
@@ -398,15 +410,19 @@ export default function StoryDetailPage() {
   }
 
   async function editCard(id: string, field: string, val: string) {
-    await fetch(`/api/tasks/${id}`, {
+    setOpError('');
+    const r = await fetch(`/api/tasks/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: val }),
-    }).catch(() => {});
+    }).catch(() => null);
+    if (!r?.ok) setOpError('圖卡儲存失敗，請重試。');
     await load();
   }
 
   async function deleteCard(id: string) {
-    await fetch(`/api/gallery/${id}`, { method: 'DELETE' }).catch(() => {});
+    setOpError('');
+    const r = await fetch(`/api/gallery/${id}`, { method: 'DELETE' }).catch(() => null);
+    if (!r?.ok) setOpError('圖卡刪除失敗，請重試。');
     load();
   }
 
@@ -495,25 +511,27 @@ export default function StoryDetailPage() {
         </div>
       )}
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px clamp(16px,4vw,26px)', borderBottom: '1px solid var(--border)',
-          position: 'relative', zIndex: 5, background: 'var(--bg)' }}>
-          <Link href="/lobby"><Wordmark size={19} /></Link>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Link href="/stories" style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-              color: 'var(--muted)', padding: '9px 13px', borderRadius: 6, fontSize: 14, fontWeight: 500 }}>
-              <Icon name="chevron-left" size={15} />故事板
-            </Link>
-            <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
-              border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
-              fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
-              <Icon name="logout" size={16} />登出
-            </LogoutButton>
-          </nav>
-        </header>
+        <FrontNav active="stories" />
 
-        <main style={{ flex: 1, padding: '36px clamp(20px,5vw,64px) 80px' }}>
+        <main style={{ flex: 1, padding: '24px clamp(20px,5vw,64px) 80px' }}>
           <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 40 }}>
+
+            <Link href="/stories" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+              color: 'var(--muted)', fontSize: 13.5, fontWeight: 500, marginBottom: -24 }}>
+              <Icon name="chevron-left" size={15} />返回故事板
+            </Link>
+
+            {opError && (
+              <div className="ax-enter" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                fontSize: 13, color: '#b5654a', padding: '10px 14px', borderRadius: 8,
+                background: 'rgba(181,101,74,0.08)', border: '1px solid rgba(181,101,74,0.25)' }}>
+                <span>{opError}</span>
+                <button onClick={() => setOpError('')}
+                  style={{ background: 'none', border: 'none', color: '#b5654a', cursor: 'pointer', fontSize: 15, padding: '0 2px' }}>
+                  ×
+                </button>
+              </div>
+            )}
 
             {/* 標題 + 進度 */}
             <div className="ax-enter">
@@ -601,10 +619,13 @@ export default function StoryDetailPage() {
                     <Typing />生成故事劇情中…
                   </div>
                 ) : (
-                  <textarea value={storyDraft} onChange={e => setStoryDraft(e.target.value)} rows={14}
-                    style={{ width: '100%', resize: 'vertical', fontSize: 14, lineHeight: 1.8,
-                      background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 10,
-                      padding: '16px 18px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <>
+                    <textarea value={storyDraft} onChange={e => setStoryDraft(e.target.value)} rows={14}
+                      style={{ width: '100%', resize: 'vertical', fontSize: 14, lineHeight: 1.8,
+                        background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 10,
+                        padding: '16px 18px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    <TextFilterBadge text={storyDraft} characterId={story.characterId} onRewritten={setStoryDraft} />
+                  </>
                 )}
               </section>
             )}

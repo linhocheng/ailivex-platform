@@ -425,7 +425,7 @@ export default function AdminCharacters() {
                     對話
                   </a>
                   {c.voiceIdMinimax && (
-                    <a href={`/realtime/${c.id}`} target="_blank" rel="noopener" title="語音通話（測試）"
+                    <a href={`/realtime-v14/${c.id}`} target="_blank" rel="noopener" title="語音通話（測試）"
                       style={{ padding:'5px 8px', borderRadius:6, border:'1px solid var(--border)',
                         background:'transparent', color:'var(--accent-2)', fontSize:12, textDecoration:'none' }}>
                       語音
@@ -759,7 +759,14 @@ export default function AdminCharacters() {
           <div style={{ background:'var(--panel)', border:'1px solid var(--border-strong)', borderRadius:'var(--radius)',
             padding:28, width:'100%', maxWidth:560, display:'flex', flexDirection:'column', gap:14,
             maxHeight:'90vh', overflowY:'auto', boxShadow:'0 24px 60px -20px rgba(0,0,0,0.35)' }}>
-            <div style={{ fontSize:16, fontWeight:600, marginBottom:2 }}>編輯角色 — {editing.name}</div>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:2 }}>
+              <div style={{ fontSize:16, fontWeight:600 }}>編輯角色 — {editing.name}</div>
+              <button onClick={() => setEditing(null)} title="關閉"
+                style={{ display:'grid', placeItems:'center', width:32, height:32, borderRadius:6, flexShrink:0,
+                  border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', cursor:'pointer' }}>
+                <Icon name="close" size={16} />
+              </button>
+            </div>
             <Field label="角色名"><TextInput value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})} /></Field>
             <Field label="別名（每行一個，多人房點名用）">
               <textarea style={{ ...inputBase, minHeight:80, resize:'vertical', fontFamily:'inherit', fontSize:13 }}

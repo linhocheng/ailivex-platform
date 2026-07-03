@@ -7,6 +7,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import * as opencc from 'opencc-js';
 import { COL, type DocumentDoc, type JobDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeDocQuota } from '@/lib/quota';
 
 const toTraditional = opencc.Converter({ from: 'cn', to: 'tw' });
 
@@ -17,6 +18,11 @@ export async function createDocumentJob(
   title: string,
   brief: string,
 ): Promise<{ documentId: string; jobId: string }> {
+  // 用量閘（收斂點：所有文件生成都經過這裡）：
+  // transaction 內查+扣原子完成；額度滿丟 QuotaExceededError，caller 決定怎麼告知。
+  // 先扣再建——生成 failed 時 doc-process 會退 1。
+  await consumeDocQuota(db, userId);
+
   const docRef = db.collection(COL.documents).doc();
   const document: DocumentDoc = {
     userId,

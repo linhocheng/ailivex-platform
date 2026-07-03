@@ -20,6 +20,7 @@ export interface ScriptItem {
   script: PodcastLine[];
   audioUrl: string | null;
   status: string;
+  error: string | null;
   createdAt: number;
 }
 
@@ -35,12 +36,14 @@ export async function GET() {
     .limit(50)
     .get();
 
+  // running/failed 也要回——「背景有任務但前端看不到」是斷點，任務從建立那一刻就要可見
   const scripts: ScriptItem[] = snap.docs
     .flatMap(d => {
       const t = d.data() as TaskDoc & { audioUrl?: string };
-      if (!t.podcastScript?.length) return [];
-      const words = t.podcastScript.reduce((s, l) => s + l.text.length, 0);
-      const speakers = [...new Set(t.podcastScript.map(l => l.speaker))];
+      const script = t.podcastScript ?? [];
+      if (!script.length && t.status !== 'running' && t.status !== 'failed') return [];
+      const words = script.reduce((s, l) => s + l.text.length, 0);
+      const speakers = [...new Set(script.map(l => l.speaker))];
       const item: ScriptItem = {
         id: d.id,
         topic: t.podcastTopic ?? '',
@@ -48,9 +51,10 @@ export async function GET() {
         characterIds: t.podcastCharacterIds ?? [],
         speakers,
         wordCount: words,
-        script: t.podcastScript,
+        script,
         audioUrl: t.audioUrl ?? null,
         status: String(t.status),
+        error: t.error ?? null,
         createdAt: t.createdAt instanceof Date ? t.createdAt.getTime()
           : (t.createdAt as { toMillis?: () => number })?.toMillis?.() ?? Date.now(),
       };

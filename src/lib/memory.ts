@@ -21,7 +21,7 @@ const MAX_PROMISES = 2;
 const MAX_QUESTIONS = 2;
 const MAX_MILESTONES = 2;
 const SEMANTIC_FLOOR = 0.25;
-const DEDUP_THRESHOLD = 0.85;
+const DEDUP_THRESHOLD = 0.9;
 const TIER_PROMOTE_HITS = 3;
 
 const STALE_DAYS: Partial<Record<MemoryType, number>> = {
@@ -131,26 +131,35 @@ export async function loadMemoryBlock(
       return (now - created.getTime()) / 86400000 >= ACTIVE_RECALL_DAYS;
     });
 
-    // 語義排序 facts（如果有 query）
-    let pickedFacts = facts.slice(0, MAX_FACTS);
-    if (query?.trim() && facts.length > 0) {
-      const withEmb = facts.filter(m => Array.isArray(m.embedding) && m.embedding.length > 0);
-      const qEmb = withEmb.length > 0 ? await generateEmbedding(query).catch(() => null) : null;
-      if (qEmb) {
-        pickedFacts = withEmb
-          .map(m => ({ m, score: cosineSimilarity(qEmb, m.embedding as number[]) }))
-          .filter(x => x.score >= SEMANTIC_FLOOR)
-          .sort((a, b) => b.score - a.score)
-          .slice(0, MAX_FACTS)
-          .map(x => x.m);
-      }
-    }
+    // ── 混合檢索：六型全參與（相關性 × tier × importance）─────────────────
+    // cosine 主分 + 詞彙重疊 boost（專有名詞救援：embedding 對低頻人名/代號弱）
+    // + core 加成 + importance 微調。無 query 時退回 tier/importance 頭部。
+    const qEmb = query?.trim() ? await generateEmbedding(query).catch(() => null) : null;
+    const qTerms = query?.trim() ? lexTerms(query) : [];
 
-    const pickedEmotions    = emotions.slice(0, MAX_EMOTIONS);
-    const pickedPreferences = preferences.slice(0, MAX_PREFERENCES);
-    const pickedPromises    = promises.slice(0, MAX_PROMISES);
-    const pickedQuestions   = questions.slice(0, MAX_QUESTIONS);
-    const pickedMilestones  = milestones.slice(0, MAX_MILESTONES);
+    const rank = (list: MemoryWithId[], cap: number, semantic: boolean): MemoryWithId[] => {
+      if (!semantic || !qEmb) return list.slice(0, cap);
+      return list
+        .map(m => {
+          const cos = Array.isArray(m.embedding) && m.embedding.length > 0
+            ? cosineSimilarity(qEmb, m.embedding as number[]) : 0;
+          const lex = lexOverlap(qTerms, m.content ?? '');
+          const tierBonus = m.tier === 'core' ? 0.06 : 0;
+          const impBonus = ((m.importance ?? 5) - 5) * 0.01;
+          return { m, score: cos * 0.7 + lex * 0.3 + tierBonus + impBonus, cos, lex };
+        })
+        // 語義或詞彙任一有訊號才算相關；都沒有就靠 tier/importance 保底補位
+        .sort((a, b) => b.score - a.score)
+        .filter((x, i) => i < cap && (x.cos >= SEMANTIC_FLOOR || x.lex > 0 || i < Math.ceil(cap / 2)))
+        .map(x => x.m);
+    };
+
+    const pickedFacts       = rank(facts, MAX_FACTS, true);
+    const pickedEmotions    = rank(emotions, MAX_EMOTIONS, true);
+    const pickedPreferences = rank(preferences, MAX_PREFERENCES, true);
+    const pickedPromises    = rank(promises, MAX_PROMISES, true);
+    const pickedQuestions   = questions.slice(0, MAX_QUESTIONS); // 懸而未決照時間門檻，不看相關性
+    const pickedMilestones  = rank(milestones, MAX_MILESTONES, true);
 
     const allPicked = [
       ...pickedFacts, ...pickedEmotions, ...pickedPreferences,
@@ -217,7 +226,7 @@ export async function writeMemory(
 
   // dedup：有 embedding 才查，查不到或失敗就放行
   if (embedding) {
-    const isDup = await isDuplicate(db, userId, characterId, embedding);
+    const isDup = await isDuplicate(db, userId, characterId, embedding, opts?.type ?? 'fact', content);
     if (isDup) {
       console.info('[memory] skipped duplicate:', content.slice(0, 60));
       return;
@@ -272,6 +281,21 @@ export async function extractAndSaveMemories(
     .map(m => `${m.role === 'user' ? '用戶' : charName}：${m.content as string}`)
     .join('\n');
 
+  // 撈懸而未決的 question：讓這輪萃取順便判斷哪些已被回答（→ resolved，角色不再追問）
+  const openQSnap = await db.collection(COL.memories)
+    .where('userId', '==', userId)
+    .where('characterId', '==', characterId)
+    .where('type', '==', 'question')
+    .limit(10)
+    .get()
+    .catch(() => null);
+  const openQuestions = (openQSnap?.docs ?? [])
+    .map(d => ({ id: d.id, ...(d.data() as MemoryDoc) }))
+    .filter(q => (q.status ?? 'active') === 'active');
+  const openQBlock = openQuestions.length > 0
+    ? `\n\n目前懸而未決的事（如果這段對話已經回答/解決了其中某些，把編號列進 <resolved>）：\n${openQuestions.map((q, i) => `${i + 1}. ${q.content}`).join('\n')}`
+    : '';
+
   const prompt = `你是記憶提煉師。從以下對話，提取「${charName}」值得長期記住的信息。
 
 對話：
@@ -291,7 +315,7 @@ content 欄位一律用繁體中文輸出。
 
 <result>
 [{"content": "...", "type": "fact", "importance": 7}]
-</result>`;
+</result>${openQuestions.length > 0 ? '\n<resolved>[1, 3]</resolved>（沒有已解決的就輸出 <resolved>[]</resolved>）' : ''}${openQBlock}`;
 
   try {
     const res = await client.messages.create({
@@ -304,6 +328,23 @@ content 欄位一律用繁體中文輸出。
       .filter(c => c.type === 'text')
       .map(c => c.text ?? '')
       .join('');
+
+    // resolved 標記：LLM 只回編號，映射與寫入由程式做
+    if (openQuestions.length > 0) {
+      const rm = text.match(/<resolved>([\s\S]*?)<\/resolved>/);
+      if (rm) {
+        const nums = parseJsonLoose<number[]>(rm[1].trim());
+        if (Array.isArray(nums)) {
+          for (const n of nums) {
+            const q = openQuestions[n - 1];
+            if (q) {
+              await db.collection(COL.memories).doc(q.id).update({ status: 'resolved' }).catch(() => {});
+              console.info('[extraction] question resolved:', q.content.slice(0, 40));
+            }
+          }
+        }
+      }
+    }
 
     const match = text.match(/<result>([\s\S]*?)<\/result>/);
     if (!match) return;
@@ -348,17 +389,54 @@ function byTierHit(all: MemoryWithId[]): MemoryWithId[] {
   });
 }
 
-async function isDuplicate(db: Firestore, userId: string, characterId: string, embedding: number[]): Promise<boolean> {
+/** 兩段文字的 CJK bigram 重疊率（0~1，以較短者為分母）——真重複必然逐字高度相似 */
+function bigramOverlap(a: string, b: string): number {
+  const grams = (s: string) => {
+    const cjk = s.match(/[\u4e00-\u9fff]/g) ?? [];
+    const out = new Set<string>();
+    for (let i = 0; i < cjk.length - 1; i++) out.add(cjk[i] + cjk[i + 1]);
+    return out;
+  };
+  const A = grams(a), B = grams(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return inter / Math.min(A.size, B.size);
+}
+
+/** query → 詞項：CJK 取 bigram，拉丁/數字取整詞（≥2字）。純程式，無 LLM。 */
+function lexTerms(query: string): string[] {
+  const terms = new Set<string>();
+  for (const w of query.match(/[a-zA-Z0-9]{2,}/g) ?? []) terms.add(w.toLowerCase());
+  const cjk = query.match(/[\u4e00-\u9fff]/g) ?? [];
+  for (let i = 0; i < cjk.length - 1; i++) terms.add(cjk[i] + cjk[i + 1]);
+  return [...terms];
+}
+
+/** 詞彙重疊率 0~1：query 詞項有多少出現在記憶內容裡 */
+function lexOverlap(terms: string[], content: string): number {
+  if (terms.length === 0) return 0;
+  const lower = content.toLowerCase();
+  let hit = 0;
+  for (const t of terms) if (lower.includes(t)) hit++;
+  return hit / terms.length;
+}
+
+async function isDuplicate(db: Firestore, userId: string, characterId: string, embedding: number[], type: string, content: string): Promise<boolean> {
   try {
     const snap = await db.collection(COL.memories)
       .where('userId', '==', userId)
       .where('characterId', '==', characterId)
+      .where('type', '==', type)
       .limit(50)
       .get();
     for (const doc of snap.docs) {
       const m = doc.data() as MemoryDoc;
       if (Array.isArray(m.embedding) && m.embedding.length > 0) {
-        if (cosineSimilarity(embedding, m.embedding as number[]) >= DEDUP_THRESHOLD) return true;
+        // 雙門檻：cosine 高 AND 詞彙重疊高才算重複。
+        // 長篇敘事記憶（同人物同語域）光 cosine 會把不同事件誤判成重複（牧羊人 vs 咖啡館事故）。
+        if (cosineSimilarity(embedding, m.embedding as number[]) >= DEDUP_THRESHOLD
+            && bigramOverlap(content, m.content ?? '') >= 0.5) return true;
       }
     }
     return false;

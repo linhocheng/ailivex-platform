@@ -8,7 +8,12 @@
 import express from 'express';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { loadPatterns, filterLine } from './text-filter.js';
+import { loadPatterns, filterLine, scanText } from './text-filter.js';
+import { generateAudio, type PodcastLine as AudioLine } from './audio.js';
+import {
+  MOVES, newRhythmState, buildConstraints, recordLine, stripLeadingTic,
+  vetoRepeatedMove, computeStats, detectLeadingTic,
+} from './rhythm.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const WORKER_SECRET = (process.env.WORKER_SECRET ?? '').trim();
@@ -76,7 +81,7 @@ async function runSceneController(
   stage: Stage,
   turn: number,
   maxTurns: number,
-): Promise<{ nextCharacterId: string; taskForChar: string }> {
+): Promise<{ nextCharacterId: string; taskForChar: string; move: string }> {
   const fallbackId = characters[turn % characters.length].id;
   const charList = characters.map((c, i) =>
     `第${i === 0 ? '一' : i + 1}聲音：${c.name}（id: ${c.id}）`
@@ -87,23 +92,43 @@ async function runSceneController(
     '後段': '準備自然收束，留下值得思考的落點，不做總結。',
   };
   const lastSpeaker = history.length > 0 ? history[history.length - 1].speaker : '';
+  const moveList = MOVES.map((m, i) => `${i}. ${m}`).join('\n');
 
   try {
     const raw = await bridgeCall(
       'claude-haiku-4-5-20251001',
-      `你是多人語音對話場控。\n角色：\n${charList}\n主題：${topic || '（無）'}\n焦點：${focus || '（無）'}\n階段：${stage}（${stageNote[stage]}）\n輪次：${turn + 1}/${maxTurns}，上一位：${lastSpeaker || '無'}\n輸出純JSON（不加markdown）：{"nextCharacterId":"id","taskForChar":"場域說明≤40字"}`,
+      `你是多人語音對話場控。\n角色：\n${charList}\n主題：${topic || '（無）'}\n焦點：${focus || '（無）'}\n階段：${stage}（${stageNote[stage]}）\n輪次：${turn + 1}/${maxTurns}，上一位：${lastSpeaker || '無'}\n接話動作盤（挑最適合當下脈絡的一個，讓對話有攻有守、有稜有角，不要每輪都溫和）：\n${moveList}\n輸出純JSON（不加markdown）：{"nextCharacterId":"id","taskForChar":"場域說明≤40字","moveIndex":0}`,
       historyToText(history, 4) || '（對話剛開始）',
-      130,
+      150,
     );
     const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-    const p = JSON.parse(jsonStr) as { nextCharacterId: string; taskForChar: string };
+    const p = JSON.parse(jsonStr) as { nextCharacterId: string; taskForChar: string; moveIndex?: number };
     const valid = characters.find(c => c.id === p.nextCharacterId);
+    const mi = typeof p.moveIndex === 'number' && p.moveIndex >= 0 && p.moveIndex < MOVES.length ? p.moveIndex : turn % MOVES.length;
     return {
       nextCharacterId: valid ? p.nextCharacterId : fallbackId,
       taskForChar: (p.taskForChar ?? '').slice(0, 60),
+      move: MOVES[mi],
     };
   } catch {
-    return { nextCharacterId: fallbackId, taskForChar: '' };
+    return { nextCharacterId: fallbackId, taskForChar: '', move: MOVES[turn % MOVES.length] };
+  }
+}
+
+/** 收尾判斷：最後兩句是否已自然收束（是 → 跳過強制收尾輪） */
+async function isAlreadyClosed(history: PodcastLine[]): Promise<boolean> {
+  if (history.length < 2) return false;
+  try {
+    const raw = await bridgeCall(
+      'claude-haiku-4-5-20251001',
+      '你判斷一段多人對話是否已經自然收束（語氣落定、話題閉合、不再拋新問題）。只輸出純JSON：{"closed":true} 或 {"closed":false}',
+      history.slice(-3).map(l => `[${l.speaker}]: ${l.text}`).join('\n'),
+      30,
+    );
+    const p = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()) as { closed?: boolean };
+    return p.closed === true;
+  } catch {
+    return false;
   }
 }
 
@@ -121,6 +146,8 @@ async function generateCharacterTurn(
   wordCount: number,
   otherNames: string[],
   kind: TurnKind = 'normal',
+  constraints: string[] = [],
+  move = '',
 ): Promise<string> {
   const recentHistory = historyToText(history, 6);
   const lastLine = history.length > 0
@@ -161,7 +188,8 @@ ${kindHint[kind]}
 規則：
 - 不要模仿，不要表演，不要替其他角色說話
 ${kind === 'opening' ? '- 不要播報式介紹、不要歡迎聽眾' : '- 不要歡迎聽眾、介紹節目、介紹自己'}
-- 認同就認同，不認同就直說，不需要轉彎
+- 你有自己的立場和脾氣。認同就認同，不認同就直說，被挑戰時可以堅持、可以反駁
+- 不要以複述或稱讚對方的話開場——直接說你自己的
 - 只推進一個想法，不要一次說完所有觀點
 - 留下下一位可以接的空間
 
@@ -171,7 +199,7 @@ ${kind === 'opening' ? '- 不要播報式介紹、不要歡迎聽眾' : '- 不�
 ${recentHistory || '（對話剛開始，你是第一個開口的）'}
 
 ${lastLine ? `上一句：${lastLine}\n` : ''}場域狀態：${taskForChar || '把話題自然引入'}
-字數提示：${kind === 'reaction' ? '20 到 40 字的簡短回應。' : budgetHint}
+${move && kind === 'normal' ? `這一輪的接話方式：${move}\n` : ''}${constraints.length ? `本輪注意：\n${constraints.map(c => `- ${c}`).join('\n')}\n` : ''}字數提示：${kind === 'reaction' ? '20 到 40 字的簡短回應。' : budgetHint}
 
 現在輪到你（${character.name}）說話。`,
       200,
@@ -194,13 +222,17 @@ async function generateScript(
   const history: PodcastLine[] = [];
   const hardLimit = Math.ceil(maxTurns * 1.35);
   const filterPatterns = await loadPatterns(db);
+  const rhythm = newRhythmState();
+  const namesExcept = (c: Character) => characters.filter(x => x.id !== c.id).map(x => x.name);
 
   // 過濾在入史前做：踩雷句不進對話歷史，後續輪次才不會被帶壞跟著寫
-  const pushLine = async (raw: string, char: Character) => {
+  const pushLine = async (raw: string, char: Character, opts?: { bannedTic?: boolean; move?: string }) => {
     const match = raw.match(/^\[([^\]]+)\][:：]\s*([\s\S]+)/);
     const sp = match ? match[1].trim() : char.name;
-    const rawText = match ? match[2].trim()
+    let rawText = match ? match[2].trim()
       : raw.replace(/^\[.*?\][:：]\s*/, '').trim() || raw.trim();
+    // 保底：禁令下了還是用語氣詞開頭 → 程式刪掉
+    if (opts?.bannedTic && detectLeadingTic(rawText)) rawText = stripLeadingTic(rawText);
     const { text, hits } = await filterLine(
       rawText, char.name, (char.soulCore || char.soul).slice(0, 800),
       historyToText(history, 3), filterPatterns, bridgeCall,
@@ -208,25 +240,28 @@ async function generateScript(
     if (hits.length > 0) {
       console.log(`[text-filter] ${char.name} 踩雷 ${hits.map(h => h.matched).join('、')} → 已改寫`);
     }
+    recordLine(rhythm, char.id, text, namesExcept(char), opts?.move);
     history.push({ speaker: sp, characterId: nameToId[sp] ?? char.id, text });
   };
-  const namesExcept = (c: Character) => characters.filter(x => x.id !== c.id).map(x => x.name);
 
   for (let turn = 0; turn < hardLimit; turn++) {
     const stage = getStage(turn, maxTurns);
-    const { nextCharacterId, taskForChar } = await runSceneController(
+    const ctl = await runSceneController(
       characters, history, topic, focus, stage, turn, maxTurns,
     );
-    const char = characters.find(c => c.id === nextCharacterId) ?? characters[turn % characters.length];
+    const char = characters.find(c => c.id === ctl.nextCharacterId) ?? characters[turn % characters.length];
     const accumulated = history.reduce((s, l) => s + l.text.length, 0);
     // 輪次類型（機制用程式定）：第 0 輪開場；中段每 5 輪穿插一次短反應
     const kind: TurnKind = turn === 0 ? 'opening'
       : (stage === '中段' && turn % 5 === 3) ? 'reaction'
       : 'normal';
+    const move = vetoRepeatedMove(rhythm, char.id, ctl.move);
+    const constraints = buildConstraints(rhythm, char.id, namesExcept(char));
     const raw = await generateCharacterTurn(
-      char, history, topic, focus, taskForChar, stage, accumulated, wordCount, namesExcept(char), kind,
+      char, history, topic, focus, ctl.taskForChar, stage, accumulated, wordCount,
+      namesExcept(char), kind, constraints, move,
     );
-    if (raw.trim()) await pushLine(raw, char);
+    if (raw.trim()) await pushLine(raw, char, { bannedTic: constraints.some(c => c.includes('語氣詞')), move });
 
     const newAcc = history.reduce((s, l) => s + l.text.length, 0);
     if (newAcc >= wordCount * 1.1) break;
@@ -235,18 +270,92 @@ async function generateScript(
 
   if (history.length === 0) throw new Error('腳本生成失敗，請重試。');
 
-  // 強制收尾輪：開場的人收尾；若他剛好是最後一個講的，換另一位
-  const opener = characters.find(c => c.id === history[0].characterId) ?? characters[0];
-  const lastSpeakerId = history[history.length - 1].characterId;
-  const closer = opener.id !== lastSpeakerId ? opener
-    : characters.find(c => c.id !== lastSpeakerId) ?? opener;
-  const closingAcc = history.reduce((s, l) => s + l.text.length, 0);
-  const closingRaw = await generateCharacterTurn(
-    closer, history, topic, focus, '自然收尾', '後段', closingAcc, wordCount + 80, namesExcept(closer), 'closing',
-  );
-  if (closingRaw.trim()) await pushLine(closingRaw, closer);
+  // 收尾輪：先問場控「已自然收束了嗎」，收束了就不畫蛇添足
+  if (!(await isAlreadyClosed(history))) {
+    const opener = characters.find(c => c.id === history[0].characterId) ?? characters[0];
+    const lastSpeakerId = history[history.length - 1].characterId;
+    const closer = opener.id !== lastSpeakerId ? opener
+      : characters.find(c => c.id !== lastSpeakerId) ?? opener;
+    const closingAcc = history.reduce((s, l) => s + l.text.length, 0);
+    const closingConstraints = buildConstraints(rhythm, closer.id, namesExcept(closer));
+    const closingRaw = await generateCharacterTurn(
+      closer, history, topic, focus, '自然收尾', '後段', closingAcc, wordCount + 80,
+      namesExcept(closer), 'closing', closingConstraints,
+    );
+    if (closingRaw.trim()) await pushLine(closingRaw, closer, { bannedTic: closingConstraints.some(c => c.includes('語氣詞')) });
+  } else {
+    console.log('[podcast-worker] 對話已自然收束，跳過強制收尾輪');
+  }
+
+  // 殺青後：角色自審——程式遞鏡子（統計數據），角色以自己的靈魂為標準改
+  await selfReview(history, characters, filterPatterns);
 
   return history;
+}
+
+// ── 角色自審（殺青後）───────────────────────────────────────────────
+// 程式負責讓他看見（事實），靈魂負責讓他判斷（像不像我），程式再確認他真的改了
+async function selfReview(
+  history: PodcastLine[],
+  characters: Character[],
+  filterPatterns: Awaited<ReturnType<typeof loadPatterns>>,
+): Promise<void> {
+  for (const char of characters) {
+    const otherNames = characters.filter(x => x.id !== char.id).map(x => x.name);
+    const stats = computeStats(history, char.id, otherNames);
+    if (stats.turns < 3) continue;
+
+    const transcript = history.map((l, i) => `${i + 1}. [${l.speaker}]: ${l.text}`).join('\n');
+    const statLine = `你共發言 ${stats.turns} 輪；其中 ${stats.ticCount} 輪以${stats.ticExamples.join('、') || '語氣詞'}開頭；${stats.echoCount} 輪以複述或稱讚對方開場。`;
+
+    try {
+      const raw = await bridgeCall(
+        'claude-sonnet-4-6',
+        `你是${char.name}。以下是你完整的角色意識、價值觀、語氣與說話態度：
+
+${(char.soulCore || char.soul).slice(0, 1500)}
+
+你剛錄完一場多人對話。下面會給你全場逐字稿，以及你的行為統計（由程式統計，數字是事實，不要懷疑）。
+
+${statLine}
+
+用你自己的標準回看你說的每一句話，問：這像不像我？
+- 重複的口頭禪、機械式的開場——同一招用兩次以上就假了，改成你真正會說的話
+- 你讓步得太快、同意得太便宜、該堅持沒堅持的地方——改回你真正的立場。你有脾氣、有稜有角，不是好好先生
+- 已經像你的句子，一個字都不要動
+
+輸出格式：只列需要修改的句子，一行一句：
+行號: 修改後的完整台詞（不含名字標記）
+全部都像你就只輸出：無`,
+        transcript,
+        1500,
+      );
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed === '無') continue;
+
+      let applied = 0;
+      for (const line of trimmed.split('\n')) {
+        const m = line.match(/^(\d+)[.、]?\s*[:：]\s*(.+)$/);
+        if (!m) continue;
+        const idx = parseInt(m[1], 10) - 1;
+        const newText = m[2].trim().replace(/^\[.*?\][:：]\s*/, '');
+        // 只准改自己的句子，且不能改空
+        if (idx < 0 || idx >= history.length || history[idx].characterId !== char.id || !newText) continue;
+        const residual = scanText(newText, filterPatterns);
+        if (residual.length > 0) {
+          console.warn(`[self-review] ${char.name} 改寫句帶 AI 味，保留原句: ${residual.map(h => h.matched).join('、')}`);
+          continue;
+        }
+        history[idx].text = newText;
+        applied++;
+      }
+      // 程式複核：改完再數一次，留下前後對照的證據
+      const after = computeStats(history, char.id, otherNames);
+      console.log(`[self-review] ${char.name} 改了 ${applied} 句 | 語氣詞開頭 ${stats.ticCount}→${after.ticCount} | 複述開場 ${stats.echoCount}→${after.echoCount}`);
+    } catch (err) {
+      console.warn(`[self-review] ${char.name} 自審失敗，保留原稿: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 }
 
 // ── Express ───────────────────────────────────────────────────────────
@@ -324,6 +433,51 @@ app.post('/run', async (req, res) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[podcast-worker] error taskId=${taskId}: ${msg}`);
+      await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
+    }
+  });
+});
+
+// 音檔生成：Vercel fire-and-forget 過來，202 後背景跑（同腳本生成的模式）
+app.post('/run-audio', async (req, res) => {
+  const auth = req.headers['x-worker-secret'];
+  if (!WORKER_SECRET || auth !== WORKER_SECRET) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+
+  const { taskId, script } = req.body as { taskId?: string; script?: AudioLine[] };
+  if (!taskId) {
+    res.status(400).json({ error: 'taskId 必填' });
+    return;
+  }
+
+  const taskRef = db.collection('tasks').doc(taskId);
+  const snap = await taskRef.get();
+  if (!snap.exists) {
+    res.status(404).json({ error: 'task not found' });
+    return;
+  }
+
+  // 用傳入的 script（已編輯），否則讀 Firestore
+  const lines: AudioLine[] = script?.length ? script : (snap.data()?.podcastScript ?? []);
+  if (lines.length === 0) {
+    res.status(400).json({ error: '尚未有腳本' });
+    return;
+  }
+  if (script?.length) await taskRef.update({ podcastScript: script });
+  await taskRef.update({ status: 'running', podcastPhase: 'audio_pending' });
+
+  res.status(202).json({ status: 'accepted', taskId });
+
+  setImmediate(async () => {
+    try {
+      console.log(`[podcast-worker] audio start taskId=${taskId} lines=${lines.length}`);
+      const audioUrl = await generateAudio(taskId, lines, BRIDGE_ENDPOINT, BRIDGE_SECRET);
+      console.log(`[podcast-worker] audio done taskId=${taskId} url=${audioUrl.split('?')[0]}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[podcast-worker] audio error taskId=${taskId}: ${msg}`);
       await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
     }
   });

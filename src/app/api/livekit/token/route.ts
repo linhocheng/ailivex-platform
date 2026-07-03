@@ -11,6 +11,7 @@ import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, agentNameForVersion, type CharacterDoc, type AccessDoc } from '@/lib/collections';
+import { checkVoiceQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,10 +37,22 @@ export async function POST(req: Request) {
   // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（v14）。
   // 一般用戶需有 access doc；admin 免 access doc 直接進。
   let voiceVersion: string | undefined;
+  let voiceSecondsRemaining: number | null = null;  // null = 不限
   if (user.role !== 'admin') {
     const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
     if (!accessSnap.exists) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     voiceVersion = (accessSnap.data() as AccessDoc).voiceVersion;
+
+    // 用量閘：語音總時數用完 → 不發 token（admin 免管制）
+    try {
+      const q = await checkVoiceQuota(db, userId);
+      voiceSecondsRemaining = q.voiceSecondsRemaining;
+    } catch (e) {
+      if (e instanceof QuotaExceededError) {
+        return NextResponse.json({ error: 'voice_quota_exhausted', message: '語音時數已用完' }, { status: 403 });
+      }
+      throw e;
+    }
   }
   const agentName = agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION = v14
 
@@ -57,6 +70,8 @@ export async function POST(req: Request) {
     convId,
     characterName: char.name || '',
     voiceId: char.voiceIdMinimax || '',
+    // 用量管制：agent 進房讀這個做通話中計量與到點斷線（null = 不限）
+    voiceSecondsRemaining,
   });
 
   const at = new AccessToken(apiKey, apiSecret, { identity: userId, name: user.name, metadata });

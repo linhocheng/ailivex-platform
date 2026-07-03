@@ -265,6 +265,10 @@ export default function RealtimeCallPage() {
       if (!tokenRes.ok) {
         const err = await tokenRes.json().catch(() => ({}));
         setHealth(h => ({ ...h, token: 'fail' }));
+        // 用量管制：時數用完給人話，不丟 error code
+        if (err.error === 'voice_quota_exhausted') {
+          throw new Error(err.message || '語音時數已用完，需要更多時數請聯繫管理員');
+        }
         throw new Error(err.error || `token ${tokenRes.status}`);
       }
       const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws } = await tokenRes.json();
@@ -577,12 +581,21 @@ export default function RealtimeCallPage() {
 
       {/* Controls */}
       <div style={{ position:'absolute', bottom:32, left:0, right:0, zIndex:3,
-        display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
-        <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
-        {canConnect
-          ? <CircleControl icon="phone" label="接通" onClick={handleConnect} big primary />
-          : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
-        <div style={{ width:56 }} />
+        display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', gap:16 }}>
+        <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
+          <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
+          {canConnect
+            ? <CircleControl icon="phone" label="接通" onClick={handleConnect} big primary />
+            : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
+          <div style={{ width:56 }} />
+        </div>
+        {state === 'disconnected' && (
+          <Link href={`/chat/${characterId}`}
+            style={{ padding:'9px 22px', borderRadius:22, fontSize:13.5, fontWeight:500, textDecoration:'none',
+              background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.2)', color:'rgba(255,255,255,0.85)' }}>
+            返回對話
+          </Link>
+        )}
       </div>
 
       {/* Diag log */}

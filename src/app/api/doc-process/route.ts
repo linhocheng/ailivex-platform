@@ -9,13 +9,17 @@ import { NextResponse } from 'next/server';
 import { marked } from 'marked';
 import { getFirestore, getFirebaseAdmin } from '@/lib/firebase-admin';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
-import { cleanSecret } from '@/lib/clean-env';
+import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { COL, type DocumentDoc } from '@/lib/collections';
+import { loadPatterns, scanText, rewriteFlagged } from '@/lib/text-filter';
+import { refundDocQuota } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 const MODEL = 'claude-sonnet-4-6';
+const BRIDGE_ENDPOINT = `${cleanUrl((process.env.BRIDGE_URL ?? '').replace(/\/v1\/messages\/?$/, ''))}/v1/messages`;
+const BRIDGE_SECRET = cleanSecret(process.env.BRIDGE_SECRET);
 
 export async function POST(req: Request) {
   const secret = cleanSecret(req.headers.get('x-worker-secret'));
@@ -49,7 +53,21 @@ export async function POST(req: Request) {
     const name = char?.name || '角色';
 
     await docRef.update({ status: 'writing' });
-    const md = await writeMarkdown(name, soul, job.brief);
+    let md = await writeMarkdown(name, soul, job.brief);
+
+    // 文字過濾：文件是成品（出口是機器，渲染後用戶只讀），踩雷句自動改寫
+    try {
+      const patterns = await loadPatterns(db);
+      const hits = scanText(md, patterns);
+      if (hits.length > 0) {
+        const rewritten = await rewriteFlagged(md, hits, BRIDGE_ENDPOINT, BRIDGE_SECRET, soul);
+        const residual = scanText(rewritten, patterns);
+        console.log(`[text-filter] 文件踩雷 ${hits.length} 處（${[...new Set(hits.map(h => h.matched))].slice(0, 5).join('、')}）→ 改寫後殘留 ${residual.length}`);
+        md = rewritten;
+      }
+    } catch (fe) {
+      console.warn('[text-filter] 文件過濾失敗，保留原稿:', fe);
+    }
 
     await docRef.update({ status: 'rendering' });
     const docSnap = await docRef.get();
@@ -66,6 +84,8 @@ export async function POST(req: Request) {
     const retryable = /bridge (5\d\d|fetch|network|timeout)/i.test(msg) || /ECONN|ETIMEDOUT|fetch failed/i.test(msg);
     await jobRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch((ue: unknown) => console.error('[doc-process] jobRef update failed:', ue));
     await docRef.update({ status: retryable ? 'pending' : 'failed', error: msg }).catch((ue: unknown) => console.error('[doc-process] docRef update failed:', ue));
+    // 終局 failed（不重試）→ 退回文件額度，失敗不吃額度；pending 會重跑不退
+    if (!retryable) await refundDocQuota(db, job.userId);
     return NextResponse.json({ error: msg }, { status: retryable ? 500 : 200 });
   }
 }

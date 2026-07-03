@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { Wordmark, Icon, Tag, Dot, Typing, EmptyState, Ambient } from '@/app/_components/ui';
-import { LogoutButton } from '@/app/_components/LogoutButton';
+import { Icon, Tag, Dot, Typing, EmptyState, Ambient } from '@/app/_components/ui';
+import { TextFilterBadge } from '@/app/_components/TextFilterBadge';
+import { FrontNav } from '@/app/_components/FrontNav';
 
 interface MediaTask {
   id: string;
@@ -39,17 +40,6 @@ const STATUS: Record<string, { label: string; color: string; dot: string }> = {
 
 function fmt(ms: number) {
   return ms ? new Date(ms).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-}
-
-function NavLink({ href, active, icon, children }: { href: string; active?: boolean; icon?: string; children: React.ReactNode }) {
-  return (
-    <Link href={href} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-      background: active ? 'rgba(60,52,40,0.07)' : 'transparent',
-      color: active ? 'var(--text)' : 'var(--muted)', padding: '9px 13px', borderRadius: 6,
-      fontSize: 14, fontWeight: 500, minHeight: 40 }}>
-      {icon && <Icon name={icon} size={16} />}{children}
-    </Link>
-  );
 }
 
 function RowButton({ onClick, icon, children, primary }: { onClick: () => void; icon: string; children: React.ReactNode; primary?: boolean }) {
@@ -118,6 +108,9 @@ function ScriptDraftCard({ task, onDelete, onGenerated }: { task: MediaTask; onD
           padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box',
           marginBottom: 12 }}
       />
+      <div style={{ marginTop: -6, marginBottom: 12 }}>
+        <TextFilterBadge text={text} characterId={task.characterId} onRewritten={setText} />
+      </div>
       {lastError && (
         <div style={{ fontSize: 12.5, color: '#b5654a', marginBottom: 10 }}>{lastError}</div>
       )}
@@ -540,23 +533,7 @@ export default function Gallery() {
     <>
       <Ambient />
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px clamp(16px,4vw,26px)', borderBottom: '1px solid var(--border)',
-          position: 'relative', zIndex: 5, background: 'var(--bg)' }}>
-          <Link href="/lobby"><Wordmark size={19} /></Link>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <NavLink href="/lobby">大廳</NavLink>
-            <NavLink href="/documents" icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" active icon="image">媒體庫</NavLink>
-            <NavLink href="/stories" icon="image">故事板</NavLink>
-            <NavLink href="/convert" icon="audio">素材轉換區</NavLink>
-            <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
-              border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
-              fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
-              <Icon name="logout" size={16} />登出
-            </LogoutButton>
-          </nav>
-        </header>
+        <FrontNav active="gallery" />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: '40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 1040, margin: '0 auto' }}>

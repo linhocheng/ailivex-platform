@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Wordmark, Icon, Tag, Dot, Typing, EmptyState, Ambient, GlowButton } from '@/app/_components/ui';
-import { LogoutButton } from '@/app/_components/LogoutButton';
+import { Icon, Tag, Dot, Typing, EmptyState, Ambient, GlowButton } from '@/app/_components/ui';
+import { FrontNav } from '@/app/_components/FrontNav';
 
 interface Doc { id: string; title: string; status: string; htmlUrl: string; createdAt: number; }
 
@@ -14,17 +14,6 @@ const STATUS: Record<string, { label: string; color: string; dot: string }> = {
   done:       { label: '完成',    color: 'var(--accent-2)', dot: '#6f8c5f' },
   failed:     { label: '失敗',    color: '#b5654a',        dot: '#b5654a' },
 };
-
-function NavLink({ href, active, icon, children }: { href: string; active?: boolean; icon?: string; children: React.ReactNode }) {
-  return (
-    <Link href={href} style={{ display:'inline-flex', alignItems:'center', gap:6,
-      background: active ? 'rgba(60,52,40,0.07)' : 'transparent',
-      color: active ? 'var(--text)' : 'var(--muted)', padding:'9px 13px', borderRadius:6,
-      fontSize:14, fontWeight:500, minHeight:40 }}>
-      {icon && <Icon name={icon} size={16} />}{children}
-    </Link>
-  );
-}
 
 function DocRow({ doc, onDelete }: {
   doc: Doc;
@@ -85,9 +74,12 @@ function DocRow({ doc, onDelete }: {
   );
 }
 
+interface DocsQuota { docsLimit: number | null; docsUsed: number; docsRemaining: number | null; }
+
 export default function Documents() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [quota, setQuota] = useState<DocsQuota | null>(null);
 
   async function load() {
     const r = await fetch('/api/documents').then(r => r.json()).catch(() => ({ documents: [] }));
@@ -95,10 +87,15 @@ export default function Documents() {
     setLoaded(true);
   }
 
+  useEffect(() => {
+    fetch('/api/me').then(r => r.json()).then(r => { if (r?.quota) setQuota(r.quota); }).catch(() => {});
+  }, []);
+
   async function deleteDoc(id: string, title: string) {
     if (!confirm(`確定刪除「${title}」？`)) return;
-    await fetch(`/api/documents/${id}`, { method: 'DELETE' });
-    setDocs(prev => prev.filter(d => d.id !== id));
+    const r = await fetch(`/api/documents/${id}`, { method: 'DELETE' }).catch(() => null);
+    if (r?.ok) setDocs(prev => prev.filter(d => d.id !== id));
+    else alert('刪除失敗，請重試。');
   }
 
 
@@ -112,24 +109,7 @@ export default function Documents() {
     <>
       <Ambient />
       <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column', position:'relative', zIndex:1 }}>
-        {/* Nav */}
-        <header style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-          padding:'14px clamp(16px,4vw,26px)', borderBottom:'1px solid var(--border)',
-          position:'relative', zIndex:5, background:'var(--bg)' }}>
-          <Link href="/lobby"><Wordmark size={19} /></Link>
-          <nav style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <NavLink href="/lobby">大廳</NavLink>
-            <NavLink href="/documents" active icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" icon="image">媒體庫</NavLink>
-            <NavLink href="/stories" icon="image">故事板</NavLink>
-            <NavLink href="/convert" icon="audio">素材轉換區</NavLink>
-            <LogoutButton style={{ display:'inline-flex', alignItems:'center', gap:7, background:'rgba(60,52,40,0.045)',
-              border:'1px solid var(--border)', borderRadius:6, padding:'8px 14px', fontSize:13,
-              fontWeight:500, color:'var(--text)', cursor:'pointer' }}>
-              <Icon name="logout" size={16} />登出
-            </LogoutButton>
-          </nav>
-        </header>
+        <FrontNav active="documents" />
 
         <main style={{ flex:1, overflowY:'auto', padding:'40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth:940, margin:'0 auto' }}>
@@ -138,8 +118,15 @@ export default function Documents() {
                 <h1 style={{ fontSize:30, margin:0, fontWeight:600, letterSpacing:'-0.02em' }}>我的文件</h1>
                 <p style={{ fontSize:14.5, color:'var(--muted)', margin:'7px 0 0' }}>角色為你生成的策略書、企劃書與報告</p>
               </div>
-              <div style={{ fontSize:12, color:'var(--muted)', display:'flex', alignItems:'center', gap:7 }}>
-                <Dot color="var(--accent-2)" pulse size={6} />每 5 秒自動更新
+              <div style={{ fontSize:12, color:'var(--muted)', display:'flex', alignItems:'center', gap:14 }}>
+                {quota && quota.docsLimit !== null && (
+                  <span style={{ fontFamily:'monospace' }}>
+                    文件額度 {quota.docsUsed} / {quota.docsLimit}
+                  </span>
+                )}
+                <span style={{ display:'flex', alignItems:'center', gap:7 }}>
+                  <Dot color="var(--accent-2)" pulse size={6} />每 5 秒自動更新
+                </span>
               </div>
             </div>
 

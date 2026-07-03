@@ -69,7 +69,12 @@ export default function ChatPage() {
         {/* Top bar */}
         <header style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 22px',
           borderBottom: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
-          <Link href="/lobby" style={iconBtn} title="返回大廳"><Icon name="back" size={20} /></Link>
+          <Link href="/lobby" title="返回大廳"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px',
+              borderRadius: 6, border: '1px solid var(--border)', color: 'var(--text)',
+              fontSize: 13.5, fontWeight: 500, flexShrink: 0 }}>
+            <Icon name="back" size={17} />大廳
+          </Link>
           <Avatar name={char?.name || '…'} avatarUrl={char?.avatarUrl} size={42} ring />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>{char?.name || '…'}</div>
@@ -83,7 +88,7 @@ export default function ChatPage() {
           </div>
           {char?.hasVoice && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Link href={`/realtime-v14/${characterId}`}
+              <Link href={`/realtime-v15/${characterId}`}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', fontSize: 13.5,
                   fontWeight: 500, borderRadius: 6, border: '1px solid var(--border-strong)',
                   background: 'rgba(60,52,40,0.03)', color: 'var(--text)' }}>

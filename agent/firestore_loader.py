@@ -26,6 +26,70 @@ from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 _initialized = False
+_vertex_creds = None  # 語義向量用（與 TS embeddings.ts 對等：text-embedding-004 / 768 維）
+
+
+def _get_vertex_token() -> str | None:
+    global _vertex_creds
+    try:
+        if _vertex_creds is None:
+            from google.oauth2 import service_account
+            sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+            if not sa_json:
+                return None
+            _vertex_creds = service_account.Credentials.from_service_account_info(
+                json.loads(sa_json), scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        if not _vertex_creds.valid:
+            from google.auth.transport.requests import Request as _GARequest
+            _vertex_creds.refresh(_GARequest())
+        return _vertex_creds.token
+    except Exception as e:
+        logger.warning(f"[embedding] token failed: {e}")
+        return None
+
+
+def generate_embedding(text: str) -> list[float] | None:
+    """文字→768維向量；失敗回 None（記憶照寫，寧可缺向量不可丟記憶）"""
+    token = _get_vertex_token()
+    if not token:
+        return None
+    sa_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+    project_id = json.loads(sa_json).get("project_id", "") if sa_json else ""
+    url = (f"https://us-central1-aiplatform.googleapis.com/v1/projects/{project_id}"
+           f"/locations/us-central1/publishers/google/models/text-embedding-004:predict")
+    body = json.dumps({"instances": [{"content": text}],
+                       "parameters": {"outputDimensionality": 768}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        values = (data.get("predictions") or [{}])[0].get("embeddings", {}).get("values")
+        if isinstance(values, list) and len(values) == 768:
+            return values
+        logger.warning(f"[embedding] bad dimension: {len(values) if values else 'none'}")
+        return None
+    except Exception as e:
+        logger.warning(f"[embedding] request failed: {e}")
+        return None
+
+
+def _bigram_overlap(a: str, b: str) -> float:
+    """CJK bigram 重疊率（以較短者為分母）——真重複必然逐字高度相似"""
+    def grams(s: str) -> set:
+        cjk = re.findall(r"[\u4e00-\u9fff]", s)
+        return {cjk[i] + cjk[i + 1] for i in range(len(cjk) - 1)}
+    A, B = grams(a), grams(b)
+    if not A or not B:
+        return 0.0
+    return len(A & B) / min(len(A), len(B))
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
 
 
 def _ensure_init():
@@ -149,14 +213,78 @@ def load_memories(user_id: str, character_id: str, limit: int = 15) -> list[dict
     results = []
     for doc in query.stream():
         d = doc.to_dict()
+        # stale/resolved 不進 prompt（與 TS memory.ts 對等）
+        if d.get("status") in ("stale", "resolved"):
+            continue
         results.append({
             "id": doc.id,
             "content": d.get("content", ""),
             "tier": d.get("tier"),
             "type": d.get("type", "fact"),
             "importance": d.get("importance", 5),
+            "createdAt": d.get("createdAt"),
+            "status": d.get("status"),
+            "hitCount": d.get("hitCount", 0),
+        })
+    # core 優先於 fresh（同 TS byTierHit），再 importance、再 hitCount
+    tier_rank = {"core": 0, "fresh": 1}
+    results.sort(key=lambda m: (tier_rank.get(m["tier"], 2), -m["importance"], -m["hitCount"]))
+    return results
+
+
+def load_memories_for_recall(user_id: str, character_id: str, limit: int = 60) -> list[dict]:
+    """通話中動態檢索用：撈同對記憶（含 embedding）。v15+ 專用，additive 不影響舊版。"""
+    _ensure_init()
+    db = firestore.client()
+    query = (
+        db.collection("memories")
+        .where("userId", "==", user_id)
+        .where("characterId", "==", character_id)
+        .where("tier", "in", ["fresh", "core"])
+        .limit(limit)
+    )
+    results = []
+    for doc in query.stream():
+        d = doc.to_dict()
+        if d.get("status") in ("stale", "resolved"):
+            continue
+        emb = d.get("embedding")
+        if not (isinstance(emb, list) and len(emb) == 768):
+            continue
+        results.append({
+            "id": doc.id,
+            "content": d.get("content", ""),
+            "type": d.get("type", "fact"),
+            "embedding": emb,
         })
     return results
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """公開版 cosine（v15 動態檢索用）"""
+    return _cosine(a, b)
+
+
+def bump_hits(memory_ids: list[str]) -> None:
+    """檢索命中 → hitCount+1；fresh 滿 3 hits 升 core（與 TS bumpHits 對等）。v15+ 呼叫。"""
+    if not memory_ids:
+        return
+    _ensure_init()
+    db = firestore.client()
+    for mid in memory_ids:
+        try:
+            ref = db.collection("memories").document(mid)
+            snap = ref.get()
+            if not snap.exists:
+                continue
+            d = snap.to_dict()
+            new_hits = (d.get("hitCount") or 0) + 1
+            update = {"hitCount": new_hits, "lastHitAt": firestore.SERVER_TIMESTAMP}
+            if d.get("tier") == "fresh" and new_hits >= 3:
+                update["tier"] = "core"
+            ref.update(update)
+        except Exception as e:
+            logger.warning(f"[bump_hits] {mid} failed: {e}")
 
 
 def save_conversation(conv_id: str, user_id: str, character_id: str, messages: list,
@@ -176,32 +304,61 @@ def save_conversation(conv_id: str, user_id: str, character_id: str, messages: l
         "userId": user_id,
         "characterId": character_id,
         "messages": all_msgs,
-        "summary": summary,
         "messageCount": existing_count + len(messages),
         "updatedAt": firestore.SERVER_TIMESTAMP,
     }
+    if summary:   # 只在有值時寫，避免空字串蓋掉文字路徑寫的 summary
+        payload["summary"] = summary
     if last_session:   # 只在有快照時寫，避免用 None 蓋掉既有
         payload["lastSession"] = last_session
     ref.set(payload, merge=True)
 
 
-def write_memory(user_id: str, character_id: str, content: str, source: str = "voice", mem_type: str = "fact") -> str:
-    """寫一條新記憶，回傳 doc id"""
+def write_memory(user_id: str, character_id: str, content: str, source: str = "voice",
+                 mem_type: str = "fact", importance: int = 5) -> str:
+    """寫一條新記憶（含 embedding + 0.85 cosine 去重，與 TS writeMemory 對等），回傳 doc id；重複回空字串"""
     _ensure_init()
     db = firestore.client()
+
+    embedding = generate_embedding(content)
+
+    # dedup：同 (userId×characterId) 撈 50 條，任一 cosine >= 0.85 判重複丟棄
+    if embedding:
+        try:
+            dedup_q = (db.collection("memories")
+                       .where("userId", "==", user_id)
+                       .where("characterId", "==", character_id)
+                       .where("type", "==", mem_type)
+                       .limit(50))
+            for doc in dedup_q.stream():
+                _d = doc.to_dict()
+                other = _d.get("embedding")
+                # 雙門檻：cosine AND 詞彙重疊（長篇敘事光 cosine 會把不同事件誤判重複）
+                if (isinstance(other, list) and len(other) == 768
+                        and _cosine(embedding, other) >= 0.9
+                        and _bigram_overlap(content, _d.get("content", "")) >= 0.5):
+                    logger.info(f"[write_memory] dedup skip (~{doc.id}): {content[:30]}")
+                    return ""
+        except Exception as e:
+            logger.warning(f"[write_memory] dedup check failed, writing anyway: {e}")
+
     ref = db.collection("memories").document()
-    ref.set({
+    payload = {
         "userId": user_id,
         "characterId": character_id,
         "content": content,
         "tier": "fresh",
         "type": mem_type,
+        "status": "active",
         "hitCount": 0,
-        "importance": 5,
+        "importance": max(1, min(10, int(importance))),
         "source": source,
         "createdAt": firestore.SERVER_TIMESTAMP,
         "lastHitAt": None,
-    })
+    }
+    if embedding:
+        payload["embedding"] = embedding
+    ref.set(payload)
     return ref.id
 
 
@@ -251,6 +408,30 @@ def extract_and_save_memories(
         for m in transcript[-20:]
     )
 
+    # 撈懸而未決的 question：讓這輪萃取順便判斷哪些已被回答（→ resolved，角色不再追問）
+    open_questions: list[dict] = []
+    try:
+        _ensure_init()
+        _db = firestore.client()
+        q_snap = (_db.collection("memories")
+                  .where("userId", "==", user_id)
+                  .where("characterId", "==", character_id)
+                  .where("type", "==", "question")
+                  .limit(10).stream())
+        for _doc in q_snap:
+            _d = _doc.to_dict()
+            if _d.get("status", "active") == "active":
+                open_questions.append({"id": _doc.id, "content": _d.get("content", "")})
+    except Exception as e:
+        logger.warning(f"[extraction] open questions fetch failed: {e}")
+
+    open_q_block = ""
+    resolved_hint = ""
+    if open_questions:
+        listing = "\n".join(f"{i+1}. {q['content']}" for i, q in enumerate(open_questions))
+        open_q_block = f"\n\n目前懸而未決的事（如果這段對話已經回答/解決了其中某些，把編號列進 <resolved>）：\n{listing}"
+        resolved_hint = "\n<resolved>[1, 3]</resolved>（沒有已解決的就輸出 <resolved>[]</resolved>）"
+
     prompt = f"""你是記憶提煉師。從以下對話，提取「{char_name}」值得長期記住的信息。
 
 對話：
@@ -270,11 +451,27 @@ content 欄位一律用繁體中文輸出。
 
 <result>
 [{{"content": "...", "type": "fact", "importance": 7}}]
-</result>"""
+</result>{resolved_hint}{open_q_block}"""
 
     response_text = _call_llm(prompt, bridge_url, bridge_secret, api_key)
     if not response_text:
         return
+
+    # resolved 標記：LLM 只回編號，映射與寫入由程式做
+    if open_questions:
+        rm = re.search(r"<resolved>([\s\S]*?)</resolved>", response_text)
+        if rm:
+            try:
+                nums = json.loads(rm.group(1).strip())
+                if isinstance(nums, list):
+                    _db = firestore.client()
+                    for n in nums:
+                        if isinstance(n, int) and 1 <= n <= len(open_questions):
+                            q = open_questions[n - 1]
+                            _db.collection("memories").document(q["id"]).update({"status": "resolved"})
+                            logger.info(f"[extraction] question resolved: {q['content'][:40]}")
+            except Exception as e:
+                logger.warning(f"[extraction] resolved parse failed: {e}")
 
     match = re.search(r"<result>([\s\S]*?)</result>", response_text)
     if not match:
@@ -298,7 +495,7 @@ content 欄位一律用繁體中文輸出。
             continue
         mem_type = c.get("type", "fact") if c.get("type") in valid_types else "fact"
         importance = max(1, min(10, int(c.get("importance") or 5)))
-        write_memory(user_id, character_id, content, source="extraction", mem_type=mem_type)
+        write_memory(user_id, character_id, content, source="extraction", mem_type=mem_type, importance=importance)
         written += 1
 
     logger.info(f"[extraction] wrote {written} memories for {user_id}×{character_id}")

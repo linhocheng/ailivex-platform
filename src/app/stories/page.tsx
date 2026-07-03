@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Wordmark, Icon, Dot, Typing, EmptyState, Ambient } from '@/app/_components/ui';
-import { LogoutButton } from '@/app/_components/LogoutButton';
+import { Icon, Dot, Typing, EmptyState, Ambient } from '@/app/_components/ui';
+import { FrontNav } from '@/app/_components/FrontNav';
 
 interface Story {
   id: string;
@@ -28,17 +28,6 @@ const PHASE: Record<string, { label: string; phase: number }> = {
 
 function fmt(ms: number) {
   return ms ? new Date(ms).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-}
-
-function NavLink({ href, active, icon, children }: { href: string; active?: boolean; icon?: string; children: React.ReactNode }) {
-  return (
-    <Link href={href} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-      background: active ? 'rgba(60,52,40,0.07)' : 'transparent',
-      color: active ? 'var(--text)' : 'var(--muted)', padding: '9px 13px', borderRadius: 6,
-      fontSize: 14, fontWeight: 500, minHeight: 40 }}>
-      {icon && <Icon name={icon} size={16} />}{children}
-    </Link>
-  );
 }
 
 function PhaseBar({ status, cardCount, doneCount }: { status: string; cardCount: number; doneCount: number }) {
@@ -97,23 +86,7 @@ export default function StoriesPage() {
     <>
       <Ambient />
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px clamp(16px,4vw,26px)', borderBottom: '1px solid var(--border)',
-          position: 'relative', zIndex: 5, background: 'var(--bg)' }}>
-          <Link href="/lobby"><Wordmark size={19} /></Link>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <NavLink href="/lobby">大廳</NavLink>
-            <NavLink href="/documents" icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" icon="image">媒體庫</NavLink>
-            <NavLink href="/stories" active icon="image">故事板</NavLink>
-            <NavLink href="/convert" icon="audio">素材轉換區</NavLink>
-            <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
-              border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
-              fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
-              <Icon name="logout" size={16} />登出
-            </LogoutButton>
-          </nav>
-        </header>
+        <FrontNav active="stories" />
 
         <main style={{ flex: 1, padding: '40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 860, margin: '0 auto' }}>

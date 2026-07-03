@@ -34,9 +34,9 @@ steps:
       - --concurrency=3
       - --timeout=3600
       - --service-account=ailivex-app@$PROJECT_ID.iam.gserviceaccount.com
-      - --set-env-vars=FIREBASE_PROJECT_ID=ailivex-2026,BRIDGE_URL=https://bridge-direct.soul-polaroid.work
+      - --set-env-vars=FIREBASE_PROJECT_ID=ailivex-2026,FIREBASE_STORAGE_BUCKET=ailivex-2026-assets,BRIDGE_URL=https://bridge-direct.soul-polaroid.work
       - >-
-        --set-secrets=BRIDGE_SECRET=BRIDGE_SECRET:latest,WORKER_SECRET=WORKER_SECRET:latest
+        --set-secrets=BRIDGE_SECRET=BRIDGE_SECRET:latest,WORKER_SECRET=WORKER_SECRET:latest,MINIMAX_API_KEY=MINIMAX_API_KEY:latest,MINIMAX_GROUP_ID=MINIMAX_GROUP_ID:latest
 
 images:
   - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA

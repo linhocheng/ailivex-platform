@@ -19,6 +19,7 @@ import { loadHistory, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
+import { QuotaExceededError } from '@/lib/quota';
 import { dispatchTask } from '@/lib/task-dispatcher';
 import { upsertRelationship } from '@/lib/relationship';
 import { trackCost } from '@/lib/cost-tracker';
@@ -87,7 +88,7 @@ export async function POST(req: Request) {
 
   const raw = textOf(res);
   const { visible, remembers, documents, dispatches } = parseToolTags(raw);
-  const reply = visible || '（……）';
+  let reply = visible || '（……）';
 
   // 工具副作用（不阻斷回覆）
   for (const content of remembers) {
@@ -96,13 +97,22 @@ export async function POST(req: Request) {
   }
   const createdDocs: Array<{ documentId: string; title: string }> = [];
   const pendingJobIds: string[] = [];
+  let docQuotaHit = false;
   for (const d of documents) {
     const r = await createDocumentJob(db, user.uid, characterId, d.title, d.brief)
-      .catch(e => { console.error('[dialogue] document failed:', e instanceof Error ? e.message : String(e)); return null; });
+      .catch(e => {
+        if (e instanceof QuotaExceededError) { docQuotaHit = true; return null; }
+        console.error('[dialogue] document failed:', e instanceof Error ? e.message : String(e));
+        return null;
+      });
     if (r) {
       createdDocs.push({ documentId: r.documentId, title: d.title });
       pendingJobIds.push(r.jobId);
     }
+  }
+  // 角色答應了但額度不夠 → 誠實告知，不能讓「說要生成」變成空頭支票
+  if (docQuotaHit) {
+    reply += '\n\n（文件生成額度已用完，這次沒有建立文件。需要更多額度請聯繫管理員。）';
   }
 
   // dispatches 移到 after() — enqueueStoryDraftJob 需要 await fetch，在 after() 裡才保證 lambda 存活

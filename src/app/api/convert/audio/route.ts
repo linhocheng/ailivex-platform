@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  enqueueAudio(audioTaskId, text, voiceId).catch(err => {
+  enqueueAudio(audioTaskId, text, voiceId, char.voiceSettings).catch(err => {
     console.error('[convert/audio] dispatch error:', err);
     audioRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
   });
@@ -72,7 +72,12 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true, taskId: audioTaskId });
 }
 
-async function enqueueAudio(taskId: string, text: string, voiceId: string): Promise<void> {
+async function enqueueAudio(
+  taskId: string,
+  text: string,
+  voiceId: string,
+  vs?: { speed?: number; pitch?: number; vol?: number; emotion?: string },
+): Promise<void> {
   const resp = await fetch(`${MEDIA_WORKER_URL}/v1/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': MEDIA_WORKER_KEY! },
@@ -81,7 +86,14 @@ async function enqueueAudio(taskId: string, text: string, voiceId: string): Prom
       idempotencyKey: taskId,
       webhookUrl: callbackUrl(),
       webhookSecret: WEBHOOK_SECRET,
-      input: { text, voiceId, speed: 1.0, vol: 1.0, pitch: 0, emotion: 'neutral' },
+      // 帶角色的 voiceSettings（音量/語速/音高/情緒），與即時語音同源
+      input: {
+        text, voiceId,
+        speed: vs?.speed ?? 1.0,
+        vol: vs?.vol ?? 1.0,
+        pitch: vs?.pitch ?? 0,
+        emotion: vs?.emotion ?? 'neutral',
+      },
       metadata: { taskId },
     }),
   });

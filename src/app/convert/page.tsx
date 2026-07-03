@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { Wordmark, Icon, Tag, Dot, Typing, Ambient } from '@/app/_components/ui';
-import { LogoutButton } from '@/app/_components/LogoutButton';
+import { Icon, Tag, Dot, Typing, Ambient } from '@/app/_components/ui';
+import { FrontNav } from '@/app/_components/FrontNav';
+import { PodcastLibrary } from '@/app/_components/PodcastLibrary';
 
 interface ConvertChar {
   id: string;
@@ -31,17 +32,6 @@ const STATUS_MAP: Record<string, { label: string; color: string; dot: string }> 
   done:    { label: '完成',   color: 'var(--accent-2)', dot: '#6f8c5f' },
   failed:  { label: '失敗',   color: '#b5654a',         dot: '#b5654a' },
 };
-
-function NavLink({ href, active, icon, children }: { href: string; active?: boolean; icon?: string; children: React.ReactNode }) {
-  return (
-    <Link href={href} style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-      background: active ? 'rgba(60,52,40,0.07)' : 'transparent',
-      color: active ? 'var(--text)' : 'var(--muted)', padding: '9px 13px', borderRadius: 6,
-      fontSize: 14, fontWeight: 500, minHeight: 40 }}>
-      {icon && <Icon name={icon} size={16} />}{children}
-    </Link>
-  );
-}
 
 function CharAvatar({ char }: { char: ConvertChar }) {
   return char.avatarUrl
@@ -441,7 +431,8 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
     const tid = init.taskId as string;
     setTaskId(tid);
 
-    // 輪詢：每 5s 問一次，最多等 20 分鐘（12分鐘腳本約需 14 分鐘生成）
+    // 輪詢：每 5s 問一次，面板最多等 20 分鐘；超過不算失敗——任務仍在後台跑，
+    // 腳本庫（下方/素材頁）會顯示「生成中」並在完成後自動出現
     const TIMEOUT = 20 * 60 * 1000;
     const start = Date.now();
     const map: Record<string, string> = {};
@@ -454,7 +445,8 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
     const poll = async () => {
       if (Date.now() - start > TIMEOUT) {
         setLoading(false);
-        setError('生成超時，請重試。');
+        setError('腳本仍在生成中（長腳本可能需要 30 分鐘以上）——不用重新送出，完成後會自動出現在下方的腳本庫。');
+        onScripted?.(); // 刷新腳本庫，讓「生成中」卡片立刻可見
         return;
       }
       const r = await fetch(`/api/tasks/${tid}`).then(r => r.json()).catch(() => null);
@@ -482,13 +474,36 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ taskId, script: editedScript.length ? editedScript : undefined }),
     }).then(r => r.json()).catch(() => null);
-    setLoading(false);
-    if (r?.audioUrl) {
-      setAudioUrl(r.audioUrl);
-      setPhase('audio');
-    } else {
+    if (!r?.accepted) {
+      setLoading(false);
       setError(r?.error ?? '音檔生成失敗，請重試。');
+      return;
     }
+    onScripted?.(); // 腳本庫立刻顯示「生成中」
+
+    // worker 在後台跑，輪詢等 audioUrl（長腳本 TTS 可能 10 分鐘以上）
+    const TIMEOUT = 30 * 60 * 1000;
+    const start = Date.now();
+    const poll = async () => {
+      if (Date.now() - start > TIMEOUT) {
+        setLoading(false);
+        setError('音檔仍在生成中——不用重新送出，完成後會自動出現在下方腳本庫。');
+        return;
+      }
+      const t = await fetch(`/api/tasks/${taskId}`).then(r => r.json()).catch(() => null);
+      if (t?.status === 'done' && t.audioUrl) {
+        setLoading(false);
+        setAudioUrl(t.audioUrl);
+        setPhase('audio');
+        onScripted?.(); // 腳本庫刷新，讓卡片顯示「已有音檔」
+      } else if (t?.status === 'failed') {
+        setLoading(false);
+        setError(t.error ?? '音檔生成失敗，請重試。');
+      } else {
+        setTimeout(poll, 5000);
+      }
+    };
+    setTimeout(poll, 5000);
   }
 
   const selCount = selectedIds.length;
@@ -641,6 +656,14 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
               color: 'var(--muted)' }}>
             重新生成
           </button>
+          {audioUrl && (
+            <button onClick={() => { setPhase('audio'); setError(''); }} disabled={loading}
+              style={{ padding: '10px 18px', borderRadius: 8, fontSize: 13.5, fontWeight: 500,
+                cursor: 'pointer', background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)',
+                color: 'var(--muted)' }}>
+              回到音檔
+            </button>
+          )}
           <button onClick={generateAudio} disabled={loading || !scriptText.trim()}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer',
@@ -659,11 +682,19 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
           <div style={{ fontSize: 13, fontWeight: 500, color: POD_ACCENT, marginBottom: 10 }}>
             Podcast 音檔已生成
           </div>
-          <audio controls src={audioUrl}
-            style={{ width: '100%', borderRadius: 6, accentColor: POD_ACCENT }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <audio controls src={audioUrl}
+              style={{ flex: 1, borderRadius: 6, accentColor: POD_ACCENT }} />
+            <a href={audioUrl} target="_blank" rel="noopener noreferrer"
+              style={{ padding: '7px 14px', borderRadius: 6, fontSize: 12.5, fontWeight: 500,
+                textDecoration: 'none', flexShrink: 0,
+                background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
+              下載
+            </a>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={() => { setPhase('script'); setAudioUrl(''); setError(''); }}
+          <button onClick={() => { setPhase('script'); setError(''); }}
             style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
               cursor: 'pointer', background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)',
               color: 'var(--muted)' }}>
@@ -677,218 +708,6 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
           </button>
         </div>
       </>)}
-    </div>
-  );
-}
-
-// ── Podcast 腳本庫 ─────────────────────────────────────────────────────
-interface ScriptItem {
-  id: string;
-  topic: string;
-  focus: string;
-  speakers: string[];
-  wordCount: number;
-  script: PodcastLine[];
-  audioUrl: string | null;
-  status: string;
-  createdAt: number;
-}
-
-function PodcastLibrary({ chars, refreshSignal }: { chars: ConvertChar[]; refreshSignal: number }) {
-  const [items, setItems]           = useState<ScriptItem[]>([]);
-  const [loaded, setLoaded]         = useState(false);
-  const [editing, setEditing]       = useState<string | null>(null);
-  const [editText, setEditText]     = useState('');
-  const [saving, setSaving]         = useState(false);
-  const [deleting, setDeleting]     = useState<string | null>(null);
-  const [audioLoading, setAudioLoading] = useState<string | null>(null);
-  const [audioUrls, setAudioUrls]   = useState<Record<string, string>>({});
-  const [error, setError]           = useState('');
-
-  const nameToId = Object.fromEntries(chars.map(c => [c.name, c.id]));
-
-  async function load() {
-    const r = await fetch('/api/convert/podcast/scripts').then(r => r.json()).catch(() => null);
-    if (r?.scripts) { setItems(r.scripts); setLoaded(true); }
-  }
-
-  useEffect(() => { load(); }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function startEdit(item: ScriptItem) {
-    setEditing(item.id);
-    setEditText(scriptToText(item.script));
-    setError('');
-  }
-
-  function parseLines(text: string): PodcastLine[] {
-    return text.split('\n')
-      .map(l => l.match(/^\[([^\]]+)\][:：]\s*(.+)/))
-      .filter(Boolean)
-      .map(m => ({ speaker: m![1].trim(), characterId: nameToId[m![1].trim()] ?? '', text: m![2].trim() }));
-  }
-
-  async function saveEdit(id: string) {
-    setSaving(true); setError('');
-    const newScript = parseLines(editText);
-    const r = await fetch(`/api/tasks/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ podcastScript: newScript }),
-    }).then(r => r.json()).catch(() => null);
-    setSaving(false);
-    if (r?.ok) {
-      setItems(prev => prev.map(it => it.id === id
-        ? { ...it, script: newScript, wordCount: newScript.reduce((s,l) => s+l.text.length, 0),
-            speakers: [...new Set(newScript.map(l => l.speaker))] }
-        : it));
-      setEditing(null);
-    } else {
-      setError('儲存失敗，請重試。');
-    }
-  }
-
-  async function deleteItem(id: string) {
-    setDeleting(id);
-    const r = await fetch(`/api/tasks/${id}`, { method: 'DELETE' }).then(r => r.json()).catch(() => null);
-    setDeleting(null);
-    if (r?.ok) setItems(prev => prev.filter(it => it.id !== id));
-    else setError('刪除失敗，請重試。');
-  }
-
-  async function generateAudio(item: ScriptItem) {
-    setAudioLoading(item.id); setError('');
-    const r = await fetch('/api/convert/podcast/generate-audio', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskId: item.id, script: item.script }),
-    }).then(r => r.json()).catch(() => null);
-    setAudioLoading(null);
-    if (r?.audioUrl) {
-      setAudioUrls(prev => ({ ...prev, [item.id]: r.audioUrl }));
-      setItems(prev => prev.map(it => it.id === item.id ? { ...it, audioUrl: r.audioUrl, status: 'done' } : it));
-    } else {
-      setError(r?.error ?? '音檔生成失敗，請重試。');
-    }
-  }
-
-  if (!loaded) return null;
-  if (items.length === 0) return null;
-
-  return (
-    <div style={{ marginTop: 0 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 14 }}>
-        Podcast 腳本庫
-        <span style={{ marginLeft: 8, fontSize: 11.5, fontWeight: 400, color: 'var(--muted)' }}>
-          {items.length} 份腳本
-        </span>
-      </div>
-
-      {error && (
-        <div style={{ fontSize: 12.5, color: '#b5654a', padding: '9px 12px', borderRadius: 7, marginBottom: 12,
-          background: 'rgba(181,101,74,0.08)', border: '1px solid rgba(181,101,74,0.2)' }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {items.map(item => {
-          const isEditing = editing === item.id;
-          const isDeleting = deleting === item.id;
-          const isGenAudio = audioLoading === item.id;
-          const liveAudioUrl = audioUrls[item.id] ?? item.audioUrl;
-
-          return (
-            <div key={item.id} className="ax-enter" style={{ borderRadius: 10, border: '1px solid var(--border)',
-              background: 'var(--panel)', overflow: 'hidden' }}>
-
-              {/* 卡片頭 */}
-              <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 7, flexShrink: 0, display: 'grid', placeItems: 'center',
-                  background: POD_BG, border: `1px solid ${POD_BORDER}`, color: POD_ACCENT }}>
-                  <Icon name="audio" size={15} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {item.topic || '（無標題）'}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    <span>{item.speakers.join(' × ')}</span>
-                    <span>{item.wordCount} 字</span>
-                    <span>{new Date(item.createdAt).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                    {item.status === 'done' && <span style={{ color: 'var(--accent-2)' }}>已有音檔</span>}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-                  {!isEditing && (
-                    <button onClick={() => startEdit(item)}
-                      style={{ padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer',
-                        background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', color: 'var(--muted)' }}>
-                      編輯
-                    </button>
-                  )}
-                  <button onClick={() => deleteItem(item.id)} disabled={isDeleting}
-                    style={{ padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer',
-                      background: 'rgba(181,101,74,0.06)', border: '1px solid rgba(181,101,74,0.2)',
-                      color: '#b5654a', opacity: isDeleting ? 0.5 : 1 }}>
-                    {isDeleting ? '刪除中…' : '刪除'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 音檔播放或生成按鈕 */}
-              {!isEditing && (
-                <div style={{ padding: '0 16px 14px' }}>
-                  {liveAudioUrl ? (
-                    <audio controls src={liveAudioUrl}
-                      style={{ width: '100%', height: 36, borderRadius: 6, accentColor: POD_ACCENT }} />
-                  ) : (
-                    <button onClick={() => generateAudio(item)} disabled={!!isGenAudio}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 7,
-                        padding: '7px 14px', borderRadius: 7, fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
-                        background: isGenAudio ? 'rgba(60,52,40,0.04)' : POD_BG,
-                        border: `1px solid ${isGenAudio ? 'var(--border)' : POD_BORDER}`,
-                        color: isGenAudio ? 'var(--muted)' : POD_ACCENT }}>
-                      {isGenAudio ? <><Typing />生成音檔中…</> : <><Icon name="audio" size={13} />生成音檔</>}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* 腳本編輯區 */}
-              {isEditing && (
-                <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <div style={{ fontSize: 12, color: 'var(--muted)' }}>對話腳本（可直接編輯）</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                      {editText.replace(/\[[^\]]+\][:：]\s*/g, '').replace(/\s+/g, '').length} 字
-                    </div>
-                  </div>
-                  <textarea value={editText} onChange={e => setEditText(e.target.value)} rows={12}
-                    style={{ width: '100%', resize: 'vertical', fontSize: 12.5, lineHeight: 1.9,
-                      background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
-                      padding: '10px 12px', color: 'var(--text)', fontFamily: 'monospace', boxSizing: 'border-box' }} />
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                    <button onClick={() => setEditing(null)} disabled={saving}
-                      style={{ padding: '7px 14px', borderRadius: 7, fontSize: 12.5, fontWeight: 500,
-                        cursor: 'pointer', background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)',
-                        color: 'var(--muted)' }}>
-                      取消
-                    </button>
-                    <button onClick={() => saveEdit(item.id)} disabled={saving}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6,
-                        padding: '7px 16px', borderRadius: 7, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
-                        background: saving ? 'rgba(60,52,40,0.04)' : POD_BG,
-                        border: `1px solid ${saving ? 'var(--border)' : POD_BORDER}`,
-                        color: saving ? 'var(--muted)' : POD_ACCENT }}>
-                      {saving ? <><Typing />儲存中…</> : '儲存腳本'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -965,23 +784,7 @@ export default function ConvertPage() {
     <>
       <Ambient />
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px clamp(16px,4vw,26px)', borderBottom: '1px solid var(--border)',
-          position: 'relative', zIndex: 5, background: 'var(--bg)' }}>
-          <Link href="/lobby"><Wordmark size={19} /></Link>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <NavLink href="/lobby">大廳</NavLink>
-            <NavLink href="/documents" icon="doc">我的文件</NavLink>
-            <NavLink href="/gallery" icon="image">媒體庫</NavLink>
-            <NavLink href="/stories" icon="image">故事板</NavLink>
-            <NavLink href="/convert" active icon="audio">素材轉換區</NavLink>
-            <LogoutButton style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'rgba(60,52,40,0.045)',
-              border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', fontSize: 13,
-              fontWeight: 500, color: 'var(--text)', cursor: 'pointer' }}>
-              <Icon name="logout" size={16} />登出
-            </LogoutButton>
-          </nav>
-        </header>
+        <FrontNav active="convert" />
 
         <main style={{ flex: 1, overflowY: 'auto', padding: '40px clamp(20px,5vw,64px) 64px' }}>
           <div style={{ maxWidth: 900, margin: '0 auto' }}>
