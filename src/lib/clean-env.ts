@@ -17,6 +17,29 @@ export function cleanSecret(raw: string | null | undefined): string {
     .replace(/\s+/g, '');           // 任何真空白（含真換行 char10、tab）
 }
 
+// worker/webhook 密鑰比對 —— **fail-closed**：env 未設或空 → 直接拒（回 false），
+// 絕不因為 env 沒設就跳過檢查（fail-open）。免登入的 PUBLIC_PATHS route 唯一的門，
+// 一次 env drift 就不能變成無認證的付費 API 觸發口。
+// 用法：if (!verifyWorkerSecret(req.headers.get('x-worker-secret'), process.env.WORKER_SECRET)) return 401
+export function verifyWorkerSecret(
+  provided: string | null | undefined,
+  envSecret: string | null | undefined,
+): boolean {
+  const expected = cleanSecret(envSecret);
+  if (!expected) return false;   // env 未設 = 拒絕（fail-closed），不是放行
+  return cleanSecret(provided) === expected;
+}
+
+// Authorization: Bearer <secret> 形式的 fail-closed 比對（cron 用）。
+export function verifyBearerSecret(
+  authHeader: string | null | undefined,
+  envSecret: string | null | undefined,
+): boolean {
+  const raw = (authHeader ?? '').trim();
+  const provided = raw.toLowerCase().startsWith('bearer ') ? raw.slice(7) : '';
+  return verifyWorkerSecret(provided, envSecret);
+}
+
 // URL：清洗尾端雜訊後用 new URL() 驗證；非空但無效就 throw，
 // 不讓壞 URL 靜默打到 ".../n" 之類的 404 被 catch 吞掉。
 export function cleanUrl(raw: string | null | undefined): string {

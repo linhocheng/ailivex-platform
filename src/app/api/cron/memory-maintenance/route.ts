@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL } from '@/lib/collections';
 import { Timestamp } from 'firebase-admin/firestore';
-import { cleanSecret } from '@/lib/clean-env';
+import { verifyBearerSecret } from '@/lib/clean-env';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -26,9 +26,7 @@ const QUESTION_STALE_DAYS = 60;
 const EMOTION_STALE_DAYS = 90;
 
 export async function GET(req: Request) {
-  const secret = cleanSecret(process.env.CRON_SECRET);
-  const auth = req.headers.get('authorization') ?? '';
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!verifyBearerSecret(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

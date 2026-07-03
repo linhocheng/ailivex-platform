@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server';
 import { marked } from 'marked';
 import { getFirestore, getFirebaseAdmin } from '@/lib/firebase-admin';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
-import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { cleanSecret, cleanUrl, verifyWorkerSecret } from '@/lib/clean-env';
 import { COL, type DocumentDoc } from '@/lib/collections';
 import { loadPatterns, scanText, rewriteFlagged } from '@/lib/text-filter';
 import { refundDocQuota } from '@/lib/quota';
@@ -22,9 +22,7 @@ const BRIDGE_ENDPOINT = `${cleanUrl((process.env.BRIDGE_URL ?? '').replace(/\/v1
 const BRIDGE_SECRET = cleanSecret(process.env.BRIDGE_SECRET);
 
 export async function POST(req: Request) {
-  const secret = cleanSecret(req.headers.get('x-worker-secret'));
-  const expected = cleanSecret(process.env.WORKER_SECRET);
-  if (expected && secret !== expected) {
+  if (!verifyWorkerSecret(req.headers.get('x-worker-secret'), process.env.WORKER_SECRET)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
@@ -48,8 +46,8 @@ export async function POST(req: Request) {
 
   try {
     const charSnap = await db.collection(COL.characters).doc(job.characterId).get();
-    const char = charSnap.data() as { name?: string; soulCore?: string; soul?: string } | undefined;
-    const soul = char?.soulCore?.trim() || char?.soul || '';
+    const char = charSnap.data() as { name?: string; soul?: string } | undefined;
+    const soul = char?.soul || '';
     const name = char?.name || '角色';
 
     await docRef.update({ status: 'writing' });
