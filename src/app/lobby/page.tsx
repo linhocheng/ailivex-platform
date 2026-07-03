@@ -5,7 +5,17 @@ import Link from 'next/link';
 import { Avatar, Icon, Tag, GlowButton, EmptyState, Ambient } from '@/app/_components/ui';
 import { FrontNav } from '@/app/_components/FrontNav';
 
-interface Char { id: string; name: string; avatarUrl: string; hasVoice: boolean; }
+interface Char { id: string; name: string; avatarUrl: string; hasVoice: boolean;
+  lastTopic?: string; lastAt?: number | null; }
+
+// 相對時間（今天/昨天/N天前/日期）
+function relTime(at: number): string {
+  const days = Math.floor((Date.now() - at) / 86400000);
+  if (days <= 0) return '今天';
+  if (days === 1) return '昨天';
+  if (days <= 7) return `${days} 天前`;
+  return new Date(at).toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' });
+}
 
 export default function Lobby() {
   const [chars, setChars] = useState<Char[]>([]);
@@ -59,15 +69,23 @@ function CharCard({ char, delay }: { char: Char; delay: number }) {
         transition: 'transform .3s cubic-bezier(.2,.8,.2,1), box-shadow .3s, border-color .3s',
         borderColor: h ? 'var(--border-strong)' : 'var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18 }}>
-        <Avatar name={char.name} avatarUrl={char.avatarUrl} size={66} ring={h} />
+        <Avatar name={char.name} avatarUrl={char.avatarUrl} size={84} ring={h} />
         {char.hasVoice && (
           <Tag color="var(--accent-2)"><Icon name="mic" size={12} />可語音</Tag>
         )}
       </div>
-      <h3 style={{ fontSize: 21, margin: '0 0 4px', fontWeight: 600 }}>{char.name}</h3>
+      <h3 style={{ fontSize: 21, margin: '0 0 6px', fontWeight: 600 }}>{char.name}</h3>
+      {char.lastTopic ? (
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: 0, lineHeight: 1.6,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' }}>
+          {char.lastAt ? `${relTime(char.lastAt)}聊到：` : '上次聊到：'}{char.lastTopic}
+        </p>
+      ) : (
+        <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: 0, opacity: 0.7 }}>還沒開始過對話</p>
+      )}
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 500,
         color: h ? 'var(--accent)' : 'var(--muted)', transition: 'color .25s' }}>
-        進入對話 <Icon name="chevron" size={15} style={{ transform: h ? 'translateX(3px)' : 'none', transition: 'transform .25s' }} />
+        {char.lastTopic ? '接續對話' : '開始對話'} <Icon name="chevron" size={15} style={{ transform: h ? 'translateX(3px)' : 'none', transition: 'transform .25s' }} />
       </div>
     </Link>
   );

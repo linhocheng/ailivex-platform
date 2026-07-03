@@ -3,6 +3,7 @@ import { useState, ReactNode, CSSProperties } from 'react';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const PATHS: Record<string, ReactNode> = {
+  menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
   mic: <><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></>,
   micOff: <><path d="M9 9v2a3 3 0 0 0 4.6 2.5"/><path d="M15 10V6a3 3 0 0 0-6 0"/><path d="M5 11a7 7 0 0 0 10.5 6"/><path d="M12 18v3"/><path d="M3 3l18 18"/></>,
   phone: <path d="M14.5 3.5l1.8 4.2-2.1 1.6a11 11 0 0 0 5 5l1.6-2.1 4.2 1.8"/>,

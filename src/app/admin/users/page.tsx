@@ -260,14 +260,14 @@ export default function AdminUsers() {
       {/* List */}
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:'var(--radius)', overflow:'hidden' }} className="ax-enter">
         {/* Header */}
-        <div style={{ display:'grid', gridTemplateColumns:'1.3fr 0.9fr 0.55fr 1.3fr 0.6fr', gap:12, padding:'12px 20px',
+        <div className="ax-users-head" style={{ display:'grid', gridTemplateColumns:'1.3fr 0.9fr 0.55fr 1.3fr 0.6fr', gap:12, padding:'12px 20px',
           borderBottom:'1px solid var(--border)', fontSize:12, fontWeight:600, color:'var(--muted)',
           letterSpacing:'0.04em', textTransform:'uppercase' }}>
-          <span>顯示名稱</span><span>帳號</span><span>角色</span><span>剩餘（語音 / 文件）</span><span></span>
+          <span>顯示名稱</span><span className="ax-users-sub">帳號</span><span className="ax-users-sub">角色</span><span>剩餘（語音 / 文件）</span><span></span>
         </div>
         {list.map(u => (
           <div key={u.id}>
-            <div style={{ display:'grid', gridTemplateColumns:'1.3fr 0.9fr 0.55fr 1.3fr 0.6fr', gap:12,
+            <div className="ax-users-row" style={{ display:'grid', gridTemplateColumns:'1.3fr 0.9fr 0.55fr 1.3fr 0.6fr', gap:12,
               padding:'13px 20px', borderBottom:'1px solid var(--border)', alignItems:'center',
               fontSize:14, transition:'background .15s' }}
               onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background='rgba(60,52,40,0.02)'}
@@ -280,8 +280,8 @@ export default function AdminUsers() {
                 </div>
                 <span style={{ fontWeight:500 }}>{u.displayName || u.username}</span>
               </div>
-              <span style={{ fontSize:13, color:'var(--muted)', fontFamily:'monospace' }}>@{u.username}</span>
-              <span>{u.role==='admin' ? <Tag color="#a78bfa">admin</Tag> : <Tag color="var(--muted)">user</Tag>}</span>
+              <span className="ax-users-sub" style={{ fontSize:13, color:'var(--muted)', fontFamily:'monospace' }}>@{u.username}</span>
+              <span className="ax-users-sub">{u.role==='admin' ? <Tag color="#a78bfa">admin</Tag> : <Tag color="var(--muted)">user</Tag>}</span>
               <span style={{ fontSize:12.5, fontFamily:'monospace' }}>
                 {u.voiceSecondsLimit === null
                   ? <span style={{ color:'var(--muted)' }}>語音不限</span>
@@ -354,7 +354,15 @@ export default function AdminUsers() {
       </div>
       <div style={{ fontSize:12, color:'var(--muted)', marginTop:10 }}>* 點「用量」展開：時數/份數設定、密碼更新、刪除用戶。刪除會一併移除角色指派。</div>
 
-      <style>{`@media (max-width:720px){.ax-user-form{grid-template-columns:1fr !important}}`}</style>
+      <style>{`
+        @media (max-width:720px){
+          .ax-user-form{grid-template-columns:1fr !important}
+          .ax-users-sub{display:none !important}
+          .ax-users-head{grid-template-columns:1.2fr 1.4fr auto !important}
+          .ax-users-row{grid-template-columns:1.2fr 1.4fr auto !important; row-gap:6px}
+          .ax-users-row button{min-height:44px; min-width:64px}
+        }
+      `}</style>
     </div>
   );
 }
