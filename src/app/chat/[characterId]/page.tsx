@@ -21,6 +21,7 @@ export default function ChatPage() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -79,23 +80,46 @@ export default function ChatPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 600 }}>{char?.name || '…'}</div>
             <div style={{ fontSize: 12, color: 'var(--accent-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Dot color="#6f8c5f" size={6} /> 線上 · 記得你
+              <Dot color="#6f8c5f" size={6} /> 線上 · 記得您
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Link href="/gallery" style={iconBtn} title="媒體庫"><Icon name="image" size={18} /></Link>
-            <Link href="/stories" style={iconBtn} title="故事板"><Icon name="doc" size={18} /></Link>
-          </div>
+          {/* header 原則：只放「這場對話」的動作。語音通話 = 主 CTA（accent）；
+              媒體庫/故事板等全域導航收進 ⋯ 溢出選單（不跟對話動作搶視覺） */}
           {char?.hasVoice && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Link href={`/realtime-v15/${characterId}`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', fontSize: 13.5,
-                  fontWeight: 500, borderRadius: 6, border: '1px solid var(--border-strong)',
-                  background: 'rgba(60,52,40,0.03)', color: 'var(--text)' }}>
-                <Icon name="phone" size={16} />語音通話
-              </Link>
-            </div>
+            <Link href={`/realtime-v15/${characterId}`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', fontSize: 13.5,
+                fontWeight: 600, borderRadius: 8, border: 'none', flexShrink: 0,
+                background: 'var(--accent)', color: '#fff',
+                boxShadow: '0 6px 18px -8px color-mix(in oklab, var(--accent) 70%, transparent)' }}>
+              <Icon name="phone" size={16} />語音通話
+            </Link>
           )}
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <button onClick={() => setMenuOpen(v => !v)} style={{ ...iconBtn, cursor: 'pointer', minWidth: 44, minHeight: 44 }} title="更多">
+              <Icon name="dots" size={19} />
+            </button>
+            {menuOpen && (
+              <>
+                <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
+                <div className="ax-enter" style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', zIndex: 31,
+                  minWidth: 178, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10,
+                  boxShadow: '0 16px 40px -16px rgba(0,0,0,0.28)', overflow: 'hidden' }}>
+                  {[
+                    { href: '/documents', icon: 'doc', label: '我的文件' },
+                    { href: '/gallery', icon: 'image', label: '媒體庫' },
+                    { href: '/stories', icon: 'image', label: '故事板' },
+                  ].map(item => (
+                    <Link key={item.href} href={item.href}
+                      style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '13px 17px', minHeight: 46,
+                        fontSize: 14, fontWeight: 500, color: 'var(--text)', textDecoration: 'none',
+                        borderBottom: '1px solid var(--border)' }}>
+                      <Icon name={item.icon} size={17} style={{ color: 'var(--muted)' }} />{item.label}
+                    </Link>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </header>
 
         {/* Messages */}
