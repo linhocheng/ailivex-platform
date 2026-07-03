@@ -6,7 +6,7 @@
  * maxDuration = 300 足以應付 bridge 生成。
  */
 import { NextResponse } from 'next/server';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import { getFirestore, getFirebaseAdmin } from '@/lib/firebase-admin';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { cleanSecret, cleanUrl, verifyWorkerSecret } from '@/lib/clean-env';
@@ -18,6 +18,12 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 const MODEL = 'claude-sonnet-4-6';
+
+// 硬化的 markdown→HTML：丟棄所有原始 HTML token（block + inline）。
+// 文件正文是 LLM 輸出，可被 [[DOCUMENT]] brief 做 prompt injection 逼它逐字吐 <script>；
+// 這裡機制性剝掉原始 HTML，配合模板的 CSP script-src 'none' 兩層擋，不靠模型自律。
+const safeMarked = new Marked({ gfm: true });
+safeMarked.use({ renderer: { html: () => '' } });
 const BRIDGE_ENDPOINT = `${cleanUrl((process.env.BRIDGE_URL ?? '').replace(/\/v1\/messages\/?$/, ''))}/v1/messages`;
 const BRIDGE_SECRET = cleanSecret(process.env.BRIDGE_SECRET);
 
@@ -112,9 +118,12 @@ function escapeHtml(s: string): string {
 }
 
 function renderHtml(title: string, md: string): string {
-  const bodyHtml = marked.parse(md, { async: false }) as string;
+  const bodyHtml = (safeMarked.parse(md, { async: false }) as string)
+    // 中和連結裡的危險 scheme（原始 HTML 已被剝，這裡的 <a> 只會是 marked 自產的規整標籤）
+    .replace(/(<a\b[^>]*?\shref=)(["'])\s*(?:javascript|data|vbscript):[^"']*\2/gi, '$1$2#$2');
   const now = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric' });
   return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src * data: https:; font-src * data:; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>
