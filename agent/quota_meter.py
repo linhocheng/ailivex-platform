@@ -30,6 +30,21 @@ def add_voice_seconds(user_id: str, seconds: int) -> None:
     })
 
 
+def get_voice_state(user_id: str):
+    """讀活狀態 (limit, used)。所有並發房共用同一 voiceSecondsUsed 桶 —— meter 每
+    heartbeat 回查，才能在多開時收斂到單一額度（關閉快照各算各的繞過）。
+    limit=None 代表不限。同步呼叫（caller 用 asyncio.to_thread 包）。"""
+    if not user_id:
+        return (None, 0)
+    _ensure_init()
+    db = firestore.client()
+    d = db.collection("users").document(user_id).get().to_dict() or {}
+    raw_limit = d.get("voiceSecondsLimit")
+    limit = int(raw_limit) if isinstance(raw_limit, (int, float)) else None
+    used = int(d.get("voiceSecondsUsed") or 0)
+    return (limit, used)
+
+
 def consume_doc_quota(user_id: str) -> bool:
     """文件扣量：transaction 內查+扣原子完成。額度滿回 False（不丟例外，語音 tool 好接）。"""
     if not user_id:
@@ -82,23 +97,59 @@ class VoiceMeter:
             self._reported = elapsed
 
     async def run(self, on_timeout) -> None:
-        """heartbeat 主迴圈。到點 → flush + on_timeout 後結束。"""
+        """heartbeat 主迴圈。到點 → flush + on_timeout 後結束。
+
+        到點判斷用**兩個上限取先到**：
+          (1) 本房相對 mint-time 快照的經過（DB 讀失敗也不會跑不停的兜底硬上限）
+          (2) DB 活狀態的共用 used ≥ limit（關閉多開繞過：所有並發房共用同一桶，
+              一旦總量到點，每間房下一 heartbeat 都會斷）
+        """
         if not self.user_id:
             return
         while True:
-            if self.remaining is not None:
-                left = self.remaining - (time.time() - self._start)
-                if left <= 0:
-                    await self.flush()
-                    logger.info(f"[quota] voice seconds exhausted user={self.user_id}")
-                    try:
-                        await on_timeout()
-                    except Exception as e:
-                        logger.error(f"[quota] on_timeout failed: {e}")
-                    return
-                tick = min(self.HEARTBEAT, left)
-            else:
-                tick = self.HEARTBEAT
+            now = time.time()
+
+            # 不限額：只計量不斷線（維持原行為，仍寫回 voiceSecondsUsed 供追蹤）
+            if self.remaining is None:
+                await asyncio.sleep(self.HEARTBEAT)
+                try:
+                    await self._report_elapsed()
+                except Exception as e:
+                    logger.warning(f"[quota] heartbeat write failed（下一輪補）: {e}")
+                continue
+
+            # (1) 本房快照上限
+            local_left = self.remaining - (now - self._start)
+
+            # (2) 共用活狀態：已寫回的 used + 本房尚未寫回的秒數 = 這一刻真實總用量
+            shared_exhausted = False
+            live_left = None
+            try:
+                limit, used = await asyncio.to_thread(get_voice_state, self.user_id)
+                if limit is not None:
+                    unreported = max(0, int(now - self._start) - self._reported)
+                    live_left = limit - (used + unreported)
+                    shared_exhausted = live_left <= 0
+            except Exception as e:
+                logger.warning(f"[quota] 活狀態讀取失敗，暫用本房快照上限: {e}")
+
+            if local_left <= 0 or shared_exhausted:
+                await self.flush()
+                logger.info(
+                    f"[quota] voice exhausted user={self.user_id} "
+                    f"local_left={local_left:.0f} live_left={live_left}"
+                )
+                try:
+                    await on_timeout()
+                except Exception as e:
+                    logger.error(f"[quota] on_timeout failed: {e}")
+                return
+
+            # 下一 tick：本房剩餘 / 共用剩餘 / HEARTBEAT 取最小（>=1s），不睡過頭
+            candidates = [self.HEARTBEAT, local_left]
+            if live_left is not None:
+                candidates.append(live_left)
+            tick = max(1.0, min(candidates))
             await asyncio.sleep(tick)
             try:
                 await self._report_elapsed()
