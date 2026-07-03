@@ -26,6 +26,11 @@ function isVoiceExhausted(u: User): boolean {
   return r !== null && r <= 0;
 }
 
+// 文件已用完（有設上限且剩餘歸零）
+function isDocsExhausted(u: User): boolean {
+  return u.docsLimit !== null && (u.docsLimit - u.docsUsed) <= 0;
+}
+
 export default function AdminUsers() {
   const [list, setList] = useState<User[]>([]);
   const [username, setUsername] = useState('');
@@ -36,10 +41,11 @@ export default function AdminUsers() {
   // 用量編輯列：展開中的 userId + 輸入值（時數以小時為單位輸入，存秒）＋ 新密碼
   const [quotaEdit, setQuotaEdit] = useState<{ userId: string; hours: string; docs: string; newPassword: string } | null>(null);
   const [quotaBusy, setQuotaBusy] = useState(false);
-  // 期滿警示面板：每個時間用完的用戶一格「加值時數」輸入（key = userId）
+  // 期滿警示面板：每個額度用完的用戶各一格加值輸入（key = userId）
   const [topupInputs, setTopupInputs] = useState<Record<string, string>>({});
+  const [docTopupInputs, setDocTopupInputs] = useState<Record<string, string>>({});
 
-  // 加值：新上限 = 已用 + 加值秒數（「再給他 N 小時」的語意，不是重設總量）
+  // 加值：新上限 = 已用 + 加值（「再給他 N」的語意，不是重設總量）
   async function topup(u: User) {
     const hours = Number((topupInputs[u.id] || '').trim());
     if (!Number.isFinite(hours) || hours <= 0) {
@@ -57,6 +63,25 @@ export default function AdminUsers() {
       setTopupInputs(prev => { const n = { ...prev }; delete n[u.id]; return n; });
       load();
     } else setMsg({ ok: false, text: r?.error || '加值失敗' });
+  }
+
+  async function topupDocs(u: User) {
+    const count = Number((docTopupInputs[u.id] || '').trim());
+    if (!Number.isInteger(count) || count <= 0) {
+      setMsg({ ok: false, text: '請輸入 > 0 的加購份數（整數）' }); return;
+    }
+    setQuotaBusy(true);
+    const r = await fetch('/api/admin/users', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: u.id, docsLimit: u.docsUsed + count }),
+    }).then(r => r.json()).catch(() => null);
+    setQuotaBusy(false);
+    if (r?.ok) {
+      setMsg({ ok: true, text: `已為「${u.displayName || u.username}」加購 ${count} 份文件` });
+      setTimeout(() => setMsg(null), 2600);
+      setDocTopupInputs(prev => { const n = { ...prev }; delete n[u.id]; return n; });
+      load();
+    } else setMsg({ ok: false, text: r?.error || '加購失敗' });
   }
 
   // 更新密碼：直接生效
@@ -190,27 +215,42 @@ export default function AdminUsers() {
         </div>
       </div>
 
-      {/* 期滿警示：時間用完的用戶，開頁即見，輸入加值時數確認後消失 */}
-      {list.filter(isVoiceExhausted).length > 0 && (
+      {/* 期滿警示：語音時數或文件份數用完的用戶，開頁即見，加值確認後消失 */}
+      {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u)).length > 0 && (
         <div className="ax-enter" style={{ background:'rgba(181,101,74,0.07)', border:'1px solid rgba(181,101,74,0.35)',
           borderRadius:'var(--radius)', padding:'18px 22px', marginBottom:22 }}>
           <div style={{ fontSize:14.5, fontWeight:600, marginBottom:4, color:'#b5654a', display:'flex', alignItems:'center', gap:8 }}>
-            <Dot color="#b5654a" pulse />以下用戶的時間已用完
+            <Dot color="#b5654a" pulse />以下用戶的額度已用完
           </div>
           <div style={{ fontSize:12.5, color:'var(--muted)', marginBottom:14 }}>
-            用戶目前無法撥打語音。輸入加值時數並確認後恢復（新上限 = 已用 + 加值）。
+            時數用完無法撥打語音、份數用完無法生成文件。輸入加值並確認後恢復（新上限 = 已用 + 加值）。
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {list.filter(isVoiceExhausted).map(u => (
+            {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u)).map(u => (
               <div key={u.id} style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
                 <span style={{ fontSize:14, fontWeight:500, minWidth:120 }}>{u.displayName || u.username}</span>
-                <span style={{ fontSize:12, color:'var(--muted)', fontFamily:'monospace' }}>
-                  已用 {fmtSeconds(u.voiceSecondsUsed)} / 上限 {fmtSeconds(u.voiceSecondsLimit!)}
-                </span>
-                <TextInput value={topupInputs[u.id] || ''}
-                  onChange={e => setTopupInputs(prev => ({ ...prev, [u.id]: e.target.value }))}
-                  placeholder="加值時數（小時）" style={{ width:150 }} />
-                <GlowButton onClick={() => topup(u)} disabled={quotaBusy}>確認加值</GlowButton>
+                {isVoiceExhausted(u) && (
+                  <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ fontSize:12, color:'#b5654a', fontFamily:'monospace' }}>
+                      時間已用完（{fmtSeconds(u.voiceSecondsUsed)} / {fmtSeconds(u.voiceSecondsLimit!)}）
+                    </span>
+                    <TextInput value={topupInputs[u.id] || ''}
+                      onChange={e => setTopupInputs(prev => ({ ...prev, [u.id]: e.target.value }))}
+                      placeholder="加值時數（小時）" style={{ width:140 }} />
+                    <GlowButton onClick={() => topup(u)} disabled={quotaBusy}>確認加值</GlowButton>
+                  </span>
+                )}
+                {isDocsExhausted(u) && (
+                  <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ fontSize:12, color:'#b5654a', fontFamily:'monospace' }}>
+                      文件已用完（{u.docsUsed} / {u.docsLimit} 份）
+                    </span>
+                    <TextInput value={docTopupInputs[u.id] || ''}
+                      onChange={e => setDocTopupInputs(prev => ({ ...prev, [u.id]: e.target.value }))}
+                      placeholder="加購份數" style={{ width:110 }} />
+                    <GlowButton onClick={() => topupDocs(u)} disabled={quotaBusy}>確認加購</GlowButton>
+                  </span>
+                )}
               </div>
             ))}
           </div>
