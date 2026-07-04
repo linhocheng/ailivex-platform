@@ -7,6 +7,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL, type TaskDoc } from '@/lib/collections';
 import { cleanSecret } from '@/lib/clean-env';
+import { refundMediaQuota } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 
@@ -58,6 +59,8 @@ export async function POST(req: Request) {
       error: body.error ?? 'unknown error',
       completedAt: FieldValue.serverTimestamp(),
     });
+    // 媒體生成失敗 → 退回該用戶 1 份額度（失敗不吃額度）。冪等 guard 在上，只退一次。
+    if (cur.userId) await refundMediaQuota(db, cur.userId, 1);
   }
 
   return NextResponse.json({ ok: true });

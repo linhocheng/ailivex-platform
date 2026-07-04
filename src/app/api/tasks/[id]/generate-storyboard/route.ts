@@ -16,6 +16,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -54,6 +55,10 @@ export async function POST(
 
   // addOne：單獨新增一張圖到故事板（用戶手動加）
   if (body.addOne && body.prompt?.trim()) {
+    // 媒體額度：扣 1 張（不足回 403）
+    try { await consumeMediaQuota(db, user.uid, 1); }
+    catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
+
     const existingSnap = await db.collection(COL.tasks)
       .where('userId', '==', user.uid)
       .where('parentTaskId', '==', taskId)
@@ -80,6 +85,7 @@ export async function POST(
     enqueueImage(imgRef.id, body.prompt.trim()).catch(err => {
       console.error(`[generate-storyboard] addOne error task=${imgRef.id}:`, err);
       imgRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
+      refundMediaQuota(db, user.uid, 1);  // 派工即失敗 → 退回這張額度
     });
     return NextResponse.json({ ok: true, count: 1, taskIds: [imgRef.id] });
   }
@@ -99,6 +105,10 @@ export async function POST(
   // LLM 分析：故事 → N 張圖 prompt 清單
   const slots = await analyzeStory(storyText, imageStyle);
   if (!slots.length) return NextResponse.json({ error: 'llm_returned_empty' }, { status: 500 });
+
+  // 媒體額度：一次扣 N 張（總量不足 N → 403，不生半套）
+  try { await consumeMediaQuota(db, user.uid, slots.length); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: `媒體額度不足（本次需 ${slots.length} 張）` }, { status: 403 }); throw e; }
 
   // 批次建立 image_generation tasks（parentTaskId 指向 story_draft）
   const taskIds: string[] = [];
@@ -122,6 +132,7 @@ export async function POST(
     enqueueImage(imgRef.id, slot.prompt).catch(err => {
       console.error(`[generate-storyboard] dispatch error task=${imgRef.id}:`, err);
       imgRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
+      refundMediaQuota(db, user.uid, 1);  // 這張派工即失敗 → 退回 1
     });
   }
 

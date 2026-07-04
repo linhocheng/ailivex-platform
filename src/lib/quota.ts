@@ -19,12 +19,15 @@ export interface QuotaSnapshot {
   docsLimit: number | null;
   docsUsed: number;
   docsRemaining: number | null;
+  mediaLimit: number | null;
+  mediaUsed: number;
+  mediaRemaining: number | null;
 }
 
 export class QuotaExceededError extends Error {
-  kind: 'voice' | 'docs';
-  constructor(kind: 'voice' | 'docs') {
-    super(kind === 'voice' ? 'voice_quota_exhausted' : 'docs_quota_exhausted');
+  kind: 'voice' | 'docs' | 'media';
+  constructor(kind: 'voice' | 'docs' | 'media') {
+    super(`${kind}_quota_exhausted`);
     this.kind = kind;
   }
 }
@@ -34,6 +37,8 @@ function toSnapshot(u: Partial<UserDoc> | undefined): QuotaSnapshot {
   const vUsed = Number(u?.voiceSecondsUsed || 0);
   const dLimit = typeof u?.docsLimit === 'number' ? u.docsLimit : null;
   const dUsed = Number(u?.docsUsed || 0);
+  const mLimit = typeof u?.mediaLimit === 'number' ? u.mediaLimit : null;
+  const mUsed = Number(u?.mediaUsed || 0);
   return {
     voiceSecondsLimit: vLimit,
     voiceSecondsUsed: vUsed,
@@ -41,6 +46,9 @@ function toSnapshot(u: Partial<UserDoc> | undefined): QuotaSnapshot {
     docsLimit: dLimit,
     docsUsed: dUsed,
     docsRemaining: dLimit === null ? null : Math.max(0, dLimit - dUsed),
+    mediaLimit: mLimit,
+    mediaUsed: mUsed,
+    mediaRemaining: mLimit === null ? null : Math.max(0, mLimit - mUsed),
   };
 }
 
@@ -86,5 +94,32 @@ export async function refundDocQuota(db: Firestore, userId: string): Promise<voi
     const snap = await tx.get(ref);
     const used = Number((snap.data() as UserDoc | undefined)?.docsUsed || 0);
     if (used > 0) tx.update(ref, { docsUsed: used - 1 });
+  }).catch(() => { /* 退量失敗不阻斷主流程 */ });
+}
+
+// 媒體扣量（圖片/影片/音檔）：transaction 內查+扣原子完成（防並發雙扣）。額度滿丟 QuotaExceededError。
+// count>1 用於 fan-out（如故事板一次生 N 張圖）：一個 transaction 內驗總量夠不夠再一次扣 N。
+export async function consumeMediaQuota(db: Firestore, userId: string, count = 1): Promise<void> {
+  if (!userId || count <= 0) return;
+  const ref = db.collection(COL.users).doc(userId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const q = toSnapshot(snap.data() as UserDoc | undefined);
+    if (q.mediaRemaining !== null && q.mediaRemaining < count) {
+      throw new QuotaExceededError('media');
+    }
+    tx.update(ref, { mediaUsed: FieldValue.increment(count) });
+  });
+}
+
+// 媒體退量：生成 failed 時退回（不讓失敗吃額度）；地板 0
+export async function refundMediaQuota(db: Firestore, userId: string, count = 1): Promise<void> {
+  if (!userId || count <= 0) return;
+  const ref = db.collection(COL.users).doc(userId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const used = Number((snap.data() as UserDoc | undefined)?.mediaUsed || 0);
+    const next = Math.max(0, used - count);
+    if (next !== used) tx.update(ref, { mediaUsed: next });
   }).catch(() => { /* 退量失敗不阻斷主流程 */ });
 }

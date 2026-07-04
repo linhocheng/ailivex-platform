@@ -7,6 +7,7 @@ interface User {
   id: string; username: string; displayName: string; role: string;
   voiceSecondsLimit: number | null; voiceSecondsUsed: number;
   docsLimit: number | null; docsUsed: number;
+  mediaLimit: number | null; mediaUsed: number;
 }
 
 // 秒 → 顯示字串（1.5h / 45m）
@@ -31,6 +32,11 @@ function isDocsExhausted(u: User): boolean {
   return u.docsLimit !== null && (u.docsLimit - u.docsUsed) <= 0;
 }
 
+// 媒體已用完（有設上限且剩餘歸零）
+function isMediaExhausted(u: User): boolean {
+  return u.mediaLimit !== null && (u.mediaLimit - u.mediaUsed) <= 0;
+}
+
 export default function AdminUsers() {
   const [list, setList] = useState<User[]>([]);
   const [username, setUsername] = useState('');
@@ -39,11 +45,12 @@ export default function AdminUsers() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // 用量編輯列：展開中的 userId + 輸入值（時數以小時為單位輸入，存秒）＋ 新密碼
-  const [quotaEdit, setQuotaEdit] = useState<{ userId: string; hours: string; docs: string; newPassword: string } | null>(null);
+  const [quotaEdit, setQuotaEdit] = useState<{ userId: string; hours: string; docs: string; media: string; newPassword: string } | null>(null);
   const [quotaBusy, setQuotaBusy] = useState(false);
   // 期滿警示面板：每個額度用完的用戶各一格加值輸入（key = userId）
   const [topupInputs, setTopupInputs] = useState<Record<string, string>>({});
   const [docTopupInputs, setDocTopupInputs] = useState<Record<string, string>>({});
+  const [mediaTopupInputs, setMediaTopupInputs] = useState<Record<string, string>>({});
 
   // 加值：新上限 = 已用 + 加值（「再給他 N」的語意，不是重設總量）
   async function topup(u: User) {
@@ -80,6 +87,25 @@ export default function AdminUsers() {
       setMsg({ ok: true, text: `已為「${u.displayName || u.username}」加購 ${count} 份文件` });
       setTimeout(() => setMsg(null), 2600);
       setDocTopupInputs(prev => { const n = { ...prev }; delete n[u.id]; return n; });
+      load();
+    } else setMsg({ ok: false, text: r?.error || '加購失敗' });
+  }
+
+  async function topupMedia(u: User) {
+    const count = Number((mediaTopupInputs[u.id] || '').trim());
+    if (!Number.isInteger(count) || count <= 0) {
+      setMsg({ ok: false, text: '請輸入 > 0 的加購份數（整數）' }); return;
+    }
+    setQuotaBusy(true);
+    const r = await fetch('/api/admin/users', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: u.id, mediaLimit: u.mediaUsed + count }),
+    }).then(r => r.json()).catch(() => null);
+    setQuotaBusy(false);
+    if (r?.ok) {
+      setMsg({ ok: true, text: `已為「${u.displayName || u.username}」加購 ${count} 份媒體` });
+      setTimeout(() => setMsg(null), 2600);
+      setMediaTopupInputs(prev => { const n = { ...prev }; delete n[u.id]; return n; });
       load();
     } else setMsg({ ok: false, text: r?.error || '加購失敗' });
   }
@@ -124,21 +150,27 @@ export default function AdminUsers() {
       userId: u.id,
       hours: u.voiceSecondsLimit === null ? '' : String(u.voiceSecondsLimit / 3600),
       docs: u.docsLimit === null ? '' : String(u.docsLimit),
+      media: u.mediaLimit === null ? '' : String(u.mediaLimit),
       newPassword: '',
     });
   }
 
-  async function saveQuota(extra?: { resetVoiceUsed?: boolean; resetDocsUsed?: boolean }) {
+  async function saveQuota(extra?: { resetVoiceUsed?: boolean; resetDocsUsed?: boolean; resetMediaUsed?: boolean }) {
     if (!quotaEdit) return;
     const hoursTrim = quotaEdit.hours.trim();
     const docsTrim = quotaEdit.docs.trim();
+    const mediaTrim = quotaEdit.media.trim();
     const hoursNum = hoursTrim === '' ? null : Number(hoursTrim);
     const docsNum = docsTrim === '' ? null : Number(docsTrim);
+    const mediaNum = mediaTrim === '' ? null : Number(mediaTrim);
     if (hoursNum !== null && (!Number.isFinite(hoursNum) || hoursNum < 0)) {
       setMsg({ ok: false, text: '語音時數需為 >= 0 的數字（留空 = 不限）' }); return;
     }
     if (docsNum !== null && (!Number.isFinite(docsNum) || docsNum < 0)) {
       setMsg({ ok: false, text: '文件份數需為 >= 0 的整數（留空 = 不限）' }); return;
+    }
+    if (mediaNum !== null && (!Number.isFinite(mediaNum) || mediaNum < 0)) {
+      setMsg({ ok: false, text: '媒體份數需為 >= 0 的整數（留空 = 不限）' }); return;
     }
     setQuotaBusy(true);
     const r = await fetch('/api/admin/users', {
@@ -147,6 +179,7 @@ export default function AdminUsers() {
         userId: quotaEdit.userId,
         voiceSecondsLimit: hoursNum === null ? null : Math.round(hoursNum * 3600),
         docsLimit: docsNum === null ? null : Math.round(docsNum),
+        mediaLimit: mediaNum === null ? null : Math.round(mediaNum),
         ...(extra || {}),
       }),
     }).then(r => r.json()).catch(() => null);
@@ -215,18 +248,18 @@ export default function AdminUsers() {
         </div>
       </div>
 
-      {/* 期滿警示：語音時數或文件份數用完的用戶，開頁即見，加值確認後消失 */}
-      {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u)).length > 0 && (
+      {/* 期滿警示：語音時數/文件份數/媒體份數用完的用戶，開頁即見，加值確認後消失 */}
+      {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u) || isMediaExhausted(u)).length > 0 && (
         <div className="ax-enter" style={{ background:'rgba(181,101,74,0.07)', border:'1px solid rgba(181,101,74,0.35)',
           borderRadius:'var(--radius)', padding:'18px 22px', marginBottom:22 }}>
           <div style={{ fontSize:14.5, fontWeight:600, marginBottom:4, color:'#b5654a', display:'flex', alignItems:'center', gap:8 }}>
             <Dot color="#b5654a" pulse />以下用戶的額度已用完
           </div>
           <div style={{ fontSize:12.5, color:'var(--muted)', marginBottom:14 }}>
-            時數用完無法撥打語音、份數用完無法生成文件。輸入加值並確認後恢復（新上限 = 已用 + 加值）。
+            時數用完無法撥打語音、份數用完無法生成文件或媒體。輸入加值並確認後恢復（新上限 = 已用 + 加值）。
           </div>
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u)).map(u => (
+            {list.filter(u => isVoiceExhausted(u) || isDocsExhausted(u) || isMediaExhausted(u)).map(u => (
               <div key={u.id} style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
                 <span style={{ fontSize:14, fontWeight:500, minWidth:120 }}>{u.displayName || u.username}</span>
                 {isVoiceExhausted(u) && (
@@ -251,6 +284,17 @@ export default function AdminUsers() {
                     <GlowButton onClick={() => topupDocs(u)} disabled={quotaBusy}>確認加購</GlowButton>
                   </span>
                 )}
+                {isMediaExhausted(u) && (
+                  <span style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <span style={{ fontSize:12, color:'#b5654a', fontFamily:'monospace' }}>
+                      媒體已用完（{u.mediaUsed} / {u.mediaLimit} 份）
+                    </span>
+                    <TextInput value={mediaTopupInputs[u.id] || ''}
+                      onChange={e => setMediaTopupInputs(prev => ({ ...prev, [u.id]: e.target.value }))}
+                      placeholder="加購份數" style={{ width:110 }} />
+                    <GlowButton onClick={() => topupMedia(u)} disabled={quotaBusy}>確認加購</GlowButton>
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -263,7 +307,7 @@ export default function AdminUsers() {
         <div className="ax-users-head" style={{ display:'grid', gridTemplateColumns:'1.3fr 0.9fr 0.55fr 1.3fr 0.6fr', gap:12, padding:'12px 20px',
           borderBottom:'1px solid var(--border)', fontSize:12, fontWeight:600, color:'var(--muted)',
           letterSpacing:'0.04em', textTransform:'uppercase' }}>
-          <span>顯示名稱</span><span className="ax-users-sub">帳號</span><span className="ax-users-sub">角色</span><span>剩餘（語音 / 文件）</span><span></span>
+          <span>顯示名稱</span><span className="ax-users-sub">帳號</span><span className="ax-users-sub">角色</span><span>剩餘（語音 / 文件 / 媒體）</span><span></span>
         </div>
         {list.map(u => (
           <div key={u.id}>
@@ -294,6 +338,12 @@ export default function AdminUsers() {
                   : (u.docsLimit - u.docsUsed) <= 0
                     ? <span style={{ color:'#b5654a', fontWeight:600 }}>文件已用完</span>
                     : <span style={{ color:'var(--muted)' }}>剩 {u.docsLimit - u.docsUsed} 份</span>}
+                <span style={{ color:'var(--muted)' }}>{' · '}</span>
+                {u.mediaLimit === null
+                  ? <span style={{ color:'var(--muted)' }}>媒體不限</span>
+                  : (u.mediaLimit - u.mediaUsed) <= 0
+                    ? <span style={{ color:'#b5654a', fontWeight:600 }}>媒體已用完</span>
+                    : <span style={{ color:'var(--muted)' }}>剩 {u.mediaLimit - u.mediaUsed} 份</span>}
               </span>
               <button onClick={() => quotaEdit?.userId === u.id ? setQuotaEdit(null) : openQuota(u)}
                 style={{ fontSize:12.5, padding:'5px 12px', borderRadius:8, cursor:'pointer',
@@ -312,6 +362,9 @@ export default function AdminUsers() {
                   <Field label="文件總份數（留空 = 不限）">
                     <TextInput value={quotaEdit.docs} onChange={e => setQuotaEdit({ ...quotaEdit, docs: e.target.value })} placeholder="例如 5" />
                   </Field>
+                  <Field label="媒體總份數（圖/影/音，留空 = 不限）">
+                    <TextInput value={quotaEdit.media} onChange={e => setQuotaEdit({ ...quotaEdit, media: e.target.value })} placeholder="例如 20" />
+                  </Field>
                   <GlowButton onClick={() => saveQuota()} disabled={quotaBusy} style={{ height:44 }}>儲存</GlowButton>
                   <button onClick={() => saveQuota({ resetVoiceUsed: true })} disabled={quotaBusy}
                     style={{ height:44, fontSize:13, padding:'0 14px', borderRadius:10, cursor:'pointer',
@@ -322,6 +375,11 @@ export default function AdminUsers() {
                     style={{ height:44, fontSize:13, padding:'0 14px', borderRadius:10, cursor:'pointer',
                       border:'1px solid var(--border)', background:'transparent', color:'var(--muted)' }}>
                     文件已用歸零
+                  </button>
+                  <button onClick={() => saveQuota({ resetMediaUsed: true })} disabled={quotaBusy}
+                    style={{ height:44, fontSize:13, padding:'0 14px', borderRadius:10, cursor:'pointer',
+                      border:'1px solid var(--border)', background:'transparent', color:'var(--muted)' }}>
+                    媒體已用歸零
                   </button>
                 </div>
                 {/* 密碼 + 刪除 */}

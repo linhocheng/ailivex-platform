@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc, type BrandLayoutDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { enhanceImagePrompt } from '@/lib/image-prompt-enhancer';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -65,20 +66,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: 'card_not_found' }, { status: 404 });
     }
     const card = cardSnap.data() as TaskDoc & Record<string, unknown>;
-    await dispatchCard(db, body.cardId, card, imageStyle, layoutImageUrl);
+    // 媒體額度：單張重生扣 1（不足 403）
+    try { await consumeMediaQuota(db, user.uid, 1); }
+    catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
+    try {
+      await dispatchCard(db, body.cardId, card, imageStyle, layoutImageUrl);
+    } catch (e) {
+      await refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job，callback 不會來）→ 退回
+      throw e;
+    }
     return NextResponse.json({ ok: true, count: 1 });
   }
 
   const scripted = await query.where('status', 'in', ['scripted', 'failed']).get();
   if (scripted.empty) return NextResponse.json({ ok: true, count: 0 });
 
-  await Promise.all(
+  // 媒體額度：一次扣 N 張（總量不足 403，不生半套）
+  try { await consumeMediaQuota(db, user.uid, scripted.docs.length); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: `媒體額度不足（本次需 ${scripted.docs.length} 張）` }, { status: 403 }); throw e; }
+
+  // allSettled：每卡獨立。派工同步失敗的那張退回（無 job → callback 不會來）；
+  // 成功派工的走 callback 退量（job.failed），兩者互斥不重複退。
+  const results = await Promise.allSettled(
     scripted.docs.map(doc =>
       dispatchCard(db, doc.id, doc.data() as TaskDoc & Record<string, unknown>, imageStyle, layoutImageUrl)
     )
   );
+  const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed > 0) await refundMediaQuota(db, user.uid, failed);
 
-  return NextResponse.json({ ok: true, count: scripted.docs.length });
+  return NextResponse.json({ ok: true, count: scripted.docs.length - failed });
 }
 
 async function dispatchCard(

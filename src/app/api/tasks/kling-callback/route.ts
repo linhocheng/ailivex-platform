@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL, type TaskDoc } from '@/lib/collections';
+import { refundMediaQuota } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 
@@ -55,6 +56,8 @@ export async function POST(req: Request) {
       error: errMsg,
       completedAt: FieldValue.serverTimestamp(),
     });
+    // Kling 影片生成失敗 → 退回 1 份媒體額度（冪等 guard 在上，只退一次）
+    if (cur.userId) await refundMediaQuota(db, cur.userId, 1);
   }
 
   return NextResponse.json({ ok: true });

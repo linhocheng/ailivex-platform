@@ -68,6 +68,30 @@ def consume_doc_quota(user_id: str) -> bool:
     return _tx(transaction)
 
 
+def consume_media_quota(user_id: str, count: int = 1) -> bool:
+    """媒體扣量（圖片/影片/音檔）：transaction 內查+扣原子完成。
+    額度不足回 False（不丟例外，語音 tool 好接）。count>1 給 fan-out。"""
+    if not user_id or count <= 0:
+        return True
+    _ensure_init()
+    db = firestore.client()
+    ref = db.collection("users").document(user_id)
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def _tx(tx):
+        snap = ref.get(transaction=tx)
+        d = snap.to_dict() or {}
+        limit = d.get("mediaLimit")
+        used = int(d.get("mediaUsed") or 0)
+        if isinstance(limit, (int, float)) and used + count > limit:
+            return False
+        tx.update(ref, {"mediaUsed": firestore.Increment(count)})
+        return True
+
+    return _tx(transaction)
+
+
 class VoiceMeter:
     """通話計量器。
 

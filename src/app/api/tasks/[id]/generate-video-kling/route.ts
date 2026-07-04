@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 import { imageSize } from 'image-size';
 
 export const runtime = 'nodejs';
@@ -99,6 +100,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!FAL_KEY) return NextResponse.json({ error: 'fal_not_configured' }, { status: 503 });
 
+  // 媒體額度：影片扣 1（不足 403）
+  try { await consumeMediaQuota(db, user.uid, 1); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
+
   // 根據腳本文字產生 motion prompt
   const scriptText = ((task.params as Record<string, string>)?.text ?? '').trim();
   const motionPrompt = scriptText
@@ -146,6 +151,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!falResp.ok) {
     const err = await falResp.text().catch(() => falResp.status.toString());
     await videoRef.update({ status: 'failed', error: `fal.ai ${falResp.status}: ${err}` });
+    await refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
     return NextResponse.json({ error: 'fal_dispatch_failed' }, { status: 502 });
   }
 

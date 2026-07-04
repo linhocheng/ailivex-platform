@@ -34,6 +34,8 @@ export interface UserDoc {
   voiceSecondsUsed?: number;
   docsLimit?: number;          // 文件生成總份數上限
   docsUsed?: number;
+  mediaLimit?: number;         // 媒體生成（圖片/影片/音檔）總份數上限
+  mediaUsed?: number;
 }
 
 export type CharacterStatus = 'active' | 'archived';

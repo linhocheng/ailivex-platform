@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type CharacterDoc } from '@/lib/collections';
 import { hasAccess } from '@/lib/access';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 
@@ -50,6 +51,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'media_worker_not_configured' }, { status: 503 });
   }
 
+  // 媒體額度：音檔扣 1（不足 403）
+  try { await consumeMediaQuota(db, user.uid, 1); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
+
   const audioRef = db.collection(COL.tasks).doc();
   const audioTaskId = audioRef.id;
   await audioRef.set({
@@ -67,6 +72,7 @@ export async function POST(req: Request) {
   enqueueAudio(audioTaskId, text, voiceId, char.voiceSettings).catch(err => {
     console.error('[convert/audio] dispatch error:', err);
     audioRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
+    refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
   });
 
   return NextResponse.json({ ok: true, taskId: audioTaskId });

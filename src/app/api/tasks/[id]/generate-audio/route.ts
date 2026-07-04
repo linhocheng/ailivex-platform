@@ -10,6 +10,7 @@ import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 
@@ -61,6 +62,10 @@ export async function POST(
     return NextResponse.json({ error: 'media_worker_not_configured' }, { status: 503 });
   }
 
+  // 媒體額度：音檔扣 1（不足 403）
+  try { await consumeMediaQuota(db, user.uid, 1); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
+
   // 建新的 audio_generation task
   const audioRef = db.collection(COL.tasks).doc();
   const audioTaskId = audioRef.id;
@@ -79,6 +84,7 @@ export async function POST(
   enqueueAudio(audioTaskId, scriptText, voiceId).catch(err => {
     console.error('[generate-audio] dispatch error:', err);
     audioRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
+    refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
   });
 
   return NextResponse.json({ ok: true, audioTaskId });

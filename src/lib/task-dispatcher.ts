@@ -11,6 +11,11 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL, type TaskCapability, type TaskDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeMediaQuota, QuotaExceededError } from '@/lib/quota';
+
+// 直接產出付費媒體單位的能力（扣媒體額度）。story_draft/script_draft 是文字草稿不扣，
+// 其後的實際生圖/生音在 generate-storyboard/generate-audio 各自扣，避免雙重計數。
+const PAID_MEDIA_TYPES: ReadonlySet<TaskCapability> = new Set(['image_generation', 'audio_generation', 'video_generation']);
 
 const MEDIA_WORKER_URL = cleanUrl(process.env.MEDIA_WORKER_URL);
 const MEDIA_WORKER_KEY = cleanSecret(process.env.MEDIA_WORKER_KEY_AILIVEX);
@@ -53,6 +58,20 @@ export async function dispatchTask(
   params: Record<string, unknown> = {}
 ): Promise<DispatchResult> {
   const db = getFirestore();
+
+  // 媒體額度：直接產出付費媒體的能力先扣 1（不足 → 角色誠實告知，不建任務）。
+  // 失敗退量走 tasks/callback（job.failed）。
+  if (PAID_MEDIA_TYPES.has(type)) {
+    try {
+      await consumeMediaQuota(db, userId, 1);
+    } catch (e) {
+      if (e instanceof QuotaExceededError) {
+        return { taskId: '', message: '（媒體生成額度已用罄，本次未建立。如需增購請聯繫您的服務窗口。）' };
+      }
+      throw e;
+    }
+  }
+
   const ref = db.collection(COL.tasks).doc();
   const taskId = ref.id;
 

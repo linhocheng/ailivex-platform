@@ -18,6 +18,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type CharacterDoc } from '@/lib/collections';
 import { hasAccess } from '@/lib/access';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
 
 export const runtime = 'nodejs';
 
@@ -76,6 +77,10 @@ export async function POST(req: Request) {
   if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) {
     return NextResponse.json({ error: 'media_worker_not_configured' }, { status: 503 });
   }
+
+  // 媒體額度：影片扣 1（不足 403，在 GCS 上傳前 fail-fast）
+  try { await consumeMediaQuota(db, user.uid, 1); }
+  catch (e) { if (e instanceof QuotaExceededError) return NextResponse.json({ error: 'media_quota_exhausted', message: '媒體生成額度已用罄' }, { status: 403 }); throw e; }
 
   // 預先分配 task ID，作為 GCS 路徑用
   const audioRef = db.collection(COL.tasks).doc();
@@ -139,6 +144,7 @@ export async function POST(req: Request) {
 
   if (!resp.ok) {
     await videoRef.update({ status: 'failed', error: `media-worker ${resp.status}` });
+    await refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
     return NextResponse.json({ error: 'dispatch_failed' }, { status: 502 });
   }
 

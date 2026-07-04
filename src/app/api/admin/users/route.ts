@@ -18,6 +18,8 @@ export async function GET() {
       voiceSecondsUsed: Number(u.voiceSecondsUsed || 0),
       docsLimit: typeof u.docsLimit === 'number' ? u.docsLimit : null,
       docsUsed: Number(u.docsUsed || 0),
+      mediaLimit: typeof u.mediaLimit === 'number' ? u.mediaLimit : null,
+      mediaUsed: Number(u.mediaUsed || 0),
     };
   });
   return NextResponse.json({ users });
@@ -33,8 +35,10 @@ export async function PATCH(req: Request) {
     userId?: string;
     voiceSecondsLimit?: number | null;
     docsLimit?: number | null;
+    mediaLimit?: number | null;
     resetVoiceUsed?: boolean;
     resetDocsUsed?: boolean;
+    resetMediaUsed?: boolean;
     newPassword?: string;
   } | null;
   const userId = body?.userId?.trim();
@@ -63,8 +67,15 @@ export async function PATCH(req: Request) {
       updates.docsLimit = Math.round(body!.docsLimit);
     } else return NextResponse.json({ error: 'docsLimit 需為 >= 0 的數字或 null' }, { status: 400 });
   }
+  if ('mediaLimit' in (body ?? {})) {
+    if (body!.mediaLimit === null) updates.mediaLimit = FieldValue.delete();
+    else if (typeof body!.mediaLimit === 'number' && body!.mediaLimit >= 0) {
+      updates.mediaLimit = Math.round(body!.mediaLimit);
+    } else return NextResponse.json({ error: 'mediaLimit 需為 >= 0 的數字或 null' }, { status: 400 });
+  }
   if (body?.resetVoiceUsed) updates.voiceSecondsUsed = 0;
   if (body?.resetDocsUsed) updates.docsUsed = 0;
+  if (body?.resetMediaUsed) updates.mediaUsed = 0;
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: '沒有要更新的欄位' }, { status: 400 });

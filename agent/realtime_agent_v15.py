@@ -34,7 +34,7 @@ from livekit.plugins import silero, anthropic, soniox
 from agent.minimax_tts import MiniMaxCustomTTS
 from agent.conv_tuning import build_turn_handling, get_im_threshold, get_temperature
 from agent.source_intake import handle_share_source
-from agent.quota_meter import VoiceMeter, consume_doc_quota
+from agent.quota_meter import VoiceMeter, consume_doc_quota, consume_media_quota
 from livekit import api as lk_api
 from agent.firestore_loader import (
     load_memories_for_recall, cosine_similarity, bump_hits, generate_embedding,
@@ -298,6 +298,14 @@ async def entrypoint(ctx: JobContext):
             parsed_params = _json.loads(params) if isinstance(params, str) else params
         except Exception:
             parsed_params = {}
+        # 媒體額度：直接生媒體的型別先扣 1（不足 → 誠實告知，不派工）。
+        # 失敗退量走 tasks/callback（job.failed）。DB 錯誤放行不阻斷（比照 consume_doc_quota）。
+        if task_type in ("image_generation", "audio_generation", "video_generation"):
+            try:
+                if not await asyncio.to_thread(consume_media_quota, user_id, 1):
+                    return "你的媒體生成額度已用罄，本次無法生成。如需增購請聯繫服務窗口。"
+            except Exception as e:
+                logger.error(f"[quota] consume_media_quota failed（放行不阻斷）: {e}")
         try:
             if task_type == "script_draft":
                 text = parsed_params.get("text", "")
