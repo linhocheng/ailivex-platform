@@ -30,7 +30,7 @@ steps:
       - '--min-instances=1'
       - '--max-instances=3'
       - '--memory=2Gi'
-      - '--cpu=1'
+      - '--cpu=2'
       - '--no-cpu-throttling'
       - '--cpu-boost'
 
