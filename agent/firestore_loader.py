@@ -930,9 +930,29 @@ def load_relationship(user_id: str, character_id: str) -> dict | None:
     }
 
 
+_OPENCC_S2TWP = None
+
+def _to_traditional(text: str) -> str:
+    """簡→繁。語音鏈 STT/LLM 簡體語境產出的字串入庫前硬轉，不靠模型自律。
+    字元級 s2tw（twp 詞組會改寫既有繁體）；「发文」詞典誤斷成「髮」先覆寫釘死。"""
+    global _OPENCC_S2TWP
+    if not text:
+        return text
+    try:
+        if _OPENCC_S2TWP is None:
+            from opencc import OpenCC
+            _OPENCC_S2TWP = OpenCC("s2tw")
+        return _OPENCC_S2TWP.convert(text.replace("发文", "發文"))
+    except Exception as e:
+        logger.warning(f"opencc 簡→繁失敗，原文入庫: {e}")
+        return text
+
+
 def create_document_job(user_id: str, character_id: str, title: str, brief: str) -> str:
     """建 Firestore document + job，直接派工 doc-worker，回傳 documentId。"""
     _ensure_init()
+    title = _to_traditional(title)
+    brief = _to_traditional(brief)
     db = firestore.client()
 
     doc_ref = db.collection("documents").document()

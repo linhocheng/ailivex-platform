@@ -10,6 +10,20 @@
 import express from 'express';
 import admin from 'firebase-admin';
 import { marked } from 'marked';
+import * as OpenCC from 'opencc-js';
+// 簡→繁機制級轉換：語音鏈的 brief/標題是簡體語境，出口硬轉不靠模型自律。
+// 字元級 s2tw（twp 詞組會改寫既有繁體）；「发文」詞典誤斷成「髮」先覆寫釘死。
+const s2tw = OpenCC.Converter({ from: 'cn', to: 'tw' });
+function toTraditional(text) {
+    if (!text)
+        return text;
+    try {
+        return s2tw(text.split('发文').join('發文'));
+    }
+    catch {
+        return text;
+    }
+}
 const PORT = Number(process.env.PORT) || 8080;
 const MODEL = 'claude-sonnet-4-6';
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '{}');
@@ -51,11 +65,13 @@ app.post('/process', async (req, res) => {
         const soul = (char?.soulCore?.trim() || char?.soul || '');
         const name = char?.name || '角色';
         await docRef.update({ status: 'writing' });
-        const md = await writeMarkdown(name, soul, job.brief);
+        const md = toTraditional(await writeMarkdown(name, soul, job.brief));
         await docRef.update({ status: 'rendering' });
         const html = renderHtml(name, md);
         const htmlUrl = await uploadHtml(job.userId, job.documentId, html);
-        await docRef.update({ mdContent: md, htmlUrl, status: 'done' });
+        // title 寫回：語音建檔時的簡體標題在此收斂成繁體
+        const docTitle = toTraditional((await docRef.get()).data()?.title || '');
+        await docRef.update({ mdContent: md, htmlUrl, status: 'done', ...(docTitle ? { title: docTitle } : {}) });
         await jobRef.update({ status: 'done' });
         res.status(200).json({ ok: true, htmlUrl });
     }
@@ -75,6 +91,7 @@ async function writeMarkdown(name, soul, brief) {
 
 你是「${name}」。現在請你親自寫一份正式文件（策略書 / 企劃書）。
 要求：用 markdown，結構清楚（標題、段落、條列、必要時表格）。
+一律以繁體中文（台灣用語）書寫，即使需求以簡體提供。
 直接寫文件本身，不要寒暄、不要說明你要做什麼、不要前言後語。`;
     const r = await fetch(`${url}/v1/messages`, {
         method: 'POST',

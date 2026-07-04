@@ -13,6 +13,7 @@ import { cleanSecret, cleanUrl, verifyWorkerSecret } from '@/lib/clean-env';
 import { COL, type DocumentDoc } from '@/lib/collections';
 import { loadPatterns, scanText, rewriteFlagged } from '@/lib/text-filter';
 import { refundDocQuota } from '@/lib/quota';
+import { toTraditional } from '@/lib/zh-convert';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -57,7 +58,8 @@ export async function POST(req: Request) {
     const name = char?.name || '角色';
 
     await docRef.update({ status: 'writing' });
-    let md = await writeMarkdown(name, soul, job.brief);
+    // 簡→繁機制級轉換：語音鏈（STT/LLM 簡體語境）來的 brief 會讓輸出帶簡體，出口硬轉不靠模型自律
+    let md = toTraditional(await writeMarkdown(name, soul, job.brief));
 
     // 文字過濾：文件是成品（出口是機器，渲染後用戶只讀），踩雷句自動改寫
     try {
@@ -75,11 +77,12 @@ export async function POST(req: Request) {
 
     await docRef.update({ status: 'rendering' });
     const docSnap = await docRef.get();
-    const title = (docSnap.data() as DocumentDoc).title || name;
+    const title = toTraditional((docSnap.data() as DocumentDoc).title || name);
     const html = renderHtml(title, md);
     const htmlUrl = await uploadHtml(job.userId, job.documentId, html);
 
-    await docRef.update({ mdContent: md, htmlUrl, status: 'done' });
+    // title 寫回：語音建檔時的簡體標題在此收斂成繁體
+    await docRef.update({ mdContent: md, htmlUrl, status: 'done', title });
     await jobRef.update({ status: 'done' });
 
     return NextResponse.json({ ok: true, htmlUrl });
@@ -100,6 +103,7 @@ async function writeMarkdown(name: string, soul: string, brief: string): Promise
 
 你是「${name}」。現在請你親自寫一份正式文件（策略書 / 企劃書）。
 要求：用 markdown，結構清楚（標題、段落、條列、必要時表格）。
+一律以繁體中文（台灣用語）書寫，即使需求以簡體提供。
 直接寫文件本身，不要寒暄、不要說明你要做什麼、不要前言後語。`;
 
   const res = await client.messages.create({
