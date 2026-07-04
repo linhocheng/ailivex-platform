@@ -27,7 +27,11 @@ Two user roles: **user** (front-of-house: lobby → text chat / voice call / doc
   Node runtime; `cloud-run/` is excluded from the TS build.
 - **Voice agent** — Python, LiveKit Agents `==1.5.1`, deployed to **Google Cloud Run, asia-east1**.
   One Cloud Run service per version, all built from a single shared Docker image.
-- **doc-worker** — Node/Express on Cloud Run (us-central1). Legacy/secondary document path.
+- **doc-worker** — Node/Express on Cloud Run (**asia-east1**). **PRIMARY document path.** Source
+  lives in a **separate repo**: `~/.ailive/ailivex-doc-worker` (github: linhocheng/ailivex-doc-worker)
+  — NOT in this repo. `POST /` + `x-worker-secret`; 900s timeout (long bridge generations). Deploy:
+  `bash scripts/deploy.sh` there. (The old us-central1 twin service + this repo's `cloud-run/doc-worker`
+  copy were deleted 2026-07-04 — they were dead copies that received no traffic.)
 - **Data** — Firestore (source of truth) + Google Cloud Storage (avatars, generated HTML). GCP
   project `ailivex-2026`.
 - **External models** — LiveKit Cloud (WebRTC) · Soniox STT `stt-rt-v4` (diarization on) ·
@@ -63,7 +67,6 @@ src/lib/            logic core (see cheat-sheet below)
 agent/              ⭐ LIVE Python voice agents — versioned (main_vN.py, realtime_agent_vN.py, cloudbuild-vN.yaml)
                     shared modules: multi_party.py, minimax_tts.py, firestore_loader.py, conv_tuning.py
 cloud-run/agent/    ⚠️ LEGACY snapshot of the BASE agent (309 lines, agent_name=ailivex-realtime). NOT live. Don't edit for current work.
-cloud-run/doc-worker/  Express doc worker (legacy/secondary doc path)
 scripts/            seed-admin.mts, reset-admin-pw.mjs, test-enqueue.mjs
 docs/               design history (the WHY) — memory architecture, voice group/proactive plan, pages spec
 ```
@@ -174,10 +177,11 @@ roster (`#N` → learned name), and 3a 收斂 (in groups, speak only when 判斷
 `want_to_speak`, not merely on silence).
 
 **Document generation**: text `[[DOCUMENT]]` or voice `write_document` → `jobs` + `documents` rows →
-dispatch `{jobId}` with `x-worker-secret` → **primary path = Vercel `/api/doc-process`** (bridge
-Sonnet 8192 tokens → `marked` → styled HTML → GCS public URL; retryable error → 500 + status
-`pending`, else → `failed`). The Cloud Run `doc-worker` (`POST /process`) is the legacy path; Cloud
-Tasks is deprecated. Download: PDF via `puppeteer-core`+`@sparticuz/chromium`, PPT via `pptxgenjs`
+dispatch `{jobId}` with `x-worker-secret` → **primary path = Cloud Run doc-worker (`POST /`, separate
+repo, asia-east1)** — `CLOUD_RUN_DOC_WORKER_URL` takes priority in `dispatchDocumentJob`; Vercel
+`/api/doc-process` is the fallback when that env is unset (bridge Sonnet 8192 tokens → 簡→繁 →
+text-filter → `marked` → styled HTML → GCS public URL; retryable error → 500 + status `pending`,
+else → `failed`). Both exits apply the output chain 轉繁 → 句型過濾 → 轉繁. Cloud Tasks is deprecated. Download: PDF via `puppeteer-core`+`@sparticuz/chromium`, PPT via `pptxgenjs`
 (`/api/documents/[id]/pdf|ppt`).
 
 **Memory prompt**: `build_system_prompt` (Python `agent/firestore_loader.py`, mirrored by TS
