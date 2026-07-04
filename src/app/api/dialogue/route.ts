@@ -19,7 +19,7 @@ import { loadHistory, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
-import { QuotaExceededError } from '@/lib/quota';
+import { QuotaExceededError, consumeTextQuota, refundTextQuota } from '@/lib/quota';
 import { dispatchTask } from '@/lib/task-dispatcher';
 import { upsertRelationship } from '@/lib/relationship';
 import { trackCost } from '@/lib/cost-tracker';
@@ -59,6 +59,22 @@ export async function POST(req: Request) {
   if (!charSnap.exists) return NextResponse.json({ error: '角色不存在' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
 
+  // 文字對話計量：每則 user 訊息扣 1；額度滿誠實告知（不進 LLM、不寫歷史）
+  let textRemaining: number | null = null;
+  try {
+    textRemaining = await consumeTextQuota(db, user.uid);
+  } catch (e) {
+    if (e instanceof QuotaExceededError) {
+      return NextResponse.json({
+        reply: '（您的文字對話額度已用罄，如需增購請聯繫您的服務窗口。）',
+        documents: [],
+        quotaExhausted: 'text',
+        textRemaining: 0,
+      });
+    }
+    throw e;
+  }
+
   // 靈魂優先序：soulCore → soul
   const soul = (char.soulCore && char.soulCore.trim()) || char.soul || '';
   const memoryBlock = await loadMemoryBlock(db, user.uid, characterId, message);
@@ -84,6 +100,9 @@ export async function POST(req: Request) {
     max_tokens: 2000,
     system,
     messages,
+  }).catch(async e => {
+    await refundTextQuota(db, user.uid); // LLM 失敗不吃額度
+    throw e;
   });
 
   const raw = textOf(res);
@@ -159,5 +178,5 @@ export async function POST(req: Request) {
     'dialogue', user.uid,
   );
 
-  return NextResponse.json({ reply, documents: createdDocs });
+  return NextResponse.json({ reply, documents: createdDocs, textRemaining });
 }

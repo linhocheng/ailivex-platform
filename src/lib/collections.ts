@@ -36,6 +36,8 @@ export interface UserDoc {
   docsUsed?: number;
   mediaLimit?: number;         // 媒體生成（圖片/影片/音檔）總份數上限
   mediaUsed?: number;
+  textLimit?: number;          // 文字對話總則數上限（以 user 訊息數計）
+  textUsed?: number;
 }
 
 export type CharacterStatus = 'active' | 'archived';

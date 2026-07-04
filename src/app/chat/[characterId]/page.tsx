@@ -22,6 +22,8 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 對話額度指引：null = 不限（不顯示）；0 = 用罄（系統卡 + 停用輸入）
+  const [textRemaining, setTextRemaining] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -29,7 +31,10 @@ export default function ChatPage() {
     fetch(`/api/conversation/${characterId}`).then(r => r.json())
       .then(r => { if (r.character) setChar(r.character); setMsgs(r.messages || []); })
       .catch(e => console.error('[chat] 載入對話失敗', e));
-    fetch('/api/me').then(r => r.json()).then(r => setIsAdmin(r.role === 'admin')).catch(e => console.error('[chat] 載入用戶資訊失敗', e));
+    fetch('/api/me').then(r => r.json()).then(r => {
+      setIsAdmin(r.role === 'admin');
+      if (typeof r.quota?.textRemaining === 'number') setTextRemaining(r.quota.textRemaining);
+    }).catch(e => console.error('[chat] 載入用戶資訊失敗', e));
   }, [characterId]);
 
   useEffect(() => {
@@ -43,8 +48,10 @@ export default function ChatPage() {
     ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
   }
 
+  const textExhausted = textRemaining !== null && textRemaining <= 0;
+
   async function send() {
-    const text = input.trim(); if (!text || sending) return;
+    const text = input.trim(); if (!text || sending || textExhausted) return;
     setInput(''); setTimeout(() => { if (taRef.current) taRef.current.style.height = 'auto'; }, 0);
     setMsgs(m => [...m, { role: 'user', content: text }]);
     setSending(true);
@@ -53,10 +60,18 @@ export default function ChatPage() {
       body: JSON.stringify({ characterId, message: text }),
     }).then(r => r.json()).catch(() => null);
     setSending(false);
+    if (r?.quotaExhausted === 'text') {
+      // 額度用罄：訊息沒送進角色（伺服器沒收），收回氣泡、亮系統卡
+      setMsgs(m => m.slice(0, -1));
+      setInput(text);
+      setTextRemaining(0);
+      return;
+    }
     if (r?.reply) {
       const newMsg: Msg = { role: 'assistant', content: r.reply };
       if (r.documents?.length) newMsg.doc = { id: r.documents[0].documentId, title: r.documents[0].title };
       setMsgs(m => [...m, newMsg]);
+      if (typeof r.textRemaining === 'number') setTextRemaining(r.textRemaining);
     } else {
       setMsgs(m => [...m, { role: 'assistant', content: '（連線出了點問題，再說一次？）' }]);
     }
@@ -175,27 +190,43 @@ export default function ChatPage() {
         {/* Input */}
         <div style={{ padding: '12px clamp(14px,4vw,40px) 18px', borderTop: '1px solid var(--border)',
           background: 'var(--bg)', flexShrink: 0 }}>
+          {textExhausted && (
+            <div className="ax-enter" style={{ maxWidth: 760, margin: '0 auto 10px', padding: '12px 18px',
+              borderRadius: 10, background: 'rgba(194,149,78,0.10)', border: '1px solid rgba(194,149,78,0.4)',
+              display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Dot color="#b98a3e" pulse />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#8a6a33' }}>您的文字對話則數已用罄</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 2 }}>如需增購對話則數，請聯繫您的服務窗口。</div>
+              </div>
+            </div>
+          )}
           <div style={{ maxWidth: 760, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 10,
             background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border-strong)', borderRadius: 8,
             padding: '8px 8px 8px 16px' }}>
-            <textarea ref={taRef} value={input} rows={1}
+            <textarea ref={taRef} value={input} rows={1} disabled={textExhausted}
               onChange={e => { setInput(e.target.value); autosize(); }}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder={`傳訊息給 ${char?.name || '…'}…`}
+              placeholder={textExhausted ? '對話則數已用罄' : `傳訊息給 ${char?.name || '…'}…`}
               style={{ flex: 1, resize: 'none', background: 'transparent', border: 'none', outline: 'none',
                 color: 'var(--text)', fontSize: 15, lineHeight: 1.5, padding: '8px 0',
-                maxHeight: 140, fontFamily: 'inherit' }} />
-            <button onClick={send} disabled={!input.trim() || sending}
+                maxHeight: 140, fontFamily: 'inherit', opacity: textExhausted ? 0.5 : 1 }} />
+            <button onClick={send} disabled={!input.trim() || sending || textExhausted}
               style={{ width: 40, height: 40, borderRadius: 8, border: 'none', flexShrink: 0,
-                background: input.trim() && !sending ? 'var(--accent)' : 'rgba(60,52,40,0.06)',
+                background: input.trim() && !sending && !textExhausted ? 'var(--accent)' : 'rgba(60,52,40,0.06)',
                 color: '#fff', display: 'grid', placeItems: 'center',
-                opacity: input.trim() && !sending ? 1 : 0.5,
-                cursor: input.trim() && !sending ? 'pointer' : 'default', transition: 'all .2s' }}>
+                opacity: input.trim() && !sending && !textExhausted ? 1 : 0.5,
+                cursor: input.trim() && !sending && !textExhausted ? 'pointer' : 'default', transition: 'all .2s' }}>
               <Icon name="send" size={18} />
             </button>
           </div>
           <div style={{ maxWidth: 760, margin: '6px auto 0', fontSize: 11.5, color: 'var(--muted)', textAlign: 'center' }}>
             Enter 送出 · Shift + Enter 換行
+            {textRemaining !== null && textRemaining > 0 && (
+              <span style={{ color: textRemaining <= 10 ? '#b98a3e' : 'var(--muted)', fontWeight: textRemaining <= 10 ? 600 : 400 }}>
+                {' · '}對話剩 {textRemaining} 則
+              </span>
+            )}
           </div>
         </div>
       </div>

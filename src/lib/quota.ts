@@ -22,11 +22,14 @@ export interface QuotaSnapshot {
   mediaLimit: number | null;
   mediaUsed: number;
   mediaRemaining: number | null;
+  textLimit: number | null;
+  textUsed: number;
+  textRemaining: number | null;
 }
 
 export class QuotaExceededError extends Error {
-  kind: 'voice' | 'docs' | 'media';
-  constructor(kind: 'voice' | 'docs' | 'media') {
+  kind: 'voice' | 'docs' | 'media' | 'text';
+  constructor(kind: 'voice' | 'docs' | 'media' | 'text') {
     super(`${kind}_quota_exhausted`);
     this.kind = kind;
   }
@@ -39,6 +42,8 @@ function toSnapshot(u: Partial<UserDoc> | undefined): QuotaSnapshot {
   const dUsed = Number(u?.docsUsed || 0);
   const mLimit = typeof u?.mediaLimit === 'number' ? u.mediaLimit : null;
   const mUsed = Number(u?.mediaUsed || 0);
+  const tLimit = typeof u?.textLimit === 'number' ? u.textLimit : null;
+  const tUsed = Number(u?.textUsed || 0);
   return {
     voiceSecondsLimit: vLimit,
     voiceSecondsUsed: vUsed,
@@ -49,6 +54,9 @@ function toSnapshot(u: Partial<UserDoc> | undefined): QuotaSnapshot {
     mediaLimit: mLimit,
     mediaUsed: mUsed,
     mediaRemaining: mLimit === null ? null : Math.max(0, mLimit - mUsed),
+    textLimit: tLimit,
+    textUsed: tUsed,
+    textRemaining: tLimit === null ? null : Math.max(0, tLimit - tUsed),
   };
 }
 
@@ -110,6 +118,33 @@ export async function consumeMediaQuota(db: Firestore, userId: string, count = 1
     }
     tx.update(ref, { mediaUsed: FieldValue.increment(count) });
   });
+}
+
+// 文字對話扣量：每則 user 訊息扣 1。transaction 內查+扣原子完成。額度滿丟 QuotaExceededError。
+// 回傳扣完後的剩餘則數（null = 不限），給對話頁顯示指引。
+export async function consumeTextQuota(db: Firestore, userId: string): Promise<number | null> {
+  if (!userId) return null;
+  const ref = db.collection(COL.users).doc(userId);
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const q = toSnapshot(snap.data() as UserDoc | undefined);
+    if (q.textRemaining !== null && q.textRemaining <= 0) {
+      throw new QuotaExceededError('text');
+    }
+    tx.update(ref, { textUsed: FieldValue.increment(1) });
+    return q.textRemaining === null ? null : q.textRemaining - 1;
+  });
+}
+
+// 文字對話退量：LLM 呼叫失敗時退 1（不讓失敗吃額度）；地板 0
+export async function refundTextQuota(db: Firestore, userId: string): Promise<void> {
+  if (!userId) return;
+  const ref = db.collection(COL.users).doc(userId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const used = Number((snap.data() as UserDoc | undefined)?.textUsed || 0);
+    if (used > 0) tx.update(ref, { textUsed: used - 1 });
+  }).catch(() => { /* 退量失敗不阻斷主流程 */ });
 }
 
 // 媒體退量：生成 failed 時退回（不讓失敗吃額度）；地板 0
