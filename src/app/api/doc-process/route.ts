@@ -69,7 +69,7 @@ export async function POST(req: Request) {
         const rewritten = await rewriteFlagged(md, hits, BRIDGE_ENDPOINT, BRIDGE_SECRET, soul);
         const residual = scanText(rewritten, patterns);
         console.log(`[text-filter] 文件踩雷 ${hits.length} 處（${[...new Set(hits.map(h => h.matched))].slice(0, 5).join('、')}）→ 改寫後殘留 ${residual.length}`);
-        md = rewritten;
+        md = toTraditional(rewritten); // 改寫句是模型輸出，出口前再過一次簡繁保險（冪等）
       }
     } catch (fe) {
       console.warn('[text-filter] 文件過濾失敗，保留原稿:', fe);

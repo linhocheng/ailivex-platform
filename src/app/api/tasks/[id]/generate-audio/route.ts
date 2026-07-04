@@ -11,12 +11,16 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
+import { loadPatterns, scanText, rewriteFlagged } from '@/lib/text-filter';
+import { toTraditional } from '@/lib/zh-convert';
 
 export const runtime = 'nodejs';
 
 const MEDIA_WORKER_URL = cleanUrl(process.env.MEDIA_WORKER_URL);
 const MEDIA_WORKER_KEY = cleanSecret(process.env.MEDIA_WORKER_KEY_AILIVEX);
 const WEBHOOK_SECRET = cleanSecret(process.env.MEDIA_WORKER_WEBHOOK_SECRET);
+const BRIDGE_ENDPOINT = `${cleanUrl((process.env.BRIDGE_URL ?? '').replace(/\/v1\/messages\/?$/, ''))}/v1/messages`;
+const BRIDGE_SECRET = cleanSecret(process.env.BRIDGE_SECRET);
 
 function callbackUrl(): string {
   const base = process.env.PLATFORM_URL
@@ -49,13 +53,30 @@ export async function POST(
   const scriptText = (body.text ?? draft.scriptText ?? '').trim();
   if (!scriptText) return NextResponse.json({ error: 'empty_text' }, { status: 400 });
 
-  // 取角色 voiceId（draft 存了 agent 當時的 voice_id，也可從 character doc 讀最新值）
+  // 取角色 voiceId（draft 存了 agent 當時的 voice_id，也可從 character doc 讀最新值）+ soul（過濾改寫保語氣用）
   let voiceId = draft.voiceId ?? '';
-  if (!voiceId && draft.characterId) {
+  let soul = '';
+  if (draft.characterId) {
     const charSnap = await db.collection(COL.characters).doc(draft.characterId).get();
     if (charSnap.exists) {
-      voiceId = (charSnap.data() as CharacterDoc).voiceIdMinimax ?? '';
+      const c = charSnap.data() as CharacterDoc;
+      if (!voiceId) voiceId = c.voiceIdMinimax ?? '';
+      soul = c.soul ?? '';
     }
+  }
+
+  // 出口是機器（TTS，沒有人再看一眼）：轉繁 → 句型過濾自動改寫 → 再轉繁收改寫尾（冪等保險）
+  let ttsText = toTraditional(scriptText);
+  try {
+    const patterns = await loadPatterns(db);
+    const hits = scanText(ttsText, patterns);
+    if (hits.length > 0) {
+      const rewritten = await rewriteFlagged(ttsText, hits, BRIDGE_ENDPOINT, BRIDGE_SECRET, soul);
+      console.log(`[text-filter] 腳本踩雷 ${hits.length} 處（${[...new Set(hits.map(h => h.matched))].slice(0, 3).join('、')}）→ 改寫後送 TTS`);
+      ttsText = toTraditional(rewritten);
+    }
+  } catch (fe) {
+    console.warn('[text-filter] 腳本過濾失敗，原文送 TTS:', fe);
   }
 
   if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) {
@@ -74,14 +95,14 @@ export async function POST(
     characterId: draft.characterId,
     type: 'audio_generation',
     intent: draft.intent,
-    params: { text: scriptText, voiceId },
+    params: { text: ttsText, voiceId },
     status: 'pending',
     notified: false,
     createdAt: FieldValue.serverTimestamp(),
   });
 
   // dispatch media-worker（非同步，不等）
-  enqueueAudio(audioTaskId, scriptText, voiceId).catch(err => {
+  enqueueAudio(audioTaskId, ttsText, voiceId).catch(err => {
     console.error('[generate-audio] dispatch error:', err);
     audioRef.update({ status: 'failed', error: String(err), completedAt: FieldValue.serverTimestamp() }).catch(() => {});
     refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
