@@ -21,7 +21,9 @@ const FAL_KEY = cleanSecret(process.env.FAL_KEY);
 function callbackUrl(videoTaskId: string): string {
   const base = process.env.PLATFORM_URL
     ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
-  return `${cleanUrl(base)}/api/tasks/kling-callback?taskId=${videoTaskId}`;
+  // webhook secret 帶在 query（fal.ai 不支援自訂 header），callback 端 fail-closed 驗證
+  const ws = cleanSecret(process.env.MEDIA_WORKER_WEBHOOK_SECRET) ?? '';
+  return `${cleanUrl(base)}/api/tasks/kling-callback?taskId=${videoTaskId}&ws=${encodeURIComponent(ws)}`;
 }
 
 async function generateMotionPrompt(text: string): Promise<string> {

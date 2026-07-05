@@ -8,6 +8,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL, type TaskDoc } from '@/lib/collections';
 import { refundMediaQuota } from '@/lib/quota';
+import { verifyWorkerSecret } from '@/lib/clean-env';
 
 export const runtime = 'nodejs';
 
@@ -24,6 +25,10 @@ type FalWebhookPayload = {
 
 export async function POST(req: Request) {
   const { searchParams } = new URL(req.url);
+  // webhook secret（query 帶入，派工時附上）：fail-closed，沒帶或不符一律拒
+  if (!verifyWorkerSecret(searchParams.get('ws'), process.env.MEDIA_WORKER_WEBHOOK_SECRET)) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   const taskId = searchParams.get('taskId');
   if (!taskId) return NextResponse.json({ error: 'missing_task_id' }, { status: 400 });
 

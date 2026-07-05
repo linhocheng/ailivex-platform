@@ -14,6 +14,19 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '20mb',
     },
   },
+  // 全站安全標頭（audit MEDIUM）。麥克風是語音通話必需，Permissions-Policy 只放行 self
+  async headers() {
+    return [{
+      source: '/(.*)',
+      headers: [
+        { key: 'X-Content-Type-Options', value: 'nosniff' },
+        { key: 'X-Frame-Options', value: 'DENY' },
+        { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
+        { key: 'Permissions-Policy', value: 'microphone=(self), camera=(), geolocation=()' },
+      ],
+    }];
+  },
 };
 
 export default nextConfig;
