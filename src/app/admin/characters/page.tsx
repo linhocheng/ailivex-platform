@@ -43,6 +43,26 @@ const EMOTIONS = [
   { value:'disgusted', label:'disgusted（厭惡）' },
 ];
 
+// 頭像前端壓縮：canvas 縮到 512px JPEG（顯示最大 120px，綽綽有餘）——根治 >3.4MB 撞 Vercel 4.5MB 的 413
+function compressImage(file: File): Promise<{ b64: string; type: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const max = 512;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve({ b64: canvas.toDataURL('image/jpeg', 0.85), type: 'image/jpeg' });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('圖片讀取失敗')); };
+    img.src = url;
+  });
+}
+
 const inputBase: React.CSSProperties = {
   background:'var(--panel-2)', border:'1px solid var(--border)', borderRadius:8,
   padding:'10px 12px', color:'var(--text)', fontSize:14, outline:'none', display:'block', width:'100%', boxSizing:'border-box',
@@ -163,11 +183,15 @@ export default function AdminCharacters() {
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({ emotion: 'neutral' });
   const [convSettings, setConvSettings] = useState<ConvSettings>({});
   const [soulCore, setSoulCore] = useState('');
+  const [createAliases, setCreateAliases] = useState('');
+  const [createCaps, setCreateCaps] = useState<TaskCapability[]>([]);
   const [avatar, setAvatar] = useState<{ b64: string; type: string } | null>(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [auditionText, setAuditionText] = useState('你好，我是這個角色的聲音，請多指教。');
   const [editing, setEditing] = useState<EditState | null>(null);
+  // 預載狀態：完整資料抓回來前禁止存檔（否則空殼 aliases/capabilities 會把 DB 洗空）
+  const [editLoading, setEditLoading] = useState(false);
   const [editMsg, setEditMsg] = useState('');
   const [editBusy, setEditBusy] = useState('');
   const [editAuditionText, setEditAuditionText] = useState('你好，我是這個角色的聲音，請多指教。');
@@ -292,15 +316,12 @@ export default function AdminCharacters() {
 
   function onAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => setAvatar({ b64: String(reader.result), type: f.type });
-    reader.readAsDataURL(f);
+    compressImage(f).then(setAvatar).catch(() => setMsg('圖片讀取失敗，請換一張'));
   }
   function onEditAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; if (!f || !editing) return;
-    const reader = new FileReader();
-    reader.onload = () => setEditing({ ...editing, avatar: { b64:String(reader.result), type:f.type } });
-    reader.readAsDataURL(f);
+    compressImage(f).then(avatar => setEditing(cur => cur ? { ...cur, avatar } : cur))
+      .catch(() => setEditMsg('圖片讀取失敗，請換一張'));
   }
 
   async function playVoice(vid: string, settings: VoiceSettings, text: string, setPlaying: (v: boolean) => void) {
@@ -336,21 +357,25 @@ export default function AdminCharacters() {
 
   async function create() {
     setMsg(''); setBusy('create');
-    const r = await fetch('/api/admin/characters', {
+    const resp = await fetch('/api/admin/characters', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ name, soul, soulCore: soulCore||undefined,
         avatarBase64:avatar?.b64, avatarContentType:avatar?.type,
-        voiceIdMinimax:voiceId||undefined, voiceSettings, convSettings }),
-    }).then(r => r.json()).catch(() => null);
+        voiceIdMinimax:voiceId||undefined, voiceSettings, convSettings,
+        capabilities: createCaps,
+        aliases: createAliases.split('\n').map(s => s.trim()).filter(Boolean) }),
+    }).catch(() => null);
+    const r = resp ? await resp.json().catch(() => null) : null;
     setBusy('');
     if (r?.id) {
       setName(''); setSoul(''); setSoulCore(''); setVoiceId(''); setVoiceSettings({}); setConvSettings({}); setAvatar(null);
+      setCreateAliases(''); setCreateCaps([]);
       setMsg('已建立角色'); load();
-    } else setMsg(r?.error || '建立失敗');
+    } else setMsg(resp?.status === 413 ? '圖片過大，請換一張再試' : (r?.error || '建立失敗'));
   }
 
   async function saveEdit() {
-    if (!editing) return;
+    if (!editing || editLoading) return; // 完整資料未回來前不准存（防空殼洗掉欄位）
     setEditMsg(''); setEditBusy('save');
     const payload: Record<string, unknown> = { name: editing.name };
     if (editing.soul.trim()) payload.soul = editing.soul.trim();
@@ -363,13 +388,14 @@ export default function AdminCharacters() {
     payload.imageStyle = editing.imageStyle;
     payload.heygenAvatarId = editing.heygenAvatarId;
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
-    const r = await fetch(`/api/admin/characters/${editing.id}`, {
+    const resp = await fetch(`/api/admin/characters/${editing.id}`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(payload),
-    }).then(r => r.json()).catch(() => null);
+    }).catch(() => null);
+    const r = resp ? await resp.json().catch(() => null) : null;
     setEditBusy('');
     if (r?.ok) { setEditing(null); load(); }
-    else setEditMsg(r?.error || '儲存失敗');
+    else setEditMsg(resp?.status === 413 ? '圖片過大，請換一張再試' : (r?.error || '儲存失敗'));
   }
 
   async function reEnhanceEdit() {
@@ -433,9 +459,15 @@ export default function AdminCharacters() {
                   )}
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
+                    setEditLoading(true); // 完整資料回來前擋存檔
                     setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
-                    if (r?.id) setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                    if (r?.id) {
+                      setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                      setEditLoading(false);
+                    } else {
+                      setEditMsg('完整資料載入失敗——請關閉視窗重開，此狀態下不能儲存（避免把欄位洗成空白）');
+                    }
                   }} style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
@@ -481,6 +513,22 @@ export default function AdminCharacters() {
           <Field label="靈魂（用角色能理解的話寫）">
             <textarea style={{ ...inputBase, minHeight:140, resize:'vertical', fontFamily:'inherit' }}
               placeholder="用第一人稱描述角色的個性、語氣、記憶、使命…" value={soul} onChange={e=>setSoul(e.target.value)} />
+          </Field>
+          <Field label="別名（每行一個，選填，多人房點名用）">
+            <textarea style={{ ...inputBase, minHeight:60, resize:'vertical', fontFamily:'inherit', fontSize:13 }}
+              placeholder={'例：\n福哥\n王永福'} value={createAliases} onChange={e=>setCreateAliases(e.target.value)} />
+          </Field>
+          <Field label="角色能力（派發任務權限，選填）">
+            <div style={{ display:'flex', gap:12, flexWrap:'wrap', padding:'6px 0' }}>
+              {ALL_CAPABILITIES.map(cap => (
+                <label key={cap.value} style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, cursor:'pointer' }}>
+                  <input type="checkbox"
+                    checked={createCaps.includes(cap.value)}
+                    onChange={e => setCreateCaps(prev => e.target.checked ? [...prev, cap.value] : prev.filter(c => c !== cap.value))} />
+                  {cap.label}
+                </label>
+              ))}
+            </div>
           </Field>
           <Field label="MiniMax Voice ID（選填）">
             <TextInput value={voiceId} onChange={e=>setVoiceId(e.target.value)} placeholder="voice id" />
@@ -760,7 +808,10 @@ export default function AdminCharacters() {
             padding:28, width:'100%', maxWidth:560, display:'flex', flexDirection:'column', gap:14,
             maxHeight:'90vh', overflowY:'auto', boxShadow:'0 24px 60px -20px rgba(0,0,0,0.35)' }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:2 }}>
-              <div style={{ fontSize:16, fontWeight:600 }}>編輯角色 — {editing.name}</div>
+              <div style={{ fontSize:16, fontWeight:600 }}>
+                編輯角色 — {editing.name}
+                {editLoading && <span style={{ marginLeft:10, fontSize:12, fontWeight:400, color:'var(--muted)' }}>載入完整資料中…</span>}
+              </div>
               <button onClick={() => setEditing(null)} title="關閉"
                 style={{ display:'grid', placeItems:'center', width:32, height:32, borderRadius:6, flexShrink:0,
                   border:'1px solid var(--border)', background:'transparent', color:'var(--muted)', cursor:'pointer' }}>
@@ -849,8 +900,8 @@ export default function AdminCharacters() {
             </div>
             {editMsg && <div style={{ fontSize:13, color:'#b5654a' }}>{editMsg}</div>}
             <div style={{ display:'flex', gap:10, marginTop:4 }}>
-              <GlowButton onClick={saveEdit} disabled={!!editBusy || !editing.name}>
-                {editBusy==='save' ? '儲存中…' : '儲存'}
+              <GlowButton onClick={saveEdit} disabled={!!editBusy || !editing.name || editLoading}>
+                {editBusy==='save' ? '儲存中…' : editLoading ? '載入中…' : '儲存'}
               </GlowButton>
               <button onClick={() => setEditing(null)}
                 style={{ padding:'10px 18px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text)', fontSize:14, cursor:'pointer' }}>

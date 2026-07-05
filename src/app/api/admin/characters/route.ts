@@ -32,6 +32,7 @@ export async function POST(req: Request) {
     avatarBase64?: string; avatarContentType?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings; convSettings?: ConvSettings;
     capabilities?: TaskCapability[];
+    aliases?: string[];
   } | null;
 
   const name = body?.name?.trim();
@@ -54,6 +55,7 @@ export async function POST(req: Request) {
     voiceSettings: sanitizeVoiceSettings(body?.voiceSettings),
     convSettings: sanitizeConvSettings(body?.convSettings),
     capabilities: Array.isArray(body?.capabilities) ? body.capabilities.filter(c => ALL_CAPABILITIES.includes(c)) : [],
+    aliases: Array.isArray(body?.aliases) ? body.aliases.map(s => String(s).trim()).filter(Boolean) : [],
     status: 'active',
     createdAt: new Date(),
   };
