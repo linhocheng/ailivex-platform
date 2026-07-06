@@ -10,6 +10,7 @@ import { getCurrentUser } from '@/lib/session';
 import { hasAccess } from '@/lib/access';
 import { COL, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { podcastJobEnabled, runPodcastJob } from '@/lib/run-podcast-job';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -69,12 +70,25 @@ export async function POST(req: Request) {
     createdAt: FieldValue.serverTimestamp(),
   });
 
+  if (podcastJobEnabled()) {
+    // 正路：Cloud Run Job（腳本長生成不受 service 閒置回收威脅）。
+    // 參數 job 端從 task doc 讀（上面已寫入 podcastCharacterIds 等欄位）。
+    try {
+      await runPodcastJob(taskRef.id, 'script');
+    } catch (err) {
+      console.error('[generate-script] job dispatch failed:', err instanceof Error ? err.message : err);
+      await taskRef.update({ status: 'failed', error: '派工失敗，請重試' }).catch(() => {});
+      return NextResponse.json({ error: 'dispatch failed' }, { status: 502 });
+    }
+    return NextResponse.json({ taskId: taskRef.id }, { status: 202 });
+  }
+
   if (!PODCAST_WORKER_URL) {
     await taskRef.update({ status: 'failed', error: 'PODCAST_WORKER_URL 未設定' });
     return NextResponse.json({ error: 'worker not configured' }, { status: 503 });
   }
 
-  // Fire-and-forget — Cloud Run worker 跑生成，不等結果
+  // 回退路：Fire-and-forget — Cloud Run worker 跑生成，不等結果
   fetch(`${PODCAST_WORKER_URL}/run`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-worker-secret': WORKER_SECRET },

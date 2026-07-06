@@ -13,6 +13,7 @@ import { COL, type TaskDoc, type PodcastLine } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { loadPatterns, scanText, rewriteFlagged } from '@/lib/text-filter';
 import { toTraditional } from '@/lib/zh-convert';
+import { podcastJobEnabled, runPodcastJob } from '@/lib/run-podcast-job';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120; // 逐句過濾改寫可能吃掉數十秒
@@ -72,6 +73,19 @@ export async function POST(req: Request) {
 
   // 先標 running，讓腳本庫立刻顯示「生成中」；podcastScript 同步存過濾後版本（音檔=紀錄，真相一致）
   await taskSnap.ref.update({ status: 'running', podcastPhase: 'audio_pending', podcastScript: filteredScript });
+
+  if (podcastJobEnabled()) {
+    // 正路：Cloud Run Job（長 TTS 不受 service 閒置回收威脅）。
+    // 過濾後 script 已寫回 task doc（上一行），job 端讀 doc。
+    try {
+      await runPodcastJob(taskId, 'audio');
+    } catch (err) {
+      console.error('[generate-audio] job dispatch failed:', err instanceof Error ? err.message : err);
+      await taskSnap.ref.update({ status: 'failed', error: '音檔派工失敗，請重試' }).catch(() => {});
+      return NextResponse.json({ error: 'dispatch failed' }, { status: 502 });
+    }
+    return NextResponse.json({ accepted: true, taskId }, { status: 202 });
+  }
 
   fetch(`${PODCAST_WORKER_URL}/run-audio`, {
     method: 'POST',

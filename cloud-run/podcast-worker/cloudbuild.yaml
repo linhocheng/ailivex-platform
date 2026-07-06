@@ -27,7 +27,9 @@ steps:
       - --platform=managed
       - --allow-unauthenticated
       - --no-cpu-throttling
-      - --min-instances=1
+      # 2026-07-06 降 0：長生成已搬 Cloud Run Job（ailivex-podcast-job），
+      # service 只剩秒回 202 的舊入口（過渡期回退用），不需常駐
+      - --min-instances=0
       - --max-instances=3
       - --memory=512Mi
       - --cpu=1
@@ -37,6 +39,28 @@ steps:
       - --set-env-vars=FIREBASE_PROJECT_ID=ailivex-2026,FIREBASE_STORAGE_BUCKET=ailivex-2026-assets,BRIDGE_URL=https://bridge-direct.soul-polaroid.work
       - >-
         --set-secrets=BRIDGE_SECRET=BRIDGE_SECRET:latest,WORKER_SECRET=WORKER_SECRET:latest,MINIMAX_API_KEY=MINIMAX_API_KEY:latest,MINIMAX_GROUP_ID=MINIMAX_GROUP_ID:latest
+
+  # 長生成正路：Cloud Run Job（跑到完成才結束、按執行時間計費、零常駐）。
+  # 業務失敗寫回 task doc 後 exit 0，所以 --max-retries=0（重試交給人）。
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ailivex-podcast-job
+      - --image=asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA
+      - --region=asia-east1
+      - --command=node
+      - --args=dist/job.js
+      - --task-timeout=3600
+      - --max-retries=0
+      - --memory=512Mi
+      - --cpu=1
+      - --service-account=ailivex-app@$PROJECT_ID.iam.gserviceaccount.com
+      - --set-env-vars=JOB_MODE=1,FIREBASE_PROJECT_ID=ailivex-2026,FIREBASE_STORAGE_BUCKET=ailivex-2026-assets,BRIDGE_URL=https://bridge-direct.soul-polaroid.work
+      - >-
+        --set-secrets=BRIDGE_SECRET=BRIDGE_SECRET:latest,MINIMAX_API_KEY=MINIMAX_API_KEY:latest,MINIMAX_GROUP_ID=MINIMAX_GROUP_ID:latest
 
 images:
   - asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/podcast-worker:$COMMIT_SHA

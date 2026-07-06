@@ -30,10 +30,10 @@ if (!getApps().length) {
     storageBucket: FIREBASE_STORAGE_BUCKET || undefined,
   });
 }
-const db = getFirestore();
+export const db = getFirestore();
 
 // ── Types ──────────────────────────────────────────────────────────────
-interface Character {
+export interface Character {
   id: string;
   name: string;
   soul: string;
@@ -399,15 +399,7 @@ app.post('/run', async (req, res) => {
   }
 
   // 先讀角色（驗證），回 202 後再跑生成
-  const charSnaps = await Promise.all(characterIds.map((id: string) => db.collection('characters').doc(id).get()));
-  const characters = charSnaps
-    .map((s, i) => {
-      if (!s.exists) return null;
-      const d = s.data() as { name: string; soul: string; soulCore?: string };
-      const ch: Character = { id: characterIds[i], name: d.name, soul: d.soul, soulCore: d.soulCore };
-      return ch;
-    })
-    .filter((c): c is Character => c !== null);
+  const characters = await loadCharacters(characterIds);
 
   if (characters.length === 0) {
     await taskRef.update({ status: 'failed', error: '找不到角色' });
@@ -416,27 +408,45 @@ app.post('/run', async (req, res) => {
   }
 
   // 先回 202（Vercel 10s 後 abort 的 AbortSignal 安全著陸）
-  // --no-cpu-throttling + --min-instances=1 確保後台繼續跑不被 throttle
   res.status(202).json({ status: 'accepted', taskId });
 
-  setImmediate(async () => {
-    try {
-      console.log(`[podcast-worker] start taskId=${taskId} chars=${characters.map(c => c.name).join('×')} words=${wordCount ?? 600}`);
-      const script = await generateScript(characters, topic, wordCount ?? 600, focus);
-      await taskRef.update({
-        status: 'scripted',
-        podcastScript: script,
-        podcastPhase: 'script_done',
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      console.log(`[podcast-worker] done taskId=${taskId} lines=${script.length} chars=${script.reduce((s, l) => s + l.text.length, 0)}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[podcast-worker] error taskId=${taskId}: ${msg}`);
-      await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
-    }
-  });
+  setImmediate(() => runScriptWork(taskId, characters, topic, wordCount, focus));
 });
+
+/** 依 id 載入角色（route 與 job 入口共用） */
+export async function loadCharacters(characterIds: string[]): Promise<Character[]> {
+  const charSnaps = await Promise.all(characterIds.map((id: string) => db.collection('characters').doc(id).get()));
+  return charSnaps
+    .map((s, i) => {
+      if (!s.exists) return null;
+      const d = s.data() as { name: string; soul: string; soulCore?: string };
+      const ch: Character = { id: characterIds[i], name: d.name, soul: d.soul, soulCore: d.soulCore };
+      return ch;
+    })
+    .filter((c): c is Character => c !== null);
+}
+
+/** 腳本生成本體（route 背景與 Cloud Run Job 共用）。錯誤寫回 task doc，不往外丟。 */
+export async function runScriptWork(
+  taskId: string, characters: Character[], topic?: string, wordCount?: number, focus?: string,
+): Promise<void> {
+  const taskRef = db.collection('tasks').doc(taskId);
+  try {
+    console.log(`[podcast-worker] start taskId=${taskId} chars=${characters.map(c => c.name).join('×')} words=${wordCount ?? 600}`);
+    const script = await generateScript(characters, topic, wordCount ?? 600, focus);
+    await taskRef.update({
+      status: 'scripted',
+      podcastScript: script,
+      podcastPhase: 'script_done',
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    console.log(`[podcast-worker] done taskId=${taskId} lines=${script.length} chars=${script.reduce((s, l) => s + l.text.length, 0)}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[podcast-worker] error taskId=${taskId}: ${msg}`);
+    await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
+  }
+}
 
 // 音檔生成：Vercel fire-and-forget 過來，202 後背景跑（同腳本生成的模式）
 app.post('/run-audio', async (req, res) => {
@@ -470,19 +480,26 @@ app.post('/run-audio', async (req, res) => {
 
   res.status(202).json({ status: 'accepted', taskId });
 
-  setImmediate(async () => {
-    try {
-      console.log(`[podcast-worker] audio start taskId=${taskId} lines=${lines.length}`);
-      const audioUrl = await generateAudio(taskId, lines, BRIDGE_ENDPOINT, BRIDGE_SECRET);
-      console.log(`[podcast-worker] audio done taskId=${taskId} url=${audioUrl.split('?')[0]}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[podcast-worker] audio error taskId=${taskId}: ${msg}`);
-      await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
-    }
-  });
+  setImmediate(() => runAudioWork(taskId, lines));
 });
 
-app.listen(PORT, () => {
-  console.log(`[podcast-worker] listening on :${PORT}`);
-});
+/** 音檔生成本體（route 背景與 Cloud Run Job 共用）。錯誤寫回 task doc，不往外丟。 */
+export async function runAudioWork(taskId: string, lines: AudioLine[]): Promise<void> {
+  const taskRef = db.collection('tasks').doc(taskId);
+  try {
+    console.log(`[podcast-worker] audio start taskId=${taskId} lines=${lines.length}`);
+    const audioUrl = await generateAudio(taskId, lines, BRIDGE_ENDPOINT, BRIDGE_SECRET);
+    console.log(`[podcast-worker] audio done taskId=${taskId} url=${audioUrl.split('?')[0]}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[podcast-worker] audio error taskId=${taskId}: ${msg}`);
+    await taskRef.update({ status: 'failed', error: msg }).catch(() => {});
+  }
+}
+
+// Cloud Run Job 模式（JOB_MODE=1，入口 dist/job.js）時不開 HTTP server
+if (!process.env.JOB_MODE) {
+  app.listen(PORT, () => {
+    console.log(`[podcast-worker] listening on :${PORT}`);
+  });
+}
