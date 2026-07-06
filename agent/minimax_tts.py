@@ -43,6 +43,7 @@ _cc_failed = False
 # 借同音字定音——微秒級字串替換，跟 opencc 同收斂點，零延遲影響
 _NORMALIZE_RULES = [
     ("混淆", "混摇"),      # 台灣唸 hùn-yáo，MiniMax 唸 hùn-xiáo → 借「摇」
+    ("飞弹", "飞蛋"),      # 彈(dàn) 被唸 tán → 借「蛋」（2026-07-06 Adam 耳測；台灣詞 MiniMax 不熟）
     ("划一划", "画一画"),   # 劃(huà) 簡化成「划」被唸 huá → 借「画」
 ]
 _NORMALIZE_RE = [
