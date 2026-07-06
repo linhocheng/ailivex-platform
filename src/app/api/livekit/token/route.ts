@@ -12,6 +12,7 @@ import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, agentNameForVersion, type CharacterDoc, type AccessDoc } from '@/lib/collections';
 import { checkVoiceQuota, QuotaExceededError } from '@/lib/quota';
+import { touchLastCallAt } from '@/lib/voice-power';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,13 @@ export async function POST(req: Request) {
 
   const db = getFirestore();
   const userId = user.uid;
+
+  // 電源咽喉閘：後台語音開關關閉時一律拒發 token（admin 也擋，避免測試假象）。
+  // 這裡是撥號唯一入口，擋住這裡＝不可能派工，與雲端實例殘尾無關。
+  const powerSnap = await db.collection('config').doc('voicePower').get();
+  if (powerSnap.exists && (powerSnap.data() as { on?: boolean }).on === false) {
+    return NextResponse.json({ error: 'voice_power_off', message: '語音引擎已關閉' }, { status: 403 });
+  }
 
   // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（v14）。
   // 一般用戶需有 access doc；admin 免 access doc 直接進。
@@ -81,6 +89,7 @@ export async function POST(req: Request) {
   });
 
   const token = await at.toJwt();
+  touchLastCallAt(); // auto-off cron 以此判定「還有人在用」
   return NextResponse.json({
     token, url, roomName, identity: userId,
     characterName: char.name || '',

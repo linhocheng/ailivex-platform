@@ -1,5 +1,6 @@
 {
   "crons": [
-    { "path": "/api/cron/memory-maintenance", "schedule": "0 19 * * *" }
+    { "path": "/api/cron/memory-maintenance", "schedule": "0 19 * * *" },
+    { "path": "/api/cron/voice-auto-off", "schedule": "*/30 * * * *" }
   ]
 }
