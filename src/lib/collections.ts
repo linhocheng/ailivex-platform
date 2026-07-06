@@ -109,7 +109,8 @@ export interface AccessDoc {
  *   v12   讀網址（通話中貼網址讓角色讀取摘要）
  *   v13   任務派發（語音下指令生圖 / 生音檔）
  *   v14   腳本草稿 + 音檔生成（dispatch_task script_draft）
- *   v15   ★ LIVE — 記憶對等（embedding/dedup/hitCount）+ 通話中動態想起（回滾=DEFAULT 切回 v14）
+ *   v15   記憶對等（embedding/dedup/hitCount）+ 通話中動態想起
+ *   v16   ★ LIVE — 語音延遲優化（VAD prewarm + min_silence 0.3 + TTS 首段 flush）（回滾=DEFAULT 切回 v15，v15 服務保持熱備）
  */
 export const VOICE_VERSIONS = [
   { id: 'base', label: '基礎', agentName: 'ailivex-realtime' },
@@ -125,10 +126,11 @@ export const VOICE_VERSIONS = [
   { id: 'v12', label: '12',   agentName: 'ailivex-realtime-v12' },
   { id: 'v13', label: '13',   agentName: 'ailivex-realtime-v13' },
   { id: 'v14', label: '14',   agentName: 'ailivex-realtime-v14' },
-  { id: 'v15', label: '15',   agentName: 'ailivex-realtime-v15' }, // LIVE — 記憶對等 + 通話中動態想起
+  { id: 'v15', label: '15',   agentName: 'ailivex-realtime-v15' }, // 記憶對等 + 通話中動態想起
+  { id: 'v16', label: '16',   agentName: 'ailivex-realtime-v16' }, // LIVE — 語音延遲優化（prewarm/VAD 0.3/首段 flush）
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v15';
+export const DEFAULT_VOICE_VERSION = 'v16';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {

@@ -101,7 +101,7 @@ export default function ChatPage() {
           {/* header 原則：只放「這場對話」的動作。語音通話 = 主 CTA（accent）；
               媒體庫/故事板等全域導航收進 ⋯ 溢出選單（不跟對話動作搶視覺） */}
           {char?.hasVoice && (
-            <Link href={`/realtime-v15/${characterId}`}
+            <Link href={`/realtime-v16/${characterId}`}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 16px', fontSize: 13.5,
                 fontWeight: 600, borderRadius: 8, border: 'none', flexShrink: 0,
                 background: 'var(--accent)', color: '#fff',

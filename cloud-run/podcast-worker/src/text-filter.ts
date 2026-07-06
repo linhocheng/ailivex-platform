@@ -59,6 +59,11 @@ export const DEFAULT_PATTERNS: FilterPattern[] = [
     regex: '(什麼|什麽|有些東西)(落|降落|安放|安頓)(了)?(下來)',
     note: '有什麼落了下來',
   },
+  {
+    id: 'spatial-interrogate',
+    regex: '(往|向|再往)前[^，。！？]{0,4}(追|逼|推)(問|问)?(你|妳|您)',
+    note: '往前一步追你——空間隱喻語意含混，說清楚：是多說、多問、還是追問（2026-07-06）',
+  },
 ];
 
 export function compilePatterns(patterns: FilterPattern[]): Array<{ id: string; re: RegExp }> {

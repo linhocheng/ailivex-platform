@@ -14,6 +14,7 @@ MiniMax TTS — 自訂 LiveKit TTS Plugin（WebSocket 真串流版）
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -29,10 +30,32 @@ MINIMAX_WS_URL = "wss://api.minimax.io/ws/v1/t2a_v2"
 # 不含 \n：換行不是句尾，否則會切出空白片段造成微停頓/碎裂感
 _SENTENCE_END = "。！？!?…"
 _MAX_SEGMENT_CHARS = 40
+# 首段提早 flush 專用（first_segment_max_chars > 0 時）：第一段連逗號/頓號也算切點，
+# 讓 TTS 更早開始出聲；第一段送出後回到 _SENTENCE_END/_MAX_SEGMENT_CHARS 常規，保語氣連貫
+_FIRST_SEG_SOFT = "，,、；;：:"
 
 # ── 繁→簡硬轉（確定性保證 MiniMax 收到簡體）──
 _cc = None
 _cc_failed = False
+
+
+# 破音字表（v16.3，與 UDN/ailivex TS 版 tts-normalize 同步）：規則作用在簡體文本上，
+# 借同音字定音——微秒級字串替換，跟 opencc 同收斂點，零延遲影響
+_NORMALIZE_RULES = [
+    ("混淆", "混摇"),      # 台灣唸 hùn-yáo，MiniMax 唸 hùn-xiáo → 借「摇」
+    ("划一划", "画一画"),   # 劃(huà) 簡化成「划」被唸 huá → 借「画」
+]
+_NORMALIZE_RE = [
+    (re.compile(r"划(?=[^，。！？]{0,4}线)"), "画"),  # 划線／划清界线 同病
+]
+
+
+def _normalize_pronunciation(text: str) -> str:
+    for old, new in _NORMALIZE_RULES:
+        text = text.replace(old, new)
+    for pat, new in _NORMALIZE_RE:
+        text = pat.sub(new, text)
+    return text
 
 
 def _to_simplified(text: str) -> str:
@@ -43,7 +66,7 @@ def _to_simplified(text: str) -> str:
         if _cc is None:
             from opencc import OpenCC
             _cc = OpenCC("t2s")
-        return _cc.convert(text)
+        return _normalize_pronunciation(_cc.convert(text))
     except Exception as e:  # opencc 缺失/異常 → 不擋語音，原文送出並警告
         _cc_failed = True
         logger.warning(f"opencc 繁→簡失敗，改送原文: {e}")
@@ -61,6 +84,7 @@ class MiniMaxTTSOptions:
     pitch: float = 0.0
     emotion: str = ""   # 空字串 = API 自動推斷
     sample_rate: int = 24000
+    first_segment_max_chars: int = 0   # >0 = 首段提早 flush（壓首聲延遲）；0 = 關閉（所有舊版本行為不變）
 
 
 def _voice_setting(opts: MiniMaxTTSOptions) -> dict:
@@ -135,6 +159,7 @@ class MiniMaxCustomTTS(tts.TTS):
         pitch: float = 0.0,
         emotion: str = "",
         sample_rate: int = 24000,
+        first_segment_max_chars: int = 0,
     ):
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=True),
@@ -144,6 +169,7 @@ class MiniMaxCustomTTS(tts.TTS):
         self._opts = MiniMaxTTSOptions(
             api_key=api_key, group_id=group_id, voice_id=voice_id, model=model,
             speed=speed, vol=vol, pitch=pitch, emotion=emotion, sample_rate=sample_rate,
+            first_segment_max_chars=first_segment_max_chars,
         )
         self._session: aiohttp.ClientSession | None = None
 
@@ -241,22 +267,34 @@ class MiniMaxSynthesizeStream(tts.SynthesizeStream):
 
             async def _forward_input() -> None:
                 buf = ""
+                sent = False   # 首段已送出？（first_segment_max_chars 只作用在第一段）
+
+                async def _send(b: str) -> None:
+                    nonlocal sent
+                    seg = _seg(b)
+                    if seg:
+                        await ws.send_json({"event": "task_continue", "text": seg})
+                        sent = True
+
+                def _should_flush(b: str) -> bool:
+                    if not b:
+                        return False
+                    if (not sent and opts.first_segment_max_chars > 0
+                            and (b[-1] in _FIRST_SEG_SOFT
+                                 or len(b) >= opts.first_segment_max_chars)):
+                        return True
+                    return b[-1] in _SENTENCE_END or len(b) >= _MAX_SEGMENT_CHARS
+
                 async for data in self._input_ch:
                     if isinstance(data, self._FlushSentinel):
-                        seg = _seg(buf)
-                        if seg:
-                            await ws.send_json({"event": "task_continue", "text": seg})
+                        await _send(buf)
                         buf = ""
                         continue
                     buf += data
-                    if buf and (buf[-1] in _SENTENCE_END or len(buf) >= _MAX_SEGMENT_CHARS):
-                        seg = _seg(buf)
-                        if seg:
-                            await ws.send_json({"event": "task_continue", "text": seg})
+                    if _should_flush(buf):
+                        await _send(buf)
                         buf = ""
-                seg = _seg(buf)
-                if seg:
-                    await ws.send_json({"event": "task_continue", "text": seg})
+                await _send(buf)
                 await ws.send_json({"event": "task_finish"})
 
             async def _recv_audio() -> None:

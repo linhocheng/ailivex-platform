@@ -77,6 +77,12 @@ export const DEFAULT_PATTERNS: FilterPattern[] = [
     note: '有什麼落了下來',
     category: 'ai-flavor',
   },
+  {
+    id: 'spatial-interrogate',
+    regex: '(往|向|再往)前[^，。！？]{0,4}(追|逼|推)(問|问)?(你|妳|您)',
+    note: '往前一步追你——空間隱喻語意含混，說清楚：是多說、多問、還是追問',
+    category: 'ai-flavor',
+  },
   // ── clickbait：農場詞（新聞編輯台禁用清單的程式化）──────────────────────
   {
     id: 'shocking',
