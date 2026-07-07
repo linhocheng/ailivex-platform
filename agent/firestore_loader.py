@@ -2,7 +2,7 @@
 ailivex firestore_loader — 從 ailivex Firestore schema 讀角色 + 對話 + 記憶
 
 Collections:
-  characters.{characterId}: name, soul, soulCore, voiceIdMinimax, voiceSettings
+  characters.{characterId}: name, soul, voiceIdMinimax, voiceSettings
   conversations.{convId}:  userId, characterId, messages[], summary, updatedAt
   memories (query by userId+characterId): content, tier, type, hitCount, importance
 
@@ -110,7 +110,7 @@ def _ensure_init():
 class CharacterContext:
     character_id: str
     name: str
-    soul_text: str          # soulCore 優先，fallback soul
+    soul_text: str          # 單一真相 soul（舊 soulCore 已退役）
     voice_id_minimax: str
     voice_settings: dict = field(default_factory=dict)
     conv_settings: dict = field(default_factory=dict)   # 對話手感：responseSpeed/interruptSensitivity/imThreshold/interruptThreshold
@@ -160,7 +160,7 @@ def load_character(character_id: str) -> CharacterContext:
     if not snap.exists:
         raise ValueError(f"Character {character_id} not found")
     d = snap.to_dict()
-    soul_text = d.get("soulCore") or d.get("soul") or ""
+    soul_text = d.get("soul") or d.get("soulCore") or ""  # 單一真相=soul（soulCore 已於 2026-07-03 遷移退役）
     return CharacterContext(
         character_id=character_id,
         name=d.get("name", ""),
@@ -316,13 +316,13 @@ def save_conversation(conv_id: str, user_id: str, character_id: str, messages: l
 
 def write_memory(user_id: str, character_id: str, content: str, source: str = "voice",
                  mem_type: str = "fact", importance: int = 5) -> str:
-    """寫一條新記憶（含 embedding + 0.85 cosine 去重，與 TS writeMemory 對等），回傳 doc id；重複回空字串"""
+    """寫一條新記憶（含 embedding + 雙門檻去重 cosine>=0.9 AND bigram>=0.5，與 TS writeMemory 對等），回傳 doc id；重複回空字串"""
     _ensure_init()
     db = firestore.client()
 
     embedding = generate_embedding(content)
 
-    # dedup：同 (userId×characterId) 撈 50 條，任一 cosine >= 0.85 判重複丟棄
+    # dedup：同 (userId×characterId×type) 撈 50 條，雙門檻（cosine>=0.9 AND bigram>=0.5）判重複丟棄
     if embedding:
         try:
             dedup_q = (db.collection("memories")

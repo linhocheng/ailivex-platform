@@ -147,8 +147,9 @@ Collections (all bound to `(userId, characterId)` unless noted):
 | `auth-password.ts` | scrypt `salt:hash` (Node-only; login/seed). |
 | `session.ts` / `access.ts` | `getCurrentUser()` from cookie; `hasAccess()` checks the allowlist. |
 | `conversation.ts` | Text history (`loadHistory` last **24**, `appendMessages` via arrayUnion). |
-| `memory.ts` | 7-block memory prompt; dedup @0.85 cosine; fresh→core after **3** hits; stale (question 60d / emotion 90d); active-recall questions >7d; extraction via Haiku. |
+| `memory.ts` | 7-block memory prompt; dedup dual-threshold (cosine ≥0.9 AND CJK bigram ≥0.5, same type); fresh→core after **3** hits; stale (question 60d / emotion 90d); active-recall questions >7d; extraction via Haiku. |
 | `relationship.ts` | `upsertRelationship` (increments count, updates lastConversationAt). |
+| `diary.ts` | 角色日記（獨立空間，用戶不可見）：writeDiaryEntry (after conversation, Sonnet via bridge) + loadDiaryBlock (inject last 3 entries + unspoken + nextTime). Gated by `DIARY_CANARY_USERS` env (unset=off, `*`=all, else comma userIds). Composite index `diary(userId,characterId,createdAt)`. |
 | `soul.ts` | `enhanceSoul()` — raw soul → 高密度 soulCore (Sonnet via bridge). |
 | `embeddings.ts` | Vertex `text-embedding-004`, 768-dim; `cosineSimilarity`. |
 | `anthropic-via-bridge.ts` | `getAnthropicClient()`: returns bridge if `BRIDGE_ENABLED`+`BRIDGE_URL`+`BRIDGE_SECRET`, else SDK. **A bridge runtime failure throws — no SDK fallback** (avoids double-billing). |

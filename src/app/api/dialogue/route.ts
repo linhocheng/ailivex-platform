@@ -1,7 +1,7 @@
 /**
  * 瘦版對話 —— ailiveX 核心。綁 (用戶 × 角色)。
  *
- * 流程：auth + access → 載 soulCore + 該用戶記憶 + 歷史 → bridge LLM
+ * 流程：auth + access → 載 soul + 該用戶記憶 + 歷史 → bridge LLM
  *      → 程式 parse 工具標記（remember / document）→ 回覆 + 存對話 + 寫記憶。
  *
  * 角色不共享記憶：memory / conversation 都嚴格綁 (userId, characterId)。
@@ -17,6 +17,7 @@ import { hasAccess } from '@/lib/access';
 import { COL, type CharacterDoc, type ChatMessage } from '@/lib/collections';
 import { loadHistory, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
+import { loadDiaryBlock, writeDiaryEntry } from '@/lib/diary';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
 import { QuotaExceededError, consumeTextQuota, refundTextQuota } from '@/lib/quota';
@@ -75,15 +76,16 @@ export async function POST(req: Request) {
     throw e;
   }
 
-  // 靈魂優先序：soulCore → soul
-  const soul = (char.soulCore && char.soulCore.trim()) || char.soul || '';
-  const memoryBlock = await loadMemoryBlock(db, user.uid, characterId, message);
-  const history = await loadHistory(db, user.uid, characterId);
+  const soul = char.soul || '';
+  const [memoryBlock, diaryBlock, history, linkContext] = await Promise.all([
+    loadMemoryBlock(db, user.uid, characterId, message),
+    loadDiaryBlock(db, user.uid, characterId),
+    loadHistory(db, user.uid, characterId),
+    // 連結閱讀：用戶訊息有 URL → 抓網頁正文，附到這一輪的 context（歷史只存原訊息，不存正文）
+    readUrlsForContext(message),
+  ]);
 
-  // 連結閱讀：用戶訊息有 URL → 抓網頁正文，附到這一輪的 context（歷史只存原訊息，不存正文）
-  const linkContext = await readUrlsForContext(message);
-
-  const system = `${soul}${memoryBlock}${TOOL_INSTRUCTIONS}
+  const system = `${soul}${memoryBlock}${diaryBlock}${TOOL_INSTRUCTIONS}
 
 你正在跟「${user.name}」對話。用你的靈魂，自然地回應。${linkContext ? `
 
@@ -161,6 +163,7 @@ export async function POST(req: Request) {
     const extractClient = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '');
     await Promise.all([
       extractAndSaveMemories(db, user.uid, characterId, charName, recentMessages, extractClient),
+      writeDiaryEntry(db, user.uid, characterId, charName, soul, user.name, recentMessages, extractClient, 'text'),
       upsertRelationship(db, user.uid, characterId),
     ]);
     await Promise.all(pendingJobIds.map(id => dispatchDocumentJob(id)));

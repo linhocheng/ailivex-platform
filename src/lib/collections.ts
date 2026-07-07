@@ -13,6 +13,7 @@ export const COL = {
   conversations: 'conversations',
   memories: 'memories',
   relationships: 'relationships',
+  diary: 'diary',
   documents: 'documents',
   jobs: 'jobs',
   tasks: 'tasks',
@@ -67,8 +68,7 @@ export interface PodcastLine {
 
 export interface CharacterDoc {
   name: string;
-  soul: string;            // 原始靈魂文字
-  soulCore: string;        // soul-enhance 後的精煉版
+  soul: string;            // 靈魂（單一真相；舊 soulCore 已於 2026-07-03 遷移合併，淘汰版備份在 soulLegacy）
   avatarUrl: string;
   voiceIdMinimax?: string; // 即時語音用
   voiceSettings?: VoiceSettings;
@@ -171,6 +171,22 @@ export interface MemoryDoc {
   lastHitAt?: FirebaseFirestore.Timestamp | Date | null;
   lastAccessedAt?: FirebaseFirestore.Timestamp | Date | null;  // 最後帶進 prompt 的時間
   source: string;           // 'conversation' | 'voice' | 'extraction' | 'tool:remember'
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+/**
+ * 角色日記 —— 角色的獨立空間（用戶永遠看不到）。
+ * 對話結束後角色寫給自己：今天的感受、沒說出口的觀察、下次想跟進的。
+ * 讀路徑：dialogue system prompt 注入最近幾篇 → 角色會有「上次我就想問你」。
+ */
+export interface DiaryDoc {
+  userId: string;
+  characterId: string;
+  entry: string;            // 角色第一人稱日記（80-200字）
+  unspoken: string[];       // 沒說出口的觀察（0-3 條）
+  nextTime: string[];       // 下次想問/想跟進的（0-2 條）
+  mood: string;             // 角色此刻心情，一兩個詞
+  source: string;           // 'text' | 'voice'
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
