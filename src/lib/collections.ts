@@ -174,6 +174,8 @@ export interface MemoryDoc {
   source: string;           // 'conversation' | 'voice' | 'extraction' | 'tool:remember'
   consolidatedAt?: FirebaseFirestore.Timestamp | Date | null;  // 夜間鞏固處理過的時間（含 skip）
   consolidatedInto?: string | null;  // 被吸收進哪條 impression（有值 → 不再直接進 prompt）
+  rawContent?: string;      // 模糊化前的原文（第三期 gist 化；有值 = content 已是大意，原文永不硬刪）
+  gistedAt?: FirebaseFirestore.Timestamp | Date | null;  // 模糊化時間
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 

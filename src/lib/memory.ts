@@ -23,6 +23,11 @@ const MAX_QUESTIONS = 2;
 const MAX_MILESTONES = 2;
 const SEMANTIC_FLOOR = 0.25;
 const DEDUP_THRESHOLD = 0.9;
+const DEDUP_BIGRAM = 0.5;
+// 第三期放鬆：fact/preference 有鞏固管線吸收近似重複（重述=強化 impression 的信號，不是噪音），
+// 寫入端只擋近逐字重複；其他 type 沒有管線吸收，維持嚴格雙門檻。
+const DEDUP_THRESHOLD_CONSOLIDATABLE = 0.95;
+const DEDUP_BIGRAM_CONSOLIDATABLE = 0.7;
 const TIER_PROMOTE_HITS = 3;
 
 const STALE_DAYS: Partial<Record<MemoryType, number>> = {
@@ -449,13 +454,16 @@ async function isDuplicate(db: Firestore, userId: string, characterId: string, e
       .where('type', '==', type)
       .limit(50)
       .get();
+    const consolidatable = type === 'fact' || type === 'preference';
+    const cosT = consolidatable ? DEDUP_THRESHOLD_CONSOLIDATABLE : DEDUP_THRESHOLD;
+    const bigT = consolidatable ? DEDUP_BIGRAM_CONSOLIDATABLE : DEDUP_BIGRAM;
     for (const doc of snap.docs) {
       const m = doc.data() as MemoryDoc;
       if (Array.isArray(m.embedding) && m.embedding.length > 0) {
         // 雙門檻：cosine 高 AND 詞彙重疊高才算重複。
         // 長篇敘事記憶（同人物同語域）光 cosine 會把不同事件誤判成重複（牧羊人 vs 咖啡館事故）。
-        if (cosineSimilarity(embedding, m.embedding as number[]) >= DEDUP_THRESHOLD
-            && bigramOverlap(content, m.content ?? '') >= 0.5) return true;
+        if (cosineSimilarity(embedding, m.embedding as number[]) >= cosT
+            && bigramOverlap(content, m.content ?? '') >= bigT) return true;
       }
     }
     return false;
