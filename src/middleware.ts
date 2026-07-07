@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { verifySession, SESSION_COOKIE } from '@/lib/auth-session';
 
 // 不需登入的路徑
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/doc-process', '/api/voice-source', '/api/tasks/callback', '/api/cron/memory-maintenance', '/api/cron/voice-auto-off'];
+const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/doc-process', '/api/voice-source', '/api/tasks/callback', '/api/cron/memory-maintenance', '/api/cron/voice-auto-off', '/api/cron/memory-consolidation'];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
