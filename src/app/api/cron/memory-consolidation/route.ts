@@ -30,7 +30,8 @@ export async function GET(req: Request) {
   const characterId = url.searchParams.get('characterId') || '';
 
   const db = getFirestore();
-  const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '', { bridgeTimeoutMs: 60_000 });
+  // 120s：40 條情節的 bootstrap 大 prompt 實測 60s 不夠（本機 120s 過、prod 60s 超時）
+  const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '', { bridgeTimeoutMs: 120_000 });
 
   const { pairs, timeBudgetHit } = await runConsolidation(db, client, {
     dryRun,
