@@ -14,6 +14,7 @@ export const COL = {
   memories: 'memories',
   relationships: 'relationships',
   diary: 'diary',
+  impressions: 'impressions',
   documents: 'documents',
   jobs: 'jobs',
   tasks: 'tasks',
@@ -171,6 +172,31 @@ export interface MemoryDoc {
   lastHitAt?: FirebaseFirestore.Timestamp | Date | null;
   lastAccessedAt?: FirebaseFirestore.Timestamp | Date | null;  // 最後帶進 prompt 的時間
   source: string;           // 'conversation' | 'voice' | 'extraction' | 'tool:remember'
+  consolidatedAt?: FirebaseFirestore.Timestamp | Date | null;  // 夜間鞏固處理過的時間（含 skip）
+  consolidatedInto?: string | null;  // 被吸收進哪條 impression（有值 → 不再直接進 prompt）
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+/**
+ * 印象層 —— 記憶全景圖第二期（2026-07-07）。
+ * 情節（memories）是「發生過什麼」，印象是「我對他的理解」——信念制。
+ * 夜間鞏固管線把 fact/preference 情節消化成印象：支持（reinforce）/ 新增 / 矛盾推翻（supersededBy）。
+ * confidence 不落庫，讀取時由 supportingEpisodes 數量＋新鮮度確定性計算。
+ * 永不硬刪：被推翻的印象 status=superseded + supersededBy 可溯。
+ */
+export type ImpressionKind = 'fact' | 'preference';
+export type ImpressionStatus = 'active' | 'superseded';
+
+export interface ImpressionDoc {
+  userId: string;
+  characterId: string;
+  content: string;              // 信念句（「用戶在科技業工作」）
+  kind: ImpressionKind;
+  embedding?: number[];         // 檢索相關性用
+  supportingEpisodes: string[]; // memories doc ids（出處鏈）
+  status: ImpressionStatus;
+  supersededBy?: string | null;
+  lastReinforcedAt: FirebaseFirestore.Timestamp | Date;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
@@ -196,6 +222,7 @@ export interface RelationshipDoc {
   conversationCount: number;
   firstConversationAt: FirebaseFirestore.Timestamp | Date;
   lastConversationAt: FirebaseFirestore.Timestamp | Date;
+  consolidationWatermark?: FirebaseFirestore.Timestamp | Date | null;  // 鞏固管線處理到哪（episodes createdAt <= watermark 已消化）
 }
 
 export type DocumentStatus = 'pending' | 'writing' | 'rendering' | 'done' | 'failed';

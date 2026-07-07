@@ -13,6 +13,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { COL, type MemoryDoc, type MemoryType, type MemoryStatus, type RelationshipDoc } from '@/lib/collections';
 import { generateEmbedding, cosineSimilarity } from '@/lib/embeddings';
 import { parseJsonLoose } from '@/lib/safe-json';
+import { impressionsEnabled, loadActiveImpressions, buildImpressionSections } from '@/lib/impressions';
 
 const MAX_FACTS = 4;
 const MAX_EMOTIONS = 2;
@@ -106,13 +107,18 @@ export async function loadMemoryBlock(
 
     const rel = relSnap.exists ? (relSnap.data() as RelationshipDoc) : null;
 
+    // 印象模式（記憶全景圖第二期，canary）：fact/preference 改由印象層供給，
+    // 已被吸收進印象的情節（consolidatedInto 有值）不再直接進 prompt——它們活在信念裡。
+    const useImpressions = impressionsEnabled(userId);
+
     const raw: MemoryWithId[] = snap.docs
       .map(d => ({ ...(d.data() as MemoryDoc), id: d.id }))
-      .filter(m => m.tier !== 'archive' && (m.status ?? 'active') !== 'stale' && (m.status ?? 'active') !== 'resolved');
+      .filter(m => m.tier !== 'archive' && (m.status ?? 'active') !== 'stale' && (m.status ?? 'active') !== 'resolved')
+      .filter(m => !(useImpressions && m.consolidatedInto));
 
     // lazy stale check（不阻塞，fire-and-forget update）
     const all = await checkAndMarkStale(db, raw);
-    if (all.length === 0 && !rel) return '';
+    if (all.length === 0 && !rel && !useImpressions) return '';
 
     // 分類
     const byType = (t: MemoryType) => all.filter(m => m.type === t);
@@ -165,7 +171,7 @@ export async function loadMemoryBlock(
       ...pickedFacts, ...pickedEmotions, ...pickedPreferences,
       ...pickedPromises, ...pickedQuestions, ...pickedMilestones,
     ];
-    if (allPicked.length === 0 && !rel) return '';
+    if (allPicked.length === 0 && !rel && !useImpressions) return '';
 
     void bumpHits(db, allPicked);
 
@@ -179,17 +185,30 @@ export async function loadMemoryBlock(
       parts.push(`\n\n【關係】\n我們已經聊過 ${count} 次${since ? `，第一次是 ${since}` : ''}。`);
     }
 
-    // 2. 了解
-    if (pickedFacts.length > 0)
-      parts.push(`\n\n【我對這個人的了解】\n${pickedFacts.map(m => `- ${fmt(m)}`).join('\n')}`);
+    // 2+4. 了解／習慣：印象模式吃印象層（信念＋信心口吻）＋新鮮未消化情節補位；
+    //       否則走原始情節（舊行為，canary 外用戶零變化）
+    if (useImpressions) {
+      const impressions = await loadActiveImpressions(db, userId, characterId).catch(() => []);
+      const { factSection, prefSection } = buildImpressionSections(impressions, qEmb, {
+        factLines: pickedFacts.map(m => fmt(m)),
+        prefLines: pickedPreferences.map(m => m.content),
+      });
+      if (factSection) parts.push(factSection);
+      if (pickedEmotions.length > 0)
+        parts.push(`\n\n【他的情緒記憶】\n${pickedEmotions.map(m => `- ${fmt(m)}`).join('\n')}`);
+      if (prefSection) parts.push(prefSection);
+    } else {
+      if (pickedFacts.length > 0)
+        parts.push(`\n\n【我對這個人的了解】\n${pickedFacts.map(m => `- ${fmt(m)}`).join('\n')}`);
 
-    // 3. 情緒記憶
-    if (pickedEmotions.length > 0)
-      parts.push(`\n\n【他的情緒記憶】\n${pickedEmotions.map(m => `- ${fmt(m)}`).join('\n')}`);
+      // 3. 情緒記憶
+      if (pickedEmotions.length > 0)
+        parts.push(`\n\n【他的情緒記憶】\n${pickedEmotions.map(m => `- ${fmt(m)}`).join('\n')}`);
 
-    // 4. 習慣偏好
-    if (pickedPreferences.length > 0)
-      parts.push(`\n\n【我記得他的習慣】\n${pickedPreferences.map(m => `- ${m.content}`).join('\n')}`);
+      // 4. 習慣偏好
+      if (pickedPreferences.length > 0)
+        parts.push(`\n\n【我記得他的習慣】\n${pickedPreferences.map(m => `- ${m.content}`).join('\n')}`);
+    }
 
     // 5. 答應過的事
     if (pickedPromises.length > 0)
