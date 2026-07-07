@@ -43,6 +43,7 @@ export function PodcastLibrary({ chars, refreshSignal, showEmpty = false }: {
   const [editText, setEditText]     = useState('');
   const [saving, setSaving]         = useState(false);
   const [deleting, setDeleting]     = useState<string | null>(null);
+  const [retrying, setRetrying]     = useState<string | null>(null);
   const [audioLoading, setAudioLoading] = useState<string | null>(null);
   const [audioUrls, setAudioUrls]   = useState<Record<string, string>>({});
   const [error, setError]           = useState('');
@@ -105,6 +106,22 @@ export function PodcastLibrary({ chars, refreshSignal, showEmpty = false }: {
     else setError('刪除失敗，請重試。');
   }
 
+  async function retryItem(id: string) {
+    setRetrying(id); setError('');
+    const r = await fetch('/api/convert/podcast/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: id }),
+    }).then(r => r.json()).catch(() => null);
+    setRetrying(null);
+    if (r?.accepted) {
+      // 卡片轉回「生成中」，hasRunning 自動輪詢接手到完成
+      setItems(prev => prev.map(it => it.id === id ? { ...it, status: 'running', error: null } : it));
+    } else {
+      setError(r?.error ?? '重啟失敗，請重試。');
+    }
+  }
+
   async function generateAudio(item: ScriptItem) {
     setAudioLoading(item.id); setError('');
     const r = await fetch('/api/convert/podcast/generate-audio', {
@@ -164,10 +181,18 @@ export function PodcastLibrary({ chars, refreshSignal, showEmpty = false }: {
                     {item.topic || '（無標題）'} · {new Date(item.createdAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })} 開始 · 完成後自動出現在這裡
                   </div>
                 </div>
+                <button onClick={() => deleteItem(item.id)} disabled={isDeleting}
+                  title="取消並刪除這個任務（背景生成若已在跑會作廢）"
+                  style={{ padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', flexShrink: 0,
+                    background: 'rgba(181,101,74,0.06)', border: '1px solid rgba(181,101,74,0.2)',
+                    color: '#b5654a', opacity: isDeleting ? 0.5 : 1 }}>
+                  {isDeleting ? '刪除中…' : '刪除'}
+                </button>
               </div>
             );
           }
           if (item.status === 'failed' && item.script.length === 0) {
+            const isRetrying = retrying === item.id;
             return (
               <div key={item.id} className="ax-enter" style={{ borderRadius: 10, border: '1px solid rgba(181,101,74,0.25)',
                 background: 'rgba(181,101,74,0.05)', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -177,7 +202,13 @@ export function PodcastLibrary({ chars, refreshSignal, showEmpty = false }: {
                     {item.topic || '（無標題）'}{item.error ? ` · ${item.error}` : ''}
                   </div>
                 </div>
-                <button onClick={() => deleteItem(item.id)} disabled={isDeleting}
+                <button onClick={() => retryItem(item.id)} disabled={isRetrying || isDeleting}
+                  style={{ padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', flexShrink: 0,
+                    background: POD_BG, border: `1px solid ${POD_BORDER}`,
+                    color: POD_ACCENT, opacity: isRetrying ? 0.5 : 1 }}>
+                  {isRetrying ? '重啟中…' : '重啟'}
+                </button>
+                <button onClick={() => deleteItem(item.id)} disabled={isDeleting || isRetrying}
                   style={{ padding: '5px 11px', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: 'pointer', flexShrink: 0,
                     background: 'rgba(181,101,74,0.06)', border: '1px solid rgba(181,101,74,0.2)',
                     color: '#b5654a', opacity: isDeleting ? 0.5 : 1 }}>

@@ -7,6 +7,7 @@
  * Returns: 202 { accepted: true, taskId }
  */
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, type TaskDoc, type PodcastLine } from '@/lib/collections';
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
   }
 
   // 先標 running，讓腳本庫立刻顯示「生成中」；podcastScript 同步存過濾後版本（音檔=紀錄，真相一致）
-  await taskSnap.ref.update({ status: 'running', podcastPhase: 'audio_pending', podcastScript: filteredScript });
+  await taskSnap.ref.update({ status: 'running', podcastPhase: 'audio_pending', podcastScript: filteredScript, phaseStartedAt: FieldValue.serverTimestamp() });
 
   if (podcastJobEnabled()) {
     // 正路：Cloud Run Job（長 TTS 不受 service 閒置回收威脅）。

@@ -62,6 +62,7 @@ export async function POST(req: Request) {
     intent: (body.topic ?? '多角色 Podcast').slice(0, 60),
     params: { characterIds, topic: body.topic, wordCount: body.wordCount, focus: body.focus },
     status: 'running',
+    phaseStartedAt: FieldValue.serverTimestamp(),
     notified: false,
     podcastCharacterIds: characterIds,
     podcastTopic: body.topic ?? '',
