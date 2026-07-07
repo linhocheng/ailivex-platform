@@ -47,3 +47,4 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+cloud-run/podcast-worker/dist/

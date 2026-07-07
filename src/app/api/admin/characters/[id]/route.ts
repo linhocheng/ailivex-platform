@@ -21,7 +21,6 @@ export async function GET(_req: Request, { params }: Params) {
     id,
     name: c.name,
     soul: c.soul || '',
-    soulCore: c.soulCore || '',
     voiceIdMinimax: c.voiceIdMinimax || '',
     voiceSettings: c.voiceSettings || {},
     convSettings: c.convSettings || {},
@@ -39,7 +38,7 @@ export async function GET(_req: Request, { params }: Params) {
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
   const body = await req.json().catch(() => null) as {
-    name?: string; soul?: string; soulCore?: string;
+    name?: string; soul?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings;
     convSettings?: ConvSettings; aliases?: string[];
     capabilities?: TaskCapability[];
@@ -71,13 +70,6 @@ export async function PATCH(req: Request, { params }: Params) {
   if (Array.isArray(body?.capabilities)) updates.capabilities = body.capabilities.filter(c => ALL_CAPABILITIES.includes(c));
   if (body?.imageStyle !== undefined) updates.imageStyle = body.imageStyle.trim();
   if (body?.heygenAvatarId !== undefined) updates.heygenAvatarId = body.heygenAvatarId.trim();
-
-  // soul 改了 → soulCore 直接等於新 soul（不再自動鍛造）
-  if (body?.soulCore?.trim()) {
-    updates.soulCore = body.soulCore.trim();
-  } else if (soul) {
-    updates.soulCore = soul;
-  }
 
   // 換頭像
   if (body?.avatarBase64) {

@@ -18,7 +18,6 @@ export async function GET() {
       name: c.name,
       avatarUrl: c.avatarUrl,
       status: c.status,
-      hasSoulCore: !!c.soulCore,
       voiceIdMinimax: c.voiceIdMinimax || '',
       voiceSettings: c.voiceSettings || {},
     };
@@ -28,7 +27,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null) as {
-    name?: string; soul?: string; soulCore?: string;
+    name?: string; soul?: string;
     avatarBase64?: string; avatarContentType?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings; convSettings?: ConvSettings;
     capabilities?: TaskCapability[];
@@ -40,8 +39,6 @@ export async function POST(req: Request) {
   if (!name || !soul || soul.length < 10)
     return NextResponse.json({ error: '角色名與靈魂（至少 10 字）必填' }, { status: 400 });
 
-  const soulCore = body?.soulCore?.trim() || soul;
-
   const db = getFirestore();
   const ref = db.collection(COL.characters).doc();
 
@@ -50,7 +47,7 @@ export async function POST(req: Request) {
     avatarUrl = await uploadAvatar(ref.id, body.avatarBase64, body.avatarContentType || 'image/jpeg');
 
   const doc: CharacterDoc = {
-    name, soul, soulCore, avatarUrl,
+    name, soul, avatarUrl,
     voiceIdMinimax: body?.voiceIdMinimax?.trim() || '',
     voiceSettings: sanitizeVoiceSettings(body?.voiceSettings),
     convSettings: sanitizeConvSettings(body?.convSettings),
@@ -60,7 +57,7 @@ export async function POST(req: Request) {
     createdAt: new Date(),
   };
   await ref.set(doc);
-  return NextResponse.json({ id: ref.id, name, avatarUrl, soulCore });
+  return NextResponse.json({ id: ref.id, name, avatarUrl });
 }
 
 async function uploadAvatar(charId: string, base64: string, contentType: string): Promise<string> {

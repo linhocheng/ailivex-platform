@@ -53,7 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (cs.exists) {
       const c = cs.data() as CharacterDoc;
       charName = c.name;
-      charSoul = c.soulCore || c.soul || '';
+      charSoul = c.soul || '';
       imageStyle = c.imageStyle ?? '';
     }
   }

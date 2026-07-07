@@ -1,7 +1,7 @@
 /**
  * POST /api/text-filter/rewrite
  * 一鍵改寫踩雷句：只改含踩雷片語的句子，其他字不動。
- * 帶 characterId 則用該角色 soulCore 保語氣。編輯按了才跑（標記模式配套，不自動）。
+ * 帶 characterId 則用該角色 soul 保語氣。編輯按了才跑（標記模式配套，不自動）。
  * Body: { text: string; characterId?: string }
  * Returns: { text: string; before: number; after: number }
  */
@@ -33,8 +33,8 @@ export async function POST(req: Request) {
     let soul: string | undefined;
     if (characterId) {
       const snap = await db.collection(COL.characters).doc(characterId).get();
-      const c = snap.data() as { soulCore?: string; soul?: string } | undefined;
-      soul = c?.soulCore?.trim() || c?.soul;
+      const c = snap.data() as { soul?: string } | undefined;
+      soul = c?.soul;
     }
 
     const rewritten = await rewriteFlagged(text, hits, BRIDGE_ENDPOINT, BRIDGE_SECRET, soul);

@@ -7,7 +7,7 @@ interface VoiceSettings { speed?: number; pitch?: number; vol?: number; emotion?
 interface ConvSettings { responseSpeed?: number; interruptSensitivity?: number; imThreshold?: number; interruptThreshold?: number; temperature?: number; }
 interface Char {
   id: string; name: string; avatarUrl: string; status: string;
-  hasSoulCore: boolean; voiceIdMinimax: string; voiceSettings: VoiceSettings;
+  voiceIdMinimax: string; voiceSettings: VoiceSettings;
 }
 interface BrandLayout { id: string; name: string; imageUrl: string; description: string; isDefault: boolean; }
 interface BrandProduct { id: string; name: string; imageUrl: string; tags: string[]; }
@@ -23,7 +23,7 @@ const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
 ];
 
 type EditState = {
-  id: string; name: string; soul: string; soulCore: string;
+  id: string; name: string; soul: string;
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
   aliases: string[];
   capabilities: TaskCapability[];
@@ -182,7 +182,6 @@ export default function AdminCharacters() {
   const [voiceId, setVoiceId] = useState('');
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({ emotion: 'neutral' });
   const [convSettings, setConvSettings] = useState<ConvSettings>({});
-  const [soulCore, setSoulCore] = useState('');
   const [createAliases, setCreateAliases] = useState('');
   const [createCaps, setCreateCaps] = useState<TaskCapability[]>([]);
   const [avatar, setAvatar] = useState<{ b64: string; type: string } | null>(null);
@@ -344,22 +343,11 @@ export default function AdminCharacters() {
     } catch(e) { alert('試聽錯誤：'+String(e)); setPlaying(false); }
   }
 
-  async function preview() {
-    setMsg(''); setBusy('preview');
-    const r = await fetch('/api/admin/soul-enhance', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name, soul }),
-    }).then(r => r.json()).catch(() => null);
-    setBusy('');
-    if (r?.soulCore) setSoulCore(r.soulCore);
-    else setMsg(r?.error || '提煉失敗');
-  }
-
   async function create() {
     setMsg(''); setBusy('create');
     const resp = await fetch('/api/admin/characters', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name, soul, soulCore: soulCore||undefined,
+      body: JSON.stringify({ name, soul,
         avatarBase64:avatar?.b64, avatarContentType:avatar?.type,
         voiceIdMinimax:voiceId||undefined, voiceSettings, convSettings,
         capabilities: createCaps,
@@ -368,7 +356,7 @@ export default function AdminCharacters() {
     const r = resp ? await resp.json().catch(() => null) : null;
     setBusy('');
     if (r?.id) {
-      setName(''); setSoul(''); setSoulCore(''); setVoiceId(''); setVoiceSettings({}); setConvSettings({}); setAvatar(null);
+      setName(''); setSoul(''); setVoiceId(''); setVoiceSettings({}); setConvSettings({}); setAvatar(null);
       setCreateAliases(''); setCreateCaps([]);
       setMsg('已建立角色'); load();
     } else setMsg(resp?.status === 413 ? '圖片過大，請換一張再試' : (r?.error || '建立失敗'));
@@ -379,7 +367,6 @@ export default function AdminCharacters() {
     setEditMsg(''); setEditBusy('save');
     const payload: Record<string, unknown> = { name: editing.name };
     if (editing.soul.trim()) payload.soul = editing.soul.trim();
-    if (editing.soulCore.trim()) payload.soulCore = editing.soulCore.trim();
     payload.voiceIdMinimax = editing.voiceId;
     payload.voiceSettings = editing.voiceSettings;
     payload.convSettings = editing.convSettings;
@@ -396,18 +383,6 @@ export default function AdminCharacters() {
     setEditBusy('');
     if (r?.ok) { setEditing(null); load(); }
     else setEditMsg(resp?.status === 413 ? '圖片過大，請換一張再試' : (r?.error || '儲存失敗'));
-  }
-
-  async function reEnhanceEdit() {
-    if (!editing) return;
-    setEditMsg(''); setEditBusy('enhance');
-    const r = await fetch('/api/admin/soul-enhance', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ name: editing.name, soul: editing.soul }),
-    }).then(r => r.json()).catch(() => null);
-    setEditBusy('');
-    if (r?.soulCore) setEditing({ ...editing, soulCore: r.soulCore });
-    else setEditMsg(r?.error || '提煉失敗');
   }
 
   async function deleteChar(id: string) {
@@ -438,7 +413,6 @@ export default function AdminCharacters() {
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:14.5, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</div>
                     <div style={{ fontSize:11.5, color:'var(--muted)' }}>
-                      {c.hasSoulCore ? 'soul ✓' : 'soul ✗'}
                       {c.voiceIdMinimax ? ' · 語音 ✓' : ''}
                     </div>
                   </div>
@@ -460,10 +434,10 @@ export default function AdminCharacters() {
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
                     setEditLoading(true); // 完整資料回來前擋存檔
-                    setEditing({ id:c.id, name:c.name, soul:'', soulCore:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
                     if (r?.id) {
-                      setEditing({ id:r.id, name:r.name, soul:r.soul, soulCore:r.soulCore, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                       setEditLoading(false);
                     } else {
                       setEditMsg('完整資料載入失敗——請關閉視窗重開，此狀態下不能儲存（避免把欄位洗成空白）');
@@ -553,15 +527,10 @@ export default function AdminCharacters() {
             {avatar && <img src={avatar.b64} alt="" style={{ width:70, height:70, borderRadius:10, objectFit:'cover', marginTop:10, display:'block' }} />}
           </div>
           <div style={{ display:'flex', gap:10 }}>
-            <button onClick={preview} disabled={!!busy || !name || soul.length < 10}
-              style={{ padding:'10px 18px', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--text)', fontSize:14, cursor:'pointer' }}>
-              {busy==='preview' ? '提煉中…' : '預覽 soulCore'}
-            </button>
             <GlowButton onClick={create} disabled={!!busy || !name || soul.length < 10}>
               {busy==='create' ? '建立中…' : '建立角色'}
             </GlowButton>
           </div>
-          {soulCore && <pre style={{ background:'var(--panel-2)', border:'1px solid var(--border)', borderRadius:8, padding:14, fontSize:12.5, whiteSpace:'pre-wrap', maxHeight:260, overflowY:'auto', fontFamily:'monospace', lineHeight:1.6 }}>{soulCore}</pre>}
           {msg && <div style={{ fontSize:13, color: msg.startsWith('已') ? '#6f8c5f' : '#b5654a', display:'flex', alignItems:'center', gap:6 }}><Dot color={msg.startsWith('已') ? '#6f8c5f' : '#b5654a'} />{msg}</div>}
         </div>
       </div>
@@ -860,7 +829,7 @@ export default function AdminCharacters() {
             )}
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}
-                placeholder="靈魂（留空不更新）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />
+                placeholder="靈魂（直接吃這個，存下去馬上生效）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />
             </Field>
             <Field label="MiniMax Voice ID">
               <TextInput value={editing.voiceId} onChange={e=>setEditing({...editing,voiceId:e.target.value})} placeholder="voice id" />
@@ -879,20 +848,6 @@ export default function AdminCharacters() {
                 </div>
               </>
             )}
-            <div>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                <label style={{ fontSize:12, color:'var(--muted)', fontWeight:600 }}>系統 Prompt（直接吃這個）</label>
-                {editing.soul.length >= 10 && (
-                  <button style={{ padding:'4px 10px', borderRadius:6, border:'1px solid var(--border)', background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}
-                    onClick={reEnhanceEdit} disabled={!!editBusy}>
-                    {editBusy==='enhance' ? '提煉中…' : '重新提煉'}
-                  </button>
-                )}
-              </div>
-              <textarea style={{ ...inputBase, minHeight:220, fontFamily:'monospace', fontSize:13, lineHeight:1.6, resize:'vertical' }}
-                placeholder="soulCore（直接改這裡，存下去馬上生效）"
-                value={editing.soulCore} onChange={e=>setEditing({...editing,soulCore:e.target.value})} />
-            </div>
             <div>
               <label style={{ fontSize:12, color:'var(--muted)', display:'block', marginBottom:6 }}>換頭像</label>
               <input type="file" accept="image/*" onChange={onEditAvatar} style={{ fontSize:13 }} />
