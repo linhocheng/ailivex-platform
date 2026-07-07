@@ -178,7 +178,7 @@ export function PodcastLibrary({ chars, refreshSignal, showEmpty = false }: {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: POD_ACCENT }}>腳本生成中…</div>
                   <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 3 }}>
-                    {item.topic || '（無標題）'} · {new Date(item.createdAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })} 開始 · 完成後自動出現在這裡
+                    {item.topic || '（無標題）'} · {new Date(item.createdAt).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 開始 · 完成後自動出現在這裡
                   </div>
                 </div>
                 <button onClick={() => deleteItem(item.id)} disabled={isDeleting}
