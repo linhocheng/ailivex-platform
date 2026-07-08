@@ -101,6 +101,7 @@ export default function RealtimeCallPage() {
   const characterId = params.characterId;
 
   const [state, setState] = useState<CallState>('idle');
+  const [agentVersion, setAgentVersion] = useState('v16'); // 實際派工版本（token 回傳），非頁面死標籤
   const [errorMsg, setErrorMsg] = useState('');
   const [characterName, setCharacterName] = useState('');
   // 用量管制：點數用盡不是技術錯誤，用角色名下方的文案溝通，不走紅字 error
@@ -286,7 +287,8 @@ export default function RealtimeCallPage() {
         }
         throw new Error(err.error || `token ${tokenRes.status}`);
       }
-      const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws } = await tokenRes.json();
+      const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws, voiceVersion: vv } = await tokenRes.json();
+      if (vv) setAgentVersion(vv);
       identityRef.current = identity;
       setHealth(h => ({ ...h, token: 'ok' }));
       if (cName) setCharacterName(cName);
@@ -521,7 +523,7 @@ export default function RealtimeCallPage() {
           <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.08em', padding:'3px 9px', borderRadius:5,
             border:'1px solid rgba(255,255,255,0.18)', background:'rgba(255,255,255,0.07)',
             color:'rgba(255,255,255,0.65)', flexShrink:0 }}>
-            v16
+            {agentVersion}
           </span>
           <div style={{ display:'flex', gap:5, alignItems:'center' }}>
             {HEALTH_ITEMS.map(h => (
