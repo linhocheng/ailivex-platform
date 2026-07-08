@@ -62,7 +62,12 @@ export async function POST(req: Request) {
       throw e;
     }
   }
-  const agentName = agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION = v14
+  if (user.role === 'admin') {
+    // admin 免 access doc；但若有（canary 版本指派），voiceVersion 照讀——否則 admin 永遠測不到新版本
+    const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
+    if (accessSnap.exists) voiceVersion = (accessSnap.data() as AccessDoc).voiceVersion;
+  }
+  const agentName = agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION
 
   const charSnap = await db.collection(COL.characters).doc(characterId).get();
   if (!charSnap.exists) return NextResponse.json({ error: '角色不存在' }, { status: 404 });

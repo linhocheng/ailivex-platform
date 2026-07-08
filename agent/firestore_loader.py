@@ -782,7 +782,11 @@ def build_task_notifications_block(tasks: list[dict]) -> str:
 
 
 def build_system_prompt(char: CharacterContext, conv: ConversationContext, memories: list[dict],
-                        relationship: dict | None = None, user_id: str = "") -> str:
+                        relationship: dict | None = None, user_id: str = "",
+                        remote_blocks: tuple | None = None) -> str:
+    """remote_blocks（第 3.5 期，v17+）：(memory_block, diary_block)——TS 端組好的記憶塊。
+    memory_block 有值時整段替換【關係】＋六記憶塊（含印象層與 canary，真相一份在 TS）；
+    None＝舊行為位元級不變，v2~v16 零影響。時間感/lastSession/結尾原話永遠本地組。"""
     gp = load_global_prompts()
     parts = [char.soul_text or f"你是 {char.name}。"]
 
@@ -856,26 +860,36 @@ def build_system_prompt(char: CharacterContext, conv: ConversationContext, memor
             f"\n\n【時間感知】距離上次跟對方對話過了 {gap_text}。可以自然帶出，也可以什麼都不說，看情境。"
         )
 
-    # 1. 關係
-    if relationship:
-        count = relationship.get("conversationCount", 1)
-        first = _relative_time(relationship.get("firstConversationAt"))
-        desc = f"我們已經聊過 {count} 次" + (f"，第一次是 {first}" if first else "") + "。"
-        parts.append(f"\n\n【關係】\n{desc}")
+    # 1.–7. 關係＋記憶區塊：remote 塊（TS 組好，含印象層/信心口吻/日記）整段替換；沒有就本地組（舊行為）
+    _remote_mem = (remote_blocks[0] or "") if remote_blocks else ""
+    _remote_diary = (remote_blocks[1] or "") if remote_blocks and len(remote_blocks) > 1 else ""
+    if _remote_mem:
+        parts.append(_remote_mem)
+        if _remote_diary:
+            parts.append(_remote_diary)
+    else:
+        # 1. 關係
+        if relationship:
+            count = relationship.get("conversationCount", 1)
+            first = _relative_time(relationship.get("firstConversationAt"))
+            desc = f"我們已經聊過 {count} 次" + (f"，第一次是 {first}" if first else "") + "。"
+            parts.append(f"\n\n【關係】\n{desc}")
 
-    # 2–7. 記憶區塊
-    if facts:
-        parts.append("\n\n【我對這個人的了解】\n" + "\n".join(f"- {fmt(m)}" for m in facts))
-    if emotions:
-        parts.append("\n\n【他的情緒記憶】\n" + "\n".join(f"- {fmt(m)}" for m in emotions))
-    if preferences:
-        parts.append("\n\n【我記得他的習慣】\n" + "\n".join(f"- {m['content']}" for m in preferences))
-    if promises:
-        parts.append("\n\n【我答應過的事】\n" + "\n".join(f"- {m['content']}" for m in promises))
-    if questions:
-        parts.append("\n\n【懸而未決的事】\n" + "\n".join(f"- {fmt(m)}" for m in questions))
-    if milestones:
-        parts.append("\n\n【重要時刻】\n" + "\n".join(f"- {fmt(m)}" for m in milestones))
+        # 2–7. 記憶區塊
+        if facts:
+            parts.append("\n\n【我對這個人的了解】\n" + "\n".join(f"- {fmt(m)}" for m in facts))
+        if emotions:
+            parts.append("\n\n【他的情緒記憶】\n" + "\n".join(f"- {fmt(m)}" for m in emotions))
+        if preferences:
+            parts.append("\n\n【我記得他的習慣】\n" + "\n".join(f"- {m['content']}" for m in preferences))
+        if promises:
+            parts.append("\n\n【我答應過的事】\n" + "\n".join(f"- {m['content']}" for m in promises))
+        if questions:
+            parts.append("\n\n【懸而未決的事】\n" + "\n".join(f"- {fmt(m)}" for m in questions))
+        if milestones:
+            parts.append("\n\n【重要時刻】\n" + "\n".join(f"- {fmt(m)}" for m in milestones))
+        if _remote_diary:
+            parts.append(_remote_diary)
 
     if conv.summary:
         parts.append(f"\n\n【之前對話摘要】\n{conv.summary}")
@@ -1179,3 +1193,62 @@ def _enqueue_job(job_id: str) -> None:
 
     threading.Thread(target=_post, daemon=True, name=f"docjob-{job_id}").start()
     logger.info(f"[enqueue] job {job_id} dispatch thread started → {worker_url}")
+
+
+# ── 第 3.5 期（2026-07-08）：語音道接通——跟 TS 要組好的記憶塊 / 遞 transcript 寫日記 ──
+# 讀寫分家鐵律：記憶邏輯（印象/信心/canary/日記）只存在 TS，這裡只是 HTTP 消費者。
+# 架構：docs/memory-panorama-voice-integration.md。v17 起使用；舊版本不呼叫＝零影響。
+
+def fetch_remote_memory_blocks(user_id: str, character_id: str, timeout: int = 6) -> tuple:
+    """跟 platform 要 (memory_block, diary_block)。失敗/逾時回 (None, None)——caller fallback 本地組裝，語音永不啞。"""
+    platform_url = os.environ.get("PLATFORM_URL", "").strip().rstrip("/")
+    worker_secret = os.environ.get("WORKER_SECRET", "").strip()
+    if not platform_url or not worker_secret:
+        logger.warning("[remote-blocks] PLATFORM_URL/WORKER_SECRET 未設，走本地組裝")
+        return (None, None)
+    try:
+        import urllib.request
+        payload = json.dumps({"userId": user_id, "characterId": character_id}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{platform_url}/api/agent/memory-blocks",
+            method="POST",
+            headers={"x-worker-secret": worker_secret, "Content-Type": "application/json"},
+            data=payload,
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        mem = data.get("memoryBlock") or ""
+        diary = data.get("diaryBlock") or ""
+        logger.info(f"[remote-blocks] hit mem_chars={len(mem)} diary_chars={len(diary)}")
+        return (mem, diary)
+    except Exception as e:
+        logger.warning(f"[remote-blocks] fetch failed（fallback 本地組裝）: {e}")
+        return (None, None)
+
+
+def post_diary_write(user_id: str, character_id: str, char_name: str, transcript: list, timeout: int = 45) -> None:
+    """掛斷後把 transcript 遞給 TS 寫日記。canary 判斷在 TS 端；失敗靜默不影響收尾。"""
+    platform_url = os.environ.get("PLATFORM_URL", "").strip().rstrip("/")
+    worker_secret = os.environ.get("WORKER_SECRET", "").strip()
+    if not platform_url or not worker_secret:
+        return
+    try:
+        import urllib.request
+        msgs = [
+            {"role": m.get("role", "user"), "content": (m.get("content") or "")[:1000]}
+            for m in transcript[-20:] if (m.get("content") or "").strip()
+        ]
+        payload = json.dumps({
+            "userId": user_id, "characterId": character_id,
+            "charName": char_name, "transcript": msgs,
+        }, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            f"{platform_url}/api/agent/diary-write",
+            method="POST",
+            headers={"x-worker-secret": worker_secret, "Content-Type": "application/json"},
+            data=payload,
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            logger.info(f"[diary-write] posted status={resp.status}")
+    except Exception as e:
+        logger.warning(f"[diary-write] failed（不影響收尾）: {e}")
