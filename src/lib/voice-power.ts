@@ -9,6 +9,10 @@ import { GoogleAuth } from 'google-auth-library';
 import { getFirestore } from '@/lib/firebase-admin';
 import { DEFAULT_VOICE_VERSION } from '@/lib/collections';
 
+// canary 版本也掛在同一個電源開關＋自動關機傘下（天條：常駐必配開關＋自動關機）。
+// canary 收案（升 DEFAULT 或退役）時從這裡拔掉。
+const CANARY_VOICE_VERSIONS: string[] = ['v17'];
+
 const REGION = 'asia-east1';
 export const AUTO_OFF_HOURS_DEFAULT = 3;
 
@@ -37,8 +41,13 @@ function getProjectId(): string {
   return process.env.GCP_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || '';
 }
 
-export function cloudRunServiceUrl(): string {
-  return `https://run.googleapis.com/v2/projects/${getProjectId()}/locations/${REGION}/services/ailivex-realtime-agent-${DEFAULT_VOICE_VERSION}`;
+export function cloudRunServiceUrl(version: string = DEFAULT_VOICE_VERSION): string {
+  return `https://run.googleapis.com/v2/projects/${getProjectId()}/locations/${REGION}/services/ailivex-realtime-agent-${version}`;
+}
+
+/** 電源開關管到的所有版本（預設＋canary），開/關一起動 */
+export function poweredVoiceVersions(): string[] {
+  return [DEFAULT_VOICE_VERSION, ...CANARY_VOICE_VERSIONS.filter(v => v !== DEFAULT_VOICE_VERSION)];
 }
 
 export async function cloudRunAccessToken(): Promise<string> {
@@ -61,14 +70,20 @@ export async function setVoicePower(on: boolean, source: 'admin' | 'auto-off'): 
   await getFirestore().collection('config').doc('voicePower').set(patch, { merge: true });
 
   const token = await cloudRunAccessToken();
-  const res = await fetch(`${cloudRunServiceUrl()}?updateMask=template.scaling.minInstanceCount`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ template: { scaling: { minInstanceCount: on ? 1 : 0 } } }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Cloud Run 切換失敗 (${res.status}): ${err.slice(0, 200)}`);
+  const failures: string[] = [];
+  for (const version of poweredVoiceVersions()) {
+    const res = await fetch(`${cloudRunServiceUrl(version)}?updateMask=template.scaling.minInstanceCount`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template: { scaling: { minInstanceCount: on ? 1 : 0 } } }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      failures.push(`${version}(${res.status}): ${err.slice(0, 120)}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`Cloud Run 切換失敗: ${failures.join(' | ')}`);
   }
 }
 
