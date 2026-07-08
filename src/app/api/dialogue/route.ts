@@ -15,9 +15,11 @@ import { getCurrentUser } from '@/lib/session';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { hasAccess } from '@/lib/access';
 import { COL, type CharacterDoc, type ChatMessage } from '@/lib/collections';
-import { loadHistory, appendMessages } from '@/lib/conversation';
+import { loadConversationContext, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
 import { loadDiaryBlock, writeDiaryEntry } from '@/lib/diary';
+import { loadKnowledgeBlock } from '@/lib/knowledge';
+import { loadMethodologyBlock, applyMethodologySignals } from '@/lib/methodology';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
 import { QuotaExceededError, consumeTextQuota, refundTextQuota } from '@/lib/quota';
@@ -77,15 +79,22 @@ export async function POST(req: Request) {
   }
 
   const soul = char.soul || '';
-  const [memoryBlock, diaryBlock, history, linkContext] = await Promise.all([
+  // 方法論要先知道 conversation 的進行中狀態 → 接在 conv 讀之後（其餘全並行）。
+  // 知識庫/方法論：角色沒設定（count 缺省/0）時兩條路徑直接空手，行為與既有完全一致。
+  const convCtxPromise = loadConversationContext(db, user.uid, characterId);
+  const [memoryBlock, diaryBlock, convCtx, linkContext, knowledgeBlock, methodologyRes] = await Promise.all([
     loadMemoryBlock(db, user.uid, characterId, message),
     loadDiaryBlock(db, user.uid, characterId),
-    loadHistory(db, user.uid, characterId),
+    convCtxPromise,
     // 連結閱讀：用戶訊息有 URL → 抓網頁正文，附到這一輪的 context（歷史只存原訊息，不存正文）
     readUrlsForContext(message),
+    loadKnowledgeBlock(db, characterId, message, char),
+    convCtxPromise.then(ctx =>
+      loadMethodologyBlock(db, characterId, message, ctx.activeMethodology, char)),
   ]);
+  const history = convCtx.history;
 
-  const system = `${soul}${memoryBlock}${diaryBlock}${TOOL_INSTRUCTIONS}
+  const system = `${soul}${memoryBlock}${diaryBlock}${knowledgeBlock}${methodologyRes.block}${TOOL_INSTRUCTIONS}
 
 你正在跟「${user.name}」對話。用你的靈魂，自然地回應。${linkContext ? `
 
@@ -108,8 +117,18 @@ export async function POST(req: Request) {
   });
 
   const raw = textOf(res);
-  const { visible, remembers, documents, dispatches } = parseToolTags(raw);
+  const parsed = parseToolTags(raw);
+  const { visible, remembers, documents, dispatches } = parsed;
   let reply = visible || '（……）';
+
+  // 方法論狀態推進（確定性，影響下一輪；沒設方法論的角色一律跳過）
+  if ((char.methodologyCount ?? 0) > 0) {
+    await applyMethodologySignals(
+      db, user.uid, characterId,
+      { methodStart: parsed.methodStart, methodNext: parsed.methodNext, methodExit: parsed.methodExit },
+      convCtx.activeMethodology, methodologyRes.active,
+    );
+  }
 
   // 工具副作用（不阻斷回覆）
   for (const content of remembers) {

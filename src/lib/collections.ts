@@ -20,6 +20,9 @@ export const COL = {
   tasks: 'tasks',
   brandLayouts: 'brand_layouts',
   brandProducts: 'brand_products',
+  knowledgeDocs: 'knowledge_docs',
+  knowledgeChunks: 'knowledge_chunks',
+  methodologies: 'methodologies',
 } as const;
 
 export type UserRole = 'user' | 'admin';
@@ -80,6 +83,10 @@ export interface CharacterDoc {
   heygenAvatarId?: string;    // HeyGen talking_photo_id（avatar_iv 引擎）
   heygenAvatarIdV3?: string;  // HeyGen talking_photo_id（avatar_iii 引擎，需分開訓練）
   heygenAvatarUrl?: string;  // HeyGen 上傳後的預覽 URL（v3 image 欄位用）
+  // ── 知識庫／方法論開關（角色 doc 每輪必讀，缺省/0 = 該路徑完全不走，零額外讀）──
+  // 由 admin knowledge/methodologies routes 確定性維護（增刪時 increment/遞減），不靠 LLM。
+  knowledgeChunkCount?: number;   // 該角色 active 知識塊總數
+  methodologyCount?: number;      // 該角色 active 方法論總數
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
@@ -153,6 +160,16 @@ export interface ConversationDoc {
   summary?: string;
   messageCount: number;
   updatedAt: FirebaseFirestore.Timestamp | Date;
+  // 進行中的方法論（跨 turn 狀態機；null/缺省 = 沒有進行中）。
+  // 進入/推進/退出全由程式依 [[METHOD_*]] 標記確定性更新，LLM 只發信號。
+  activeMethodology?: ActiveMethodologyState | null;
+}
+
+export interface ActiveMethodologyState {
+  id: string;         // methodologies doc id
+  name: string;
+  step: number;       // 1-based 當前步驟
+  enteredAt: number;  // epoch ms
 }
 
 export type MemoryTier = 'fresh' | 'core' | 'archive';
@@ -256,6 +273,62 @@ export interface JobDoc {
   status: JobStatus;
   result?: string;
   error?: string;
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+/**
+ * 知識庫（著作層）—— 角色「寫過/講過什麼」的單一真相源（2026-07-08）。
+ *
+ * 與 memories（用戶記憶層）分軸：知識綁 characterId（全用戶共享），記憶綁 (userId, characterId)。
+ * 反亂編三件套：每塊帶 authority（權威度）＋ sectionRef（出處）＋ 檢索門檻 τ（撈不到寧可空手）。
+ * 憲法層（soul）只管「他是誰」；著作層管「他寫過什麼」——跨層衝突時著作層在事實領域勝出。
+ */
+export type KnowledgeDocType = 'book' | 'article' | 'talk' | 'interview' | 'note';
+export type KnowledgeAuthority = 'canonical' | 'paraphrase' | 'derived';  // 本人原話 / 轉述 / 整理
+
+export interface KnowledgeDocDoc {
+  characterId: string;
+  title: string;               // 書名 / 文章名
+  docType: KnowledgeDocType;
+  authority: KnowledgeAuthority;
+  sourceRef?: string;          // 可回溯的原始位置（版次/URL/出處說明）
+  chunkCount: number;
+  status: 'active' | 'archived';
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+export interface KnowledgeChunkDoc {
+  characterId: string;         // 冗餘存一份，檢索免 join
+  documentId: string;          // -> knowledge_docs
+  content: string;             // 原文（呈現用，永不改寫）
+  gist?: string;               // 白話大意（檢索索引用；文言/古典語料靠它跟白話 query 同語域）
+  embedding?: number[];        // 768 維；有 gist 嵌 gist，沒有嵌原文（白話索引、原文呈現）
+  sectionRef: string;          // 章節/段落定位（回答帶出處用），例「第3段」或編輯手填
+  authority: KnowledgeAuthority; // 繼承自母表，仲裁用
+  order: number;               // 在母文件中的順序（0-based）
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+/**
+ * 方法論（教練框架層）—— 一套完整招式：被選中 → 照步驟走完，絕不切塊做語義檢索。
+ * 只對 triggerDesc 做 embedding（選招用）；steps 是有序程序，進入後由
+ * conversation.activeMethodology 狀態機推進（見 ActiveMethodologyState）。
+ */
+export interface MethodologyStep {
+  order: number;          // 1-based
+  instruction: string;    // 這一步角色該做什麼（引導語方向，不是逐字稿）
+  exitCondition?: string; // 什麼情況算完成這一步、可以往下走
+}
+
+export interface MethodologyDoc {
+  characterId: string;
+  name: string;
+  purpose: string;          // 這套方法解決什麼問題
+  triggerDesc: string;      // 給選招判斷用的觸發描述（「用戶卡在……時」）
+  triggerEmb?: number[];    // 只嵌觸發描述
+  preconditions: string[];  // 使用前提（例：用戶需先陳述目標）
+  steps: MethodologyStep[];
+  status: 'active' | 'archived';
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 

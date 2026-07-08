@@ -23,11 +23,18 @@ export interface ParsedTools {
   remembers: string[];
   documents: Array<{ title: string; brief: string }>;
   dispatches: DispatchCall[];
+  // 方法論狀態機信號（角色只發信號，狀態推進在 methodology.ts 程式做）
+  methodStart: string | null;  // [[METHOD_START id="..."]]
+  methodNext: boolean;         // [[METHOD_NEXT]]
+  methodExit: boolean;         // [[METHOD_EXIT]]
 }
 
 const REMEMBER_RE = /\[\[REMEMBER\]\]([\s\S]*?)\[\[\/REMEMBER\]\]/g;
 const DOCUMENT_RE = /\[\[DOCUMENT(?:\s+title="([^"]*)")?\]\]([\s\S]*?)\[\[\/DOCUMENT\]\]/g;
 const DISPATCH_RE = /\[\[DISPATCH(?:\s+([^[\]]*))?\]\][\s\S]*?\[\[\/DISPATCH\]\]/g;
+const METHOD_START_RE = /\[\[METHOD_START\s+id=(?:"([^"]*)"|'([^']*)')\s*\]\]/g;
+const METHOD_NEXT_RE = /\[\[METHOD_NEXT\]\]/g;
+const METHOD_EXIT_RE = /\[\[METHOD_EXIT\]\]/g;
 
 // 同時支援雙引號與單引號值 —— params 的 JSON 內含雙引號，文件格式用單引號包覆。
 function parseAttrs(attrStr: string): Record<string, string> {
@@ -80,14 +87,25 @@ export function parseToolTags(raw: string): ParsedTools {
     dispatches.push({ type, intent, params });
   }
 
+  METHOD_START_RE.lastIndex = 0;
+  const startMatch = METHOD_START_RE.exec(raw);
+  const methodStart = startMatch ? (startMatch[1] ?? startMatch[2] ?? '').trim() || null : null;
+  METHOD_NEXT_RE.lastIndex = 0;
+  const methodNext = METHOD_NEXT_RE.test(raw);
+  METHOD_EXIT_RE.lastIndex = 0;
+  const methodExit = METHOD_EXIT_RE.test(raw);
+
   const visible = raw
     .replace(REMEMBER_RE, '')
     .replace(DOCUMENT_RE, '')
     .replace(DISPATCH_RE, '')
+    .replace(METHOD_START_RE, '')
+    .replace(METHOD_NEXT_RE, '')
+    .replace(METHOD_EXIT_RE, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-  return { visible, remembers, documents, dispatches };
+  return { visible, remembers, documents, dispatches, methodStart, methodNext, methodExit };
 }
 
 export const TOOL_INSTRUCTIONS = `

@@ -36,12 +36,33 @@ function getProjectId(): string {
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
+  return embedWith(EMBEDDING_MODEL, text);
+}
+
+/**
+ * 知識庫／方法論專用 embedding —— 與 memories（text-embedding-004）分模型。
+ *
+ * 為什麼分：004 對中文短句 cosine 坍縮（無關句對 0.90+，甚至無關>相關），
+ * 絕對門檻 τ 無法運作；multilingual-002 + task_type 實測相關/無關拉開 0.79 vs 0.54。
+ * memories 池已以 004 建庫且自洽，不動；knowledge_chunks / methodologies 從第一天就用這顆。
+ * kind：入庫的塊/觸發描述用 'document'，用戶這句話用 'query'（不對稱嵌入，成對才準）。
+ */
+const KNOWLEDGE_EMBEDDING_MODEL = 'text-multilingual-embedding-002';
+
+export async function generateKnowledgeEmbedding(
+  text: string,
+  kind: 'query' | 'document',
+): Promise<number[]> {
+  return embedWith(KNOWLEDGE_EMBEDDING_MODEL, text, kind === 'query' ? 'RETRIEVAL_QUERY' : 'RETRIEVAL_DOCUMENT');
+}
+
+async function embedWith(model: string, text: string, taskType?: string): Promise<number[]> {
   const auth = getAuth();
   const tokenResult = await auth.getAccessToken();
   const accessToken = typeof tokenResult === 'string' ? tokenResult : (tokenResult as unknown as { token?: string })?.token || '';
   const projectId = getProjectId();
 
-  const url = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/${EMBEDDING_MODEL}:predict`;
+  const url = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/${model}:predict`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -50,7 +71,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      instances: [{ content: text }],
+      instances: [{ content: text, ...(taskType ? { task_type: taskType } : {}) }],
       parameters: { outputDimensionality: DIMENSION },
     }),
   });

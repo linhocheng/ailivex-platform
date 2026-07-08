@@ -11,6 +11,7 @@ const ADMIN_NAV = [
   { href: '/admin/users',      label: '用戶管理', icon: 'users'   },
   { href: '/admin/access',     label: '權限指派', icon: 'key'     },
   { href: '/admin/memories',   label: '記憶管理', icon: 'brain'   },
+  { href: '/admin/knowledge',  label: '知識與方法', icon: 'doc'   },
   { href: '/admin/podcasts',   label: 'Podcast 素材', icon: 'audio' },
   { href: '/admin/voice',      label: '即時語音', icon: 'phone' },
   { href: '/admin/global-prompts', label: '全局 Prompt', icon: 'display' },
