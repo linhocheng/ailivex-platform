@@ -54,6 +54,7 @@ from agent.firestore_loader import (
     extract_session_summary,
     fetch_remote_memory_blocks,
     post_diary_write,
+    post_extract_memories,
     update_last_session,
     create_document_job,
     dispatch_task_job,
@@ -508,13 +509,18 @@ async def entrypoint(ctx: JobContext):
                     logger.error(f"[finalize] extract_session_summary failed: {e}")
 
             async def _do_memories():
+                # v17：提煉走 TS（唯一真相，含 promise 兌現裁決）；打不通 fallback 本地版（記憶不丟）
                 try:
-                    await asyncio.to_thread(
-                        extract_and_save_memories,
-                        user_id, character_id, char_name, transcript, _bu, _bs, _ak,
+                    ok = await asyncio.to_thread(
+                        post_extract_memories, user_id, character_id, char_name, transcript,
                     )
+                    if not ok:
+                        await asyncio.to_thread(
+                            extract_and_save_memories,
+                            user_id, character_id, char_name, transcript, _bu, _bs, _ak,
+                        )
                 except Exception as e:
-                    logger.error(f"[finalize] extract_and_save_memories failed: {e}")
+                    logger.error(f"[finalize] extract failed: {e}")
 
             async def _do_diary():
                 try:

@@ -197,6 +197,7 @@ export interface ImpressionDoc {
   kind: ImpressionKind;
   embedding?: number[];         // 檢索相關性用
   supportingEpisodes: string[]; // memories doc ids（出處鏈）
+  explicitSupport?: number;     // 顯式來源（tool:remember/voice 主動記住）的支持數——confidence 加成
   status: ImpressionStatus;
   supersededBy?: string | null;
   lastReinforcedAt: FirebaseFirestore.Timestamp | Date;
@@ -215,7 +216,9 @@ export interface DiaryDoc {
   unspoken: string[];       // 沒說出口的觀察（0-3 條）
   nextTime: string[];       // 下次想問/想跟進的（0-2 條）
   mood: string;             // 角色此刻心情，一兩個詞
-  source: string;           // 'text' | 'voice'
+  source: string;           // 'text' | 'voice' | 'digest'（沉澱篇）
+  status?: 'active' | 'archived';  // archived=已被沉澱吸收（digestedInto 可溯，不硬刪）
+  digestedInto?: string;    // 被哪篇沉澱吸收
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 

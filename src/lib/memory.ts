@@ -305,19 +305,24 @@ export async function extractAndSaveMemories(
     .map(m => `${m.role === 'user' ? '用戶' : charName}：${m.content as string}`)
     .join('\n');
 
-  // 撈懸而未決的 question：讓這輪萃取順便判斷哪些已被回答（→ resolved，角色不再追問）
-  const openQSnap = await db.collection(COL.memories)
-    .where('userId', '==', userId)
-    .where('characterId', '==', characterId)
-    .where('type', '==', 'question')
-    .limit(10)
-    .get()
-    .catch(() => null);
-  const openQuestions = (openQSnap?.docs ?? [])
+  // 撈懸而未決的 question ＋ 未兌現的 promise：讓這輪萃取順便裁決生命週期
+  // （question 被回答 / promise 已兌現 → resolved，角色不再追問也不再掛著）
+  const [openQSnap, openPSnap] = await Promise.all([
+    db.collection(COL.memories)
+      .where('userId', '==', userId).where('characterId', '==', characterId)
+      .where('type', '==', 'question').limit(10).get().catch(() => null),
+    db.collection(COL.memories)
+      .where('userId', '==', userId).where('characterId', '==', characterId)
+      .where('type', '==', 'promise').limit(10).get().catch(() => null),
+  ]);
+  const openQuestions = [
+    ...(openQSnap?.docs ?? []),
+    ...(openPSnap?.docs ?? []),
+  ]
     .map(d => ({ id: d.id, ...(d.data() as MemoryDoc) }))
-    .filter(q => (q.status ?? 'active') === 'active');
+    .filter(q => (q.status ?? 'active') === 'active' && q.tier !== 'archive');
   const openQBlock = openQuestions.length > 0
-    ? `\n\n目前懸而未決的事（如果這段對話已經回答/解決了其中某些，把編號列進 <resolved>）：\n${openQuestions.map((q, i) => `${i + 1}. ${q.content}`).join('\n')}`
+    ? `\n\n目前掛著的事——懸而未決的問題與角色答應過的承諾（如果這段對話已經回答、解決、或兌現了其中某些，把編號列進 <resolved>；承諾只有「真的做到了」才算，說「我會做」不算）：\n${openQuestions.map((q, i) => `${i + 1}. [${q.type === 'promise' ? '承諾' : '未決'}] ${q.content}`).join('\n')}`
     : '';
 
   const prompt = `你是記憶提煉師。從以下對話，提取「${charName}」值得長期記住的信息。

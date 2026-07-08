@@ -31,9 +31,11 @@ export function impressionsEnabled(userId: string): boolean {
  *   基礎 = 支持情節數（1條→0.40，2→0.54，3→0.68，4→0.82，5+→0.95 封頂）
  *   衰減 = 每 30 天沒被強化 -0.06
  */
-export function confidenceOf(imp: Pick<ImpressionDoc, 'supportingEpisodes' | 'lastReinforcedAt'>, now = Date.now()): number {
+export function confidenceOf(imp: Pick<ImpressionDoc, 'supportingEpisodes' | 'lastReinforcedAt' | 'explicitSupport'>, now = Date.now()): number {
   const n = Math.max(1, imp.supportingEpisodes?.length ?? 1);
-  const base = Math.min(0.95, 0.4 + 0.14 * (n - 1));
+  // 顯式來源（用戶/角色主動要求記住）比自動提煉可信：有 explicitSupport 加 0.1（封頂前）
+  const explicitBonus = (imp.explicitSupport ?? 0) > 0 ? 0.1 : 0;
+  const base = Math.min(0.95, 0.4 + 0.14 * (n - 1) + explicitBonus);
   const ts = imp.lastReinforcedAt instanceof Date
     ? imp.lastReinforcedAt.getTime()
     : (imp.lastReinforcedAt as { toDate(): Date })?.toDate?.().getTime() ?? now;

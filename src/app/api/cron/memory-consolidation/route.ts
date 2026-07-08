@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { runConsolidation } from '@/lib/consolidation';
+import { consolidateDiaries } from '@/lib/diary';
 import { verifyBearerSecret } from '@/lib/clean-env';
 
 export const runtime = 'nodejs';
@@ -35,14 +36,18 @@ export async function GET(req: Request) {
 
   const { pairs, timeBudgetHit } = await runConsolidation(db, client, {
     dryRun,
-    timeBudgetMs: 240_000, // 留 60s 給收尾
+    timeBudgetMs: 200_000, // 留 100s 給日記沉澱＋收尾
     onlyPair: userId && characterId ? { userId, characterId } : undefined,
   });
+
+  // 日記沉澱（連線批次④）：active > 12 篇的配對，最舊 8 篇沉澱成一篇（dryRun 跳過）
+  const diaryDigest = dryRun ? { pairs: 0, digested: 0 } : await consolidateDiaries(db, client, { timeBudgetMs: 60_000 });
 
   const summary = {
     dryRun,
     pairsProcessed: pairs.length,
     timeBudgetHit,
+    diaryDigest,
     totals: pairs.reduce((a, p) => ({
       episodes: a.episodes + p.episodes,
       supported: a.supported + p.supported,

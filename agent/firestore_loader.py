@@ -1252,3 +1252,35 @@ def post_diary_write(user_id: str, character_id: str, char_name: str, transcript
             logger.info(f"[diary-write] posted status={resp.status}")
     except Exception as e:
         logger.warning(f"[diary-write] failed（不影響收尾）: {e}")
+
+
+def post_extract_memories(user_id: str, character_id: str, char_name: str, transcript: list, timeout: int = 50) -> bool:
+    """掛斷後記憶提煉遞給 TS（唯一真相含 promise 兌現裁決）。回 False = caller fallback 本地版，記憶不丟。"""
+    platform_url = os.environ.get("PLATFORM_URL", "").strip().rstrip("/")
+    worker_secret = os.environ.get("WORKER_SECRET", "").strip()
+    if not platform_url or not worker_secret:
+        return False
+    try:
+        msgs = [
+            {"role": m.get("role", "user"), "content": (m.get("content") or "")[:1000]}
+            for m in transcript[-20:] if (m.get("content") or "").strip()
+        ]
+        if len(msgs) < 2:
+            return True  # 太短本來就不提煉，視為成功（不要 fallback 再跑一次）
+        payload = json.dumps({
+            "userId": user_id, "characterId": character_id,
+            "charName": char_name, "transcript": msgs,
+        }, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            f"{platform_url}/api/agent/extract-memories",
+            method="POST",
+            headers={"x-worker-secret": worker_secret, "Content-Type": "application/json"},
+            data=payload,
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ok = 200 <= resp.status < 300
+            logger.info(f"[extract-remote] posted status={resp.status}")
+            return ok
+    except Exception as e:
+        logger.warning(f"[extract-remote] failed（fallback 本地提煉）: {e}")
+        return False

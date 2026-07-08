@@ -25,6 +25,9 @@ import { trackCost } from '@/lib/cost-tracker';
 const CONSOLIDATION_MODEL = 'claude-sonnet-4-6'; // 形成信念的品質值得 Sonnet（bridge 吃到飽）
 const MAX_EPISODES_PER_RUN = 40;
 const CONSOLIDATABLE_TYPES = new Set(['fact', 'preference']);
+// 顯式來源＝用戶/角色「主動決定要記住」（文字 tool:remember、語音 remember 工具），
+// 比自動提煉（extraction）可信——confidence 計算給加成（impressions.ts confidenceOf）
+const EXPLICIT_SOURCES = new Set(['tool:remember', 'voice']);
 
 type EpisodeWithId = MemoryDoc & { id: string };
 
@@ -207,7 +210,9 @@ ${epList}
         detail.push({ ep: ep.content.slice(0, 40), op: `support→#${op.impression}` });
         if (!dryRun) {
           const { FieldValue } = await import('firebase-admin/firestore');
-          await target.ref.update({ supportingEpisodes: FieldValue.arrayUnion(ep.id), lastReinforcedAt: now });
+          const upd: Record<string, unknown> = { supportingEpisodes: FieldValue.arrayUnion(ep.id), lastReinforcedAt: now };
+          if (EXPLICIT_SOURCES.has(String(ep.source || ''))) upd.explicitSupport = FieldValue.increment(1);
+          await target.ref.update(upd);
           await epRef.update({ consolidatedAt: now, consolidatedInto: target.ref.id });
         }
 
@@ -222,6 +227,7 @@ ${epList}
           content: op.content.trim().slice(0, 200),
           kind,
           supportingEpisodes: [ep.id],
+          explicitSupport: EXPLICIT_SOURCES.has(String(ep.source || '')) ? 1 : 0,
           status: 'active',
           supersededBy: null,
           lastReinforcedAt: now,
@@ -252,6 +258,7 @@ ${epList}
             content: op.updated.trim().slice(0, 200),
             kind: old.kind,
             supportingEpisodes: [ep.id],
+            explicitSupport: EXPLICIT_SOURCES.has(String(ep.source || '')) ? 1 : 0,
             status: 'active',
             supersededBy: null,
             lastReinforcedAt: now,

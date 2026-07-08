@@ -65,7 +65,10 @@ export async function loadDiaryBlock(
       .get();
     if (snap.empty) return '';
 
-    const entries = snap.docs.map(d => d.data() as DiaryDoc).reverse(); // 舊→新
+    const entries = snap.docs.map(d => d.data() as DiaryDoc)
+      .filter(e => (e.status ?? 'active') === 'active')
+      .reverse(); // 舊→新
+    if (entries.length === 0) return '';
     const lines = entries.map(e =>
       `（${relativeTime(e.createdAt as FirebaseFirestore.Timestamp | Date)}）${e.entry}`
     );
@@ -170,4 +173,93 @@ ${prev ? `\n你上一篇日記寫的是：「${prev.entry}」\n` : ''}
     // 日記失敗不影響任何主流程
     console.error('[diary] writeDiaryEntry failed:', e instanceof Error ? e.message : String(e));
   }
+}
+
+// ─── 生命週期：日記沉澱（連線批次④，2026-07-08）─────────────────────────────
+// 人的日記會沉澱成「那段時間我常想⋯」。每晚：active 日記 > 12 篇的配對，
+// 最舊 8 篇 → LLM 寫一篇第一人稱沉澱（source='digest'）→ 原件 archived＋digestedInto 可溯。
+// 分工守天條：挑選、計數、標記全程式；LLM 只寫沉澱文字。
+
+const DIGEST_TRIGGER = 12;  // active 篇數超過這個才沉澱
+const DIGEST_BATCH = 8;     // 一次吸收最舊幾篇
+
+export async function consolidateDiaries(
+  db: Firestore,
+  client: LLMClient,
+  opts: { timeBudgetMs?: number } = {},
+): Promise<{ pairs: number; digested: number }> {
+  const startedAt = Date.now();
+  const budget = opts.timeBudgetMs ?? 60_000;
+  let pairs = 0, digested = 0;
+
+  const relSnap = await db.collection(COL.relationships).limit(500).get();
+  for (const relDoc of relSnap.docs) {
+    if (Date.now() - startedAt > budget) break;
+    const rel = relDoc.data() as { userId: string; characterId: string };
+
+    // 用既有 DESC 複合索引（diary userId+characterId+createdAt DESC），程式反轉成舊→新
+    const snap = await db.collection(COL.diary)
+      .where('userId', '==', rel.userId)
+      .where('characterId', '==', rel.characterId)
+      .orderBy('createdAt', 'desc')
+      .get();
+    const active = snap.docs.filter(d => ((d.data() as DiaryDoc).status ?? 'active') === 'active').reverse();
+    if (active.length <= DIGEST_TRIGGER) continue;
+    pairs++;
+
+    const batch = active.slice(0, DIGEST_BATCH);
+    const entries = batch.map(d => d.data() as DiaryDoc);
+    const listing = entries.map(e =>
+      `（${relativeTime(e.createdAt as FirebaseFirestore.Timestamp | Date)}）${e.entry}`
+    ).join('\n');
+
+    try {
+      const res = await client.messages.create({
+        model: DIARY_MODEL,
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: `這是你過去一段時間寫的幾篇日記：
+
+${listing}
+
+現在你回頭讀這段日子，把它們沉澱成一段話（100-150字，第一人稱）——不是摘要，是「那段時間的我在想什麼、有什麼在慢慢變化」。保留還沒放下的事。
+
+只回 JSON：
+<result>
+{"entry": "...", "mood": "..."}
+</result>`,
+        }],
+      });
+      const text = res.content.filter(c => c.type === 'text').map(c => c.text ?? '').join('');
+      const match = text.match(/<result>([\s\S]*?)<\/result>/);
+      const parsed = match ? parseJsonLoose<{ entry?: string; mood?: string }>(match[1].trim()) : null;
+      if (!parsed?.entry?.trim()) continue;
+
+      // 未消化的 unspoken/nextTime 由程式原樣繼承（不能讓 LLM 沉澱掉「還掛著的事」）
+      const carryUnspoken = entries.flatMap(e => e.unspoken || []).slice(-MAX_UNSPOKEN);
+      const carryNextTime = entries.flatMap(e => e.nextTime || []).slice(-MAX_NEXT_TIME);
+
+      const digestRef = db.collection(COL.diary).doc();
+      await digestRef.set({
+        userId: rel.userId,
+        characterId: rel.characterId,
+        entry: parsed.entry.trim().slice(0, MAX_ENTRY_CHARS),
+        unspoken: carryUnspoken,
+        nextTime: carryNextTime,
+        mood: (parsed.mood || '').trim().slice(0, 20),
+        source: 'digest',
+        status: 'active',
+        createdAt: entries[entries.length - 1].createdAt, // 沉澱篇掛在被吸收段落的時間軸位置
+      } as DiaryDoc);
+      for (const d of batch) {
+        await d.ref.update({ status: 'archived', digestedInto: digestRef.id });
+      }
+      digested++;
+      console.info(`[diary-digest] ${rel.userId}×${rel.characterId}: ${batch.length} 篇 → 1 篇沉澱`);
+    } catch (e) {
+      console.error('[diary-digest] failed（跳過此配對）:', e instanceof Error ? e.message : String(e));
+    }
+  }
+  return { pairs, digested };
 }
