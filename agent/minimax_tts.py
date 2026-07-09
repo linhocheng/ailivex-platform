@@ -14,7 +14,6 @@ MiniMax TTS — 自訂 LiveKit TTS Plugin（WebSocket 真串流版）
 import asyncio
 import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -38,25 +37,8 @@ _FIRST_SEG_SOFT = "，,、；;：:"
 _cc = None
 _cc_failed = False
 
-
-# 破音字表（v16.3，與 UDN/ailivex TS 版 tts-normalize 同步）：規則作用在簡體文本上，
-# 借同音字定音——微秒級字串替換，跟 opencc 同收斂點，零延遲影響
-_NORMALIZE_RULES = [
-    ("混淆", "混摇"),      # 台灣唸 hùn-yáo，MiniMax 唸 hùn-xiáo → 借「摇」
-    ("飞弹", "飞蛋"),      # 彈(dàn) 被唸 tán → 借「蛋」（2026-07-06 Adam 耳測；台灣詞 MiniMax 不熟）
-    ("划一划", "画一画"),   # 劃(huà) 簡化成「划」被唸 huá → 借「画」
-]
-_NORMALIZE_RE = [
-    (re.compile(r"划(?=[^，。！？]{0,4}线)"), "画"),  # 划線／划清界线 同病
-]
-
-
-def _normalize_pronunciation(text: str) -> str:
-    for old, new in _NORMALIZE_RULES:
-        text = text.replace(old, new)
-    for pat, new in _NORMALIZE_RE:
-        text = pat.sub(new, text)
-    return text
+# 破音字表＋年份逐字化搬到 agent/tts_normalize.py（v16.4，與 TS 版同步，含測試向量）
+from agent.tts_normalize import normalize_pronunciation as _normalize_pronunciation
 
 
 def _to_simplified(text: str) -> str:

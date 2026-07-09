@@ -1,6 +1,13 @@
 /**
  * TTS 文字正規化：繁→簡之後、送 MiniMax 之前的確定性處理
  * 所有修正都是程式級 Map/regex，不走 LLM
+ *
+ * 四落點同步清單（改任何一處規則，四處都要改，並跑共用測試向量）：
+ *   1. ailivex agent/tts_normalize.py            —— Python，即時語音 v16+
+ *   2. ailivex src/lib/tts-normalize.ts          —— 本檔（文字對話 TTS /api/tts）
+ *   3. UDN platform/lib/tts-normalize.ts
+ *   4. UDN platform/cloud-run/podcast-worker/src/tts-normalize.ts
+ * 共用測試向量：scripts/test-tts-normalize.mts（TS）/ agent/test_tts_normalize.py（Python）
  */
 import * as OpenCC from 'opencc-js';
 
@@ -31,7 +38,7 @@ const NORMALIZE_RULES: Array<[RegExp | string, string]> = [
   ['网路',  '网络'],     // opencc 把「網路」→「网路」，MiniMax 更熟「网络」
   ['混淆',  '混摇'],     // 台灣唸 hùn-yáo，MiniMax 唸 hùn-xiáo → 借「摇」定音（2026-07-06 UDN 耳測同步）
   ['飞弹',  '飞蛋'],     // 彈(dàn) 被唸 tán → 借「蛋」定音（2026-07-06 Adam 耳測；飛彈=台灣詞，MiniMax 不熟）
-  ['飛彈',  '飞蛋'],     // 繁體形保險（未過 opencc 的路徑）
+  ['飛彈',  '飞蛋'],     // 防禦性保留：normalizeTTSText 必先過 opencc，正常到不了這條；防未來有人直接呼叫 applyNormalizeRules
   ['划一划', '画一画'],   // 劃(huà) 簡化成「划」被唸 huá → 借「画」定音（畫線語意也對）
   [/划(?=[^，。！？]{0,4}线)/g, '画'],  // 划線／划那條線／划清界线 同病；「计划路线」誤中變「计画」讀音仍對
 ];
