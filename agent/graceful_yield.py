@@ -94,6 +94,8 @@ class BoundaryAwareAudioOutput(AudioOutput):
         self._resume_ev = asyncio.Event()
         self._resume_ev.set()
         self._forwarder_task: asyncio.Task | None = None
+        self._failsafe_handle: asyncio.TimerHandle | None = None
+        self._yield_token = 0
         self._closed = False
         # 給 agent 端讀的打斷狀態（chat_ctx 標記用；one-shot，讀完自己清）
         self.interrupt_state: dict = {"cut": False}
@@ -132,6 +134,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
             # 從下一個要轉發的內容位置開始降（wall-clock 計會永遠追不上轉發頭）
             self._duck_from_s = self._forwarded_s
             self._silence_run = 0.0
+            self._arm_failsafe()   # 佇列空（音框全轉發/生成已結束）時邊界掃描不會跑，保底計時器兜底
             logger.info("讓位開始：撐到子句邊界（上限 %.1fs）", MAX_YIELD_S)
 
     def resume(self) -> None:
@@ -143,6 +146,12 @@ class BoundaryAwareAudioOutput(AudioOutput):
             if self.next_in_chain:
                 self.next_in_chain.resume()
             logger.info("誤觸恢復：從子句邊界續播")
+        elif self._state == _CLEAR_AT_BOUNDARY:
+            # 框架在 clear 之後又判定誤觸要求續播（實測 2026-07-10 通話出現過）——
+            # 以最新信號為準：取消排程中的清除，繼續講。
+            self._state = _NORMAL
+            self.interrupt_state["cut"] = False
+            logger.info("誤觸翻案：取消排程中的清除，續講")
         self._gain_target_normal()
         self._resume_ev.set()
 
@@ -151,6 +160,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
             # 真打斷 commit，但子句還沒收完 → 撐到邊界才清
             self._state = _CLEAR_AT_BOUNDARY
             self.interrupt_state["cut"] = True
+            self._arm_failsafe()
             logger.info("真打斷：收完當前子句即讓位")
             return
         if self._state == _PAUSED:
@@ -158,6 +168,34 @@ class BoundaryAwareAudioOutput(AudioOutput):
         self._hard_clear()
 
     # ── 內部 ─────────────────────────────────────────────────
+    def _arm_failsafe(self) -> None:
+        """讓位/清除的牆鐘保底。狀態機由音框流驅動——佇列空掉（全部已轉發或
+        生成結束）時邊界掃描永遠不會跑，沒有這個計時器 deferred clear 會懸置、
+        wait_for_playout 跟著卡住（2026-07-10 實測通話的『反應變慢』一環）。"""
+        self._yield_token += 1
+        tok = self._yield_token
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._failsafe_handle:
+            self._failsafe_handle.cancel()
+        self._failsafe_handle = loop.call_later(MAX_YIELD_S + 0.2, self._failsafe_fire, tok)
+
+    def _failsafe_fire(self, tok: int) -> None:
+        if tok != self._yield_token:
+            return
+        if self._state == _YIELDING:
+            self._state = _PAUSED
+            self._clock_stop()
+            self._resume_ev.clear()
+            if self.next_in_chain:
+                self.next_in_chain.pause()
+            logger.info("讓位保底（無音框可掃）→ 直接停")
+        elif self._state == _CLEAR_AT_BOUNDARY:
+            logger.info("清除保底（無音框可掃）→ 直接清")
+            self._hard_clear()
+
     def _gain_target_normal(self) -> None:
         self._gain = 1.0  # 恢復瞬間拉回（升音量突變無感，降才需要 ramp）
 
@@ -192,6 +230,18 @@ class BoundaryAwareAudioOutput(AudioOutput):
                     continue
                 frame: rtc.AudioFrame = item
                 dur = frame.samples_per_channel / frame.sample_rate
+
+                # 新 segment ＝ 播放時鐘歸零。時鐘若跨 segment 累積，句與句之間的
+                # 閒置牆鐘會讓 played_s 永遠貼著 forwarded_s（min 被 forwarded 封頂）
+                # → 節流失效、讓位預算以合成速度燒完（實測 0.6s 就打保底）。
+                if self._seg_forwarded == 0:
+                    self._clock_base = 0.0
+                    self._clock_mark = None
+                    self._forwarded_s = 0.0
+                    self._silence_run = 0.0
+                    if self._state in (_YIELDING, _CLEAR_AT_BOUNDARY):
+                        self._yield_started_at = 0.0
+                        self._duck_from_s = 0.0
 
                 # 節流：領先播放不超過 LEAD_S（讓「延後停」有實際效果）
                 while (self._forwarded_s - self._played_s()) > LEAD_S:

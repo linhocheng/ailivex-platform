@@ -710,7 +710,10 @@ async def entrypoint(ctx: JobContext):
     # baseline 快慢＝soul 的 imThreshold。被晾著越久間隔越拉長、語氣越退，像真人逐漸給空間，
     # 用戶一開口就整個歸零、重新變得很在線。
     im_threshold = get_im_threshold(_conv)               # 1-5，越高越主動
-    baseline_secs = max(2.0, 4.5 - im_threshold * 0.5)   # im1→4.0s … im5→2.0s：起手多快開口
+    # v18：3a 是輔助系統，不該主動介入太多（Adam 2026-07-10 拍板）。起手間隔調到
+    # 「真正冷場才出手」級：im1→15s im2→12s im3→9s im4→6s im5→6s（原 2-4.5s 太搶話）。
+    # 配合 v16.5 靜默起點對齊（角色說完才起算），這是真實靜默秒數。
+    baseline_secs = max(6.0, 18.0 - im_threshold * 3.0)
     BACKOFF = 2.1            # 每戳一次沒回應，下次間隔 ×這個（退讓）
     MAX_INTERVAL = 120.0     # 間隔上限：最久約兩分鐘才探一次
     JITTER = 0.25            # ±25% 有界抖動（不是純亂數，去機械感）

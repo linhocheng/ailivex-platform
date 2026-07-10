@@ -180,14 +180,81 @@ async def scenario_max_yield_cap():
     return f"保底硬停 OK（{waited:.2f}s ≤ {MAX_YIELD_S}s+margin）"
 
 
+
+
+async def scenario_multi_segment_clock():
+    """回歸：跨 segment 播放時鐘必須歸零（實測 bug：閒置牆鐘灌入 → 保底 0.6s 就打）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    await feed(out, build("S" * 10))   # 第一段 0.2s
+    out.flush()
+    await asyncio.sleep(0.8)           # 句間閒置（舊 bug 會把這 0.8s 灌進播放時鐘）
+    frames = build("S" * 80 + "." * 10)  # 第二段 1.6s 語音 + 邊界
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    t0 = time.monotonic()
+    out.pause()
+    while "pause" not in sink.ops and time.monotonic() - t0 < 3.0:
+        await asyncio.sleep(0.05)
+    waited = time.monotonic() - t0
+    task.cancel()
+    assert "pause" in sink.ops, "第二段讓位沒停"
+    assert waited >= 0.9, f"時鐘跨段污染（讓位預算被合成速度燒掉）: {waited:.2f}s 就停了"
+    await out.aclose()
+    return f"跨段時鐘 OK（第二段讓位撐了 {waited:.2f}s 才到邊界）"
+
+
+async def scenario_resume_cancels_clear():
+    """回歸：CLEAR_AT_BOUNDARY 中收到 resume（框架誤觸翻案）→ 取消清除繼續講。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    frames = build("S" * 50)  # 1.0s 純語音
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()
+    await asyncio.sleep(0.05)
+    out.clear_buffer()        # 真打斷 commit → CLEAR_AT_BOUNDARY
+    await asyncio.sleep(0.05)
+    out.resume()              # 框架翻案：誤觸
+    await asyncio.sleep(1.2)
+    await task
+    assert "clear" not in sink.ops, f"翻案後不該清: {sink.ops}"
+    assert len(sink.frames) == 50, f"翻案後掉幀: {len(sink.frames)}/50"
+    assert out.interrupt_state["cut"] is False, "翻案後不該留打斷標記"
+    await out.aclose()
+    return "誤觸翻案 OK（清除取消、零掉幀、標記清空）"
+
+
+async def scenario_failsafe_empty_queue():
+    """回歸：佇列空（音框全轉發）時 pause/clear 不能懸置——保底計時器要在
+    MAX_YIELD 內直接執行（實測通話：懸置的 deferred clear 卡住 wait_for_playout）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    await feed(out, build("S" * 10))   # 0.2s，瞬間全轉發完
+    await asyncio.sleep(0.5)           # 佇列已空
+    t0 = time.monotonic()
+    out.pause()
+    await asyncio.sleep(0.1)
+    out.clear_buffer()                 # CLEAR_AT_BOUNDARY，但沒有音框可掃
+    while "clear" not in sink.ops and time.monotonic() - t0 < MAX_YIELD_S + 1.5:
+        await asyncio.sleep(0.05)
+    waited = time.monotonic() - t0
+    assert "clear" in sink.ops, f"空佇列清除懸置: {sink.ops}"
+    assert waited <= MAX_YIELD_S + 1.0, f"保底太慢: {waited:.2f}s"
+    await out.aclose()
+    return f"空佇列保底 OK（{waited:.2f}s 內清除，不懸置）"
+
+
 async def main():
     results = []
     for fn in (scenario_passthrough, scenario_yield_at_boundary,
                scenario_false_interrupt_cancel, scenario_hot_clear_finishes_clause,
-               scenario_cold_clear_immediate, scenario_max_yield_cap):
+               scenario_cold_clear_immediate, scenario_max_yield_cap,
+               scenario_multi_segment_clock, scenario_resume_cancels_clear,
+               scenario_failsafe_empty_queue):
         results.append(f"✅ {await fn()}")
     print("\n".join(results))
-    print(f"ALL PASS — {len(results)}/6")
+    print(f"ALL PASS — {len(results)}/9")
 
 
 if __name__ == "__main__":
