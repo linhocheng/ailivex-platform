@@ -7,6 +7,7 @@ import { LogoutButton } from '@/app/_components/LogoutButton';
 
 const ADMIN_NAV = [
   { href: '/admin',            label: '總覽',   icon: 'sparkle' },
+  { href: '/admin/monitor',    label: '監控中台', icon: 'refresh' },
   { href: '/admin/characters', label: '角色管理', icon: 'mask'    },
   { href: '/admin/users',      label: '用戶管理', icon: 'users'   },
   { href: '/admin/access',     label: '權限指派', icon: 'key'     },
