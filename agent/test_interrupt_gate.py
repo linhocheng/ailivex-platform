@@ -111,6 +111,20 @@ async def t_commit_while_paused():
     return "暫停中 commit OK（先 resume 再 clear、後續 resume 不重發）"
 
 
+async def t_pause_idempotent():
+    """框架同一段發話連打 pause 十次 → 底層只收到一次（冪等），resume 後可再暫停。"""
+    sink = FakeSink()
+    out = GatedPauseOutput(next_in_chain=sink, raised_check=lambda: True)
+    await out.capture_frame(speech_frame())
+    for _ in range(10):
+        out.pause()
+    assert sink.ops.count("pause") == 1, f"pause 該冪等: {sink.ops}"
+    out.resume()
+    out.pause()   # 新一段發話 → 可以再暫停
+    assert sink.ops.count("pause") == 2, f"resume 後該可再暫停: {sink.ops}"
+    return "pause 冪等 OK（連打十次只轉發一次，resume 後可再暫停）"
+
+
 async def t_gate_fail_open():
     def boom():
         raise RuntimeError("gate exploded")
@@ -140,10 +154,10 @@ async def t_volume_gate_math():
 async def main():
     tests = (t_passthrough, t_swallow_pause, t_forward_pause_resume,
              t_commit_passthrough_shadow, t_commit_while_paused,
-             t_gate_fail_open, t_volume_gate_math)
+             t_pause_idempotent, t_gate_fail_open, t_volume_gate_math)
     for fn in tests:
         print(f"✅ {await fn()}")
-    print(f"ALL PASS — {len(tests)}/7")
+    print(f"ALL PASS — {len(tests)}/{len(tests)}")
 
 
 if __name__ == "__main__":

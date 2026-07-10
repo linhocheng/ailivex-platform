@@ -104,6 +104,7 @@ class GatedPauseOutput(AudioOutput):
             sample_rate=next_in_chain.sample_rate,
         )
         self._paused_downstream = False   # 我們真的把 pause 轉發下去了嗎
+        self._swallow_logged = False      # 這段發話已 log 過「吞掉」了嗎（框架 pause 一秒打十次，log 只留轉折）
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
         await super().capture_frame(frame)
@@ -116,6 +117,10 @@ class GatedPauseOutput(AudioOutput):
             self.next_in_chain.flush()
 
     def pause(self) -> None:
+        # 冪等：框架在同一段用戶發話中會連打 pause（每個音訊活動事件一次），
+        # 已經暫停就不重複轉發、不重複 log。
+        if self._paused_downstream:
+            return
         raised = True
         if self._raised_check is not None:
             try:
@@ -124,13 +129,16 @@ class GatedPauseOutput(AudioOutput):
                 logger.warning(f"音量閘判斷失敗，視同提高（=v17 行為）: {e}")
         if raised:
             self._paused_downstream = True
+            self._swallow_logged = False
             if self.next_in_chain:
                 self.next_in_chain.pause()
             logger.info("音量閘：提聲搶話 → 暫停角色語音")
-        else:
+        elif not self._swallow_logged:
+            self._swallow_logged = True
             logger.info("音量閘：音量未提高 → 吞掉 pause，她照講（真話會經 commit 停她）")
 
     def resume(self) -> None:
+        self._swallow_logged = False   # 一段發話結束，下一段重新 log 轉折
         if self._paused_downstream:
             self._paused_downstream = False
             if self.next_in_chain:
@@ -140,6 +148,7 @@ class GatedPauseOutput(AudioOutput):
 
     def clear_buffer(self) -> None:
         # 真打斷 commit 一律直通（v17 同款體感）。底層 pause 下 clear 未定義 → 先 resume。
+        self._swallow_logged = False
         if self._paused_downstream and self.next_in_chain:
             self._paused_downstream = False
             self.next_in_chain.resume()

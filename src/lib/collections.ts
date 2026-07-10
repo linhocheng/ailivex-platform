@@ -124,11 +124,11 @@ export interface AccessDoc {
  *   v18   打斷音量閘（重設計版：只攔 pause 不碰 commit；讓位層舊版資產在 git 4993b28）
  */
 export const VOICE_VERSIONS = [
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — v17.4
-  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18' }, // canary — 打斷音量閘（提聲才暫停，應和零死空氣），access.voiceVersion 指派
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // 熱備（v18 出事 DEFAULT 切回來即回滾）
+  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18' }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v17';
+export const DEFAULT_VOICE_VERSION = 'v18';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {
