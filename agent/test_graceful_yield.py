@@ -285,6 +285,29 @@ async def scenario_new_frames_survive_clear():
     return f"新句倖存 OK（共 {len(sink.frames)} 幀，含清除後的新回覆）"
 
 
+async def scenario_paused_orphan_selfheal():
+    """回歸：停在邊界後框架默殺（不 clear 不 resume）→ 2.5s 自癒收攤，
+    新句音框放行不被堵死（實測 16 秒黑洞：她沉默、框架 arbitrary-cancel）。"""
+    from agent.graceful_yield import PAUSED_ORPHAN_S
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    frames = build("S" * 20 + "." * 10)   # 講到邊界會自己停
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()                            # 讓位 → 邊界暫停；之後框架消失（默殺路徑）
+    await asyncio.sleep(PAUSED_ORPHAN_S + 1.2)
+    await task
+    assert "resume" in sink.ops and "clear" in sink.ops, f"孤兒沒自癒: {sink.ops}"
+    n_before = len(sink.frames)
+    out.flush()
+    await feed(out, build("S" * 10))       # 新句：自癒後必須流得動
+    await asyncio.sleep(0.8)
+    assert len(sink.frames) >= n_before + 10, f"新句被堵死: {len(sink.frames)} vs {n_before}+10"
+    assert out.interrupt_state["cut"] is True, "默殺也算被打斷，要標記"
+    await out.aclose()
+    return f"暫停孤兒自癒 OK（{PAUSED_ORPHAN_S}s 收攤、新句 10 幀放行）"
+
+
 async def main():
     results = []
     for fn in (scenario_passthrough, scenario_yield_at_boundary,
@@ -292,10 +315,10 @@ async def main():
                scenario_cold_clear_immediate, scenario_max_yield_cap,
                scenario_multi_segment_clock, scenario_resume_cancels_clear,
                scenario_failsafe_empty_queue, scenario_statereset_resume_keeps_clear,
-               scenario_new_frames_survive_clear):
+               scenario_new_frames_survive_clear, scenario_paused_orphan_selfheal):
         results.append(f"✅ {await fn()}")
     print("\n".join(results))
-    print(f"ALL PASS — {len(results)}/11")
+    print(f"ALL PASS — {len(results)}/12")
 
 
 if __name__ == "__main__":

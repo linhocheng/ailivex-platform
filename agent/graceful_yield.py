@@ -41,6 +41,8 @@ logger = logging.getLogger("ailivex-graceful-yield")
 LEAD_S = 0.35          # 轉發領先播放的上限（越小讓位越準，太小怕斷流）
 MIN_DIP_S = 0.12       # 連續靜音多久算子句邊界
 MAX_YIELD_S = 1.8      # 讓位保底：找不到邊界最多多講這麼久
+PAUSED_ORPHAN_S = 2.5  # 暫停孤兒自癒：停在邊界後這麼久沒有 resume/clear ＝ 框架走了
+                       # 「對已暫停語音的默殺路徑」（不 clear 不 resume），自己收攤
 DUCK_GAIN = 0.55       # 讓位期音量降到幾成（邊收尾邊放低聲音）
 DUCK_RAMP_S = 0.5      # 音量降到位要幾秒
 SILENCE_FLOOR = 250.0  # int16 RMS 絕對靜音門檻（≈ -42 dBFS）
@@ -148,6 +150,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
             logger.info("誤觸取消：邊界未到，話沒停過")
         elif self._state == _PAUSED:
             self._state = _NORMAL
+            self._yield_token += 1   # 解除孤兒自癒
             if self.next_in_chain:
                 self.next_in_chain.resume()
             logger.info("誤觸恢復：從子句邊界續播")
@@ -184,6 +187,50 @@ class BoundaryAwareAudioOutput(AudioOutput):
         self._hard_clear()
 
     # ── 內部 ─────────────────────────────────────────────────
+    def _arm_orphan_failsafe(self) -> None:
+        """暫停孤兒自癒。框架對「已暫停的語音」有一條默殺 commit 路徑
+        （_paused_speech.interrupt()，agent_activity:3126）——不呼叫 clear、
+        resume 也要等它 5s arbitrary-cancel 之後才來。我們停在邊界乾等＝
+        新回覆音框全堵死（2026-07-10 實測 16 秒黑洞）。停下 PAUSED_ORPHAN_S
+        沒等到任何指令 → 自己收攤：釋放底層＋清殘尾（觸發 playback_finished
+        把框架從等待中救出）＋丟舊句音框，回 NORMAL 讓新句流動。"""
+        self._yield_token += 1
+        tok = self._yield_token
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._failsafe_handle:
+            self._failsafe_handle.cancel()
+        self._failsafe_handle = loop.call_later(PAUSED_ORPHAN_S, self._orphan_fire, tok)
+
+    def _orphan_fire(self, tok: int) -> None:
+        if tok != self._yield_token or self._state != _PAUSED:
+            return
+        logger.info("暫停孤兒自癒：%.1fs 無 resume/clear（框架默殺路徑）→ 收攤放行新句", PAUSED_ORPHAN_S)
+        # 丟舊句：清到第一個 FLUSH（含）為止；沒有 FLUSH 就全部是舊句
+        survivors, seen_flush = [], False
+        while not self._q.empty():
+            try:
+                sq, it = self._q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if seen_flush:
+                survivors.append((sq, it))
+            elif it is _FLUSH:
+                seen_flush = True
+        for x in survivors:
+            self._q.put_nowait(x)
+        self.interrupt_state["cut"] = True
+        self._state = _NORMAL
+        self._gain_target_normal()
+        if self.next_in_chain:
+            self.next_in_chain.resume()        # 先解除暫停
+            if self._seg_forwarded > 0:
+                self.next_in_chain.clear_buffer()  # 再清殘尾 → playback_finished 救出框架
+        self._seg_forwarded = 0
+        self._resume_ev.set()                  # 解鎖 forwarder
+
     def _arm_failsafe(self) -> None:
         """讓位/清除的牆鐘保底。狀態機由音框流驅動——佇列空掉（全部已轉發或
         生成結束）時邊界掃描永遠不會跑，沒有這個計時器 deferred clear 會懸置、
@@ -207,6 +254,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
             self._resume_ev.clear()
             if self.next_in_chain:
                 self.next_in_chain.pause()
+            self._arm_orphan_failsafe()
             logger.info("讓位保底（無音框可掃）→ 直接停")
         elif self._state == _CLEAR_AT_BOUNDARY:
             logger.info("清除保底（無音框可掃）→ 直接清")
@@ -229,6 +277,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
                 survivors.append((sq, it))
         if self._state == _PAUSED and self.next_in_chain:
             self.next_in_chain.resume()  # 底層在 pause 狀態下 clear 行為未定義，先 resume 再清
+        self._yield_token += 1           # 解除任何 pending 保底/孤兒計時
         self._state = _NORMAL
         self._gain_target_normal()
         self._resume_ev.set()
@@ -293,6 +342,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
                         self._resume_ev.clear()
                         if self.next_in_chain:
                             self.next_in_chain.pause()
+                        self._arm_orphan_failsafe()
                         logger.info("讓位完成：停在子句邊界（%s）",
                                     "邊界" if at_boundary else "保底")
                         await self._resume_ev.wait()
