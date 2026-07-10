@@ -121,10 +121,11 @@ export interface AccessDoc {
  *   v15   記憶對等（embedding/dedup/hitCount）+ 通話中動態想起
  *   v16   語音延遲優化（VAD prewarm + min_silence 0.3 + TTS 首段 flush）＋v16.5 3a 防護——2026-07-10 收案降 0
  *   v17   ★ LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）；v17.4 移除 3a
- *   v18   優雅讓位（讓位層＋音量閘）——2026-07-10 全退役歸零，重設計中（資產在 git 4993b28）
+ *   v18   打斷音量閘（重設計版：只攔 pause 不碰 commit；讓位層舊版資產在 git 4993b28）
  */
 export const VOICE_VERSIONS = [
   { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — v17.4
+  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18' }, // canary — 打斷音量閘（提聲才暫停，應和零死空氣），access.voiceVersion 指派
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v17';
