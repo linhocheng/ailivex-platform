@@ -42,7 +42,7 @@ load_dotenv(ROOT_DIR / ".env")
 from livekit.agents import Agent, AgentSession, JobContext, function_tool
 from livekit.plugins import silero, anthropic, soniox
 from agent.minimax_tts import MiniMaxCustomTTS
-from agent.graceful_yield import BoundaryAwareAudioOutput
+from agent.graceful_yield import BoundaryAwareAudioOutput, VolumeGate
 from agent.conv_tuning import (
     build_turn_handling, get_im_threshold, get_temperature,
     is_farewell, is_semantic_repeat,
@@ -130,6 +130,22 @@ def _sanitize_chat_ctx(chat_ctx) -> None:
 
 
 class SanitizingAgent(Agent):
+    async def stt_node(self, audio, model_settings):
+        # v18 音量閘 tap：複製一份 frame 給 VolumeGate 量 RMS，frame 照樣餵 STT。
+        gate = getattr(self, "_volume_gate", None)
+        if gate is None:
+            async for ev in Agent.default.stt_node(self, audio, model_settings):
+                yield ev
+            return
+
+        async def _tapped():
+            async for f in audio:
+                gate.push(f)
+                yield f
+
+        async for ev in Agent.default.stt_node(self, _tapped(), model_settings):
+            yield ev
+
     async def llm_node(self, chat_ctx, tools, model_settings):
         _sanitize_chat_ctx(chat_ctx)
         # v18 被打斷標記（one-shot）：上一句被真打斷 → 在那則 assistant 訊息尾端
@@ -413,6 +429,7 @@ async def entrypoint(ctx: JobContext):
     if char_capabilities:
         tools.append(dispatch_task_tool)
     agent = SanitizingAgent(instructions=system_prompt, tools=tools)
+    agent._volume_gate = VolumeGate()   # v18 音量閘：stt_node tap 餵資料
     logger.info(f"Agent initialized, soul={len(system_prompt)} chars")
 
     # v14：讀網址工作臺。base_instructions = 開場 instructions；每讀一條網址就 append 進去（update_instructions）。
@@ -593,10 +610,11 @@ async def entrypoint(ctx: JobContext):
     # 讓位期音量漸降；誤觸在邊界前 resume ＝ 她根本沒停過。詳見 agent/graceful_yield.py。
     try:
         if session.output.audio is not None:
-            _gy = BoundaryAwareAudioOutput(next_in_chain=session.output.audio)
+            _gy = BoundaryAwareAudioOutput(next_in_chain=session.output.audio,
+                                           raised_check=agent._volume_gate.is_raised)
             session.output.audio = _gy
             agent._graceful_yield = _gy   # llm_node 讀 interrupt_state 標記「被打斷沒說完」
-            logger.info("優雅讓位層已掛上（LEAD=0.35s, 邊界=靜音谷≥120ms, 保底=1.8s, duck→0.55）")
+            logger.info("優雅讓位層已掛上（音量閘×1.45＋句子邊界≥240ms＋保底2.8s＋duck→0.55）")
         else:
             logger.warning("session.output.audio 為空，優雅讓位層未掛")
     except Exception as e:

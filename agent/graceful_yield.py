@@ -39,8 +39,8 @@ from livekit.agents.voice.io import AudioOutput, AudioOutputCapabilities
 logger = logging.getLogger("ailivex-graceful-yield")
 
 LEAD_S = 0.35          # 轉發領先播放的上限（越小讓位越準，太小怕斷流）
-MIN_DIP_S = 0.12       # 連續靜音多久算子句邊界
-MAX_YIELD_S = 1.8      # 讓位保底：找不到邊界最多多講這麼久
+MIN_DIP_S = 0.24       # 連續靜音多久算句子邊界（240ms≈句號級停頓；120ms 是逗號級）
+MAX_YIELD_S = 2.8      # 讓位保底：找不到邊界最多多講這麼久（句子級要給足收尾空間）
 PAUSED_ORPHAN_S = 2.5  # 暫停孤兒自癒：停在邊界後這麼久沒有 resume/clear ＝ 框架走了
                        # 「對已暫停語音的默殺路徑」（不 clear 不 resume），自己收攤
 DUCK_GAIN = 0.55       # 讓位期音量降到幾成（邊收尾邊放低聲音）
@@ -50,6 +50,8 @@ SILENCE_REL = 0.08     # 或相對門檻：低於滾動峰值的 8%
 PEAK_DECAY = 0.995     # 滾動峰值每 frame 衰減（適應音量變化）
 
 _NORMAL, _YIELDING, _PAUSED, _CLEAR_AT_BOUNDARY = "normal", "yielding", "paused", "clear_at_boundary"
+_SHADOW = "shadow"     # 影子讓位：音量未提高——她照講不受影響，但記住被 pause 過，
+                       # 之後若真 commit（clear）仍走「講完整句才停」
 _FLUSH = object()
 
 
@@ -73,8 +75,54 @@ def apply_gain(frame: rtc.AudioFrame, gain: float) -> rtc.AudioFrame:
     )
 
 
+class VolumeGate:
+    """用戶音量閘（確定性）。由 stt_node override 餵 frame（v11 聲紋同款帶內 tap）。
+    整通累積說話音量基線（滾動中位數），is_raised()＝最近 0.4s 平均 ≥ 基線 × RAISE_FACTOR。
+    基線不足（開頭 / tap 沒接到）→ fail-open 回 True＝退回「任何聲音都算打斷」的既有行為。
+    ⚠️ 瀏覽器 AGC（autoGainControl）可能壓平音量差——實測若閘永不觸發，調 RAISE_FACTOR
+    或前端 getUserMedia 關 AGC。"""
+    RAISE_FACTOR = 1.45      # ≈ +3.2dB
+    NOISE_GATE = 220.0       # int16 RMS 低於此視為非語音，不進基線
+    RECENT_WINDOW_S = 0.4
+    MIN_BASELINE_S = 1.5     # 語音基線至少累積這麼多秒才啟用判斷
+
+    def __init__(self) -> None:
+        from collections import deque
+        self._baseline = deque(maxlen=600)   # 語音 frame 的 RMS（~長期）
+        self._recent = deque()               # (dur, rms) 最近窗
+        self._recent_dur = 0.0
+        self._baseline_dur = 0.0
+
+    def push(self, frame) -> None:
+        try:
+            rms = frame_rms(frame)
+        except Exception:
+            return
+        dur = frame.samples_per_channel / frame.sample_rate
+        if rms >= self.NOISE_GATE:
+            self._baseline.append(rms)
+            self._baseline_dur += dur
+        self._recent.append((dur, rms))
+        self._recent_dur += dur
+        while self._recent_dur > self.RECENT_WINDOW_S and len(self._recent) > 1:
+            d, _ = self._recent.popleft()
+            self._recent_dur -= d
+
+    def is_raised(self) -> bool:
+        if self._baseline_dur < self.MIN_BASELINE_S or not self._baseline:
+            return True   # fail-open：沒有基線就退回既有行為
+        speech = [r for _, r in self._recent if r >= self.NOISE_GATE]
+        if not speech:
+            return False  # 最近窗根本沒語音能量（雜訊誤觸）→ 不算提高
+        recent_mean = sum(speech) / len(speech)
+        srt = sorted(self._baseline)
+        median = srt[len(srt) // 2]
+        return recent_mean >= median * self.RAISE_FACTOR
+
+
 class BoundaryAwareAudioOutput(AudioOutput):
-    def __init__(self, next_in_chain: AudioOutput) -> None:
+    def __init__(self, next_in_chain: AudioOutput, raised_check=None) -> None:
+        self._raised_check = raised_check   # callable → bool；None＝永遠視為音量提高（既有行為）
         super().__init__(
             label="BoundaryAwareAudioOutput",
             capabilities=AudioOutputCapabilities(pause=True),
@@ -135,6 +183,15 @@ class BoundaryAwareAudioOutput(AudioOutput):
     def pause(self) -> None:
         # 框架偵測到用戶開口。不立停——進讓位；已在讓位/暫停就不重進。
         if self._state == _NORMAL:
+            # 音量閘：沒提高＝影子模式（她照講；真 commit 時仍講完整句才停）
+            if self._raised_check is not None:
+                try:
+                    if not self._raised_check():
+                        self._state = _SHADOW
+                        logger.info("影子讓位：音量未提高，照講（commit 仍會收完整句）")
+                        return
+                except Exception as e:
+                    logger.warning(f"音量閘判斷失敗，回讓位路徑: {e}")
             self._state = _YIELDING
             self._yield_started_at = self._played_s()
             # 漸降以「內容時間軸」計：讓位瞬間已轉發的 LEAD 秒是覆水難收的全音量，
@@ -145,6 +202,9 @@ class BoundaryAwareAudioOutput(AudioOutput):
             logger.info("讓位開始：撐到子句邊界（上限 %.1fs）", MAX_YIELD_S)
 
     def resume(self) -> None:
+        if self._state == _SHADOW:
+            self._state = _NORMAL
+            return
         if self._state == _YIELDING:
             self._state = _NORMAL
             logger.info("誤觸取消：邊界未到，話沒停過")
@@ -171,10 +231,15 @@ class BoundaryAwareAudioOutput(AudioOutput):
         self._resume_ev.set()
 
     def clear_buffer(self) -> None:
-        if self._state == _YIELDING:
-            # 真打斷 commit，但子句還沒收完 → 撐到邊界才清。
+        if self._state in (_YIELDING, _SHADOW):
+            # 真打斷 commit，但句子還沒收完 → 撐到邊界才清。
+            # 影子模式進來＝正常音量的完整回合：一樣講完整句才讓（不瞬砍）。
             # 只清「clear 當下已在佇列的舊句音框」——commit 後框架就開始生成新回覆，
             # 新句音框會在 drain 期間到達，不設界線會被邊界清除誤殺（回覆被吃掉）。
+            if self._state == _SHADOW:   # 影子直接 commit：現在才起算讓位/漸降
+                self._yield_started_at = self._played_s()
+                self._duck_from_s = self._forwarded_s
+                self._silence_run = 0.0
             self._state = _CLEAR_AT_BOUNDARY
             self._clear_at = time.monotonic()
             self._clear_cut_seq = self._seq_in

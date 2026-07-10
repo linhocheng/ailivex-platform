@@ -90,7 +90,7 @@ async def scenario_yield_at_boundary():
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
     # 1.2s 語音 + 0.2s 靜音（子句邊界）+ 0.5s 語音
-    frames = build("S" * 60 + "." * 10 + "S" * 25)
+    frames = build("S" * 60 + "." * 15 + "S" * 25)
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     out.pause()  # 框架偵測到用戶開口
@@ -98,7 +98,7 @@ async def scenario_yield_at_boundary():
     await task
     assert "pause" in sink.ops, f"沒停在邊界: {sink.ops}"
     # 停的位置：語音段(60f)之後、靜音段內或剛過，絕不會把後段語音講完
-    assert len(sink.frames) <= 72, f"讓位太晚: {len(sink.frames)} 幀"
+    assert len(sink.frames) <= 77, f"讓位太晚: {len(sink.frames)} 幀"
     assert len(sink.frames) >= 55, f"讓位太早（沒講完子句）: {len(sink.frames)} 幀"
     # 讓位期音量漸降：子句尾端（讓位決定 + LEAD 之後的內容）增益明顯 < 1
     tail_rms = frame_rms(sink.frames[58])
@@ -129,7 +129,7 @@ async def scenario_hot_clear_finishes_clause():
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
     # 0.4s 語音 + 靜音邊界 + 0.6s 語音（真打斷後，後段必須被丟棄）
-    frames = build("S" * 20 + "." * 10 + "S" * 30)
+    frames = build("S" * 20 + "." * 25 + "S" * 30)
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     out.pause()
@@ -139,7 +139,7 @@ async def scenario_hot_clear_finishes_clause():
     task.cancel()
     assert "clear" in sink.ops, f"沒清: {sink.ops}"
     assert out.interrupt_state["cut"] is True, "沒標記被打斷"
-    assert len(sink.frames) <= 32, f"真打斷後還在講: {len(sink.frames)} 幀"
+    assert len(sink.frames) <= 46, f"真打斷後還在講: {len(sink.frames)} 幀"
     assert len(sink.frames) >= 18, f"沒收完子句就被砍: {len(sink.frames)} 幀"
     await out.aclose()
     return f"真打斷收句 OK（{len(sink.frames)} 幀後清除）"
@@ -165,7 +165,7 @@ async def scenario_cold_clear_immediate():
 async def scenario_max_yield_cap():
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
-    frames = build("S" * 150)  # 3.0s 純語音，永遠沒有邊界 → 保底要生效
+    frames = build("S" * 180)  # 3.6s 純語音，永遠沒有邊界 → 保底要生效
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     t0 = time.monotonic()
@@ -189,7 +189,7 @@ async def scenario_multi_segment_clock():
     await feed(out, build("S" * 10))   # 第一段 0.2s
     out.flush()
     await asyncio.sleep(0.8)           # 句間閒置（舊 bug 會把這 0.8s 灌進播放時鐘）
-    frames = build("S" * 80 + "." * 10)  # 第二段 1.6s 語音 + 邊界
+    frames = build("S" * 80 + "." * 15)  # 第二段 1.6s 語音 + 邊界
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     t0 = time.monotonic()
@@ -250,7 +250,7 @@ async def scenario_statereset_resume_keeps_clear():
     不能取消清除（實測：誤當翻案 → 舊句照播＋新回覆排後面＝「消化兩次」）。"""
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
-    frames = build("S" * 20 + "." * 10 + "S" * 30)
+    frames = build("S" * 20 + "." * 25 + "S" * 30)
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     out.pause()
@@ -261,7 +261,7 @@ async def scenario_statereset_resume_keeps_clear():
     task.cancel()
     assert "clear" in sink.ops, f"狀態重置不該取消清除: {sink.ops}"
     assert out.interrupt_state["cut"] is True, "打斷標記不該被狀態重置洗掉"
-    assert len(sink.frames) <= 32, f"清除沒生效: {len(sink.frames)} 幀"
+    assert len(sink.frames) <= 46, f"清除沒生效: {len(sink.frames)} 幀"
     await out.aclose()
     return f"狀態重置護欄 OK（清除照排程，{len(sink.frames)} 幀停）"
 
@@ -270,7 +270,7 @@ async def scenario_new_frames_survive_clear():
     """回歸：clear 之後才到的新回覆音框必須倖存（序號截斷，不整鍋端）。"""
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
-    old = build("S" * 20 + "." * 10)
+    old = build("S" * 20 + "." * 25)
     task = asyncio.create_task(feed(out, old))
     await asyncio.sleep(0.15)
     out.pause()
@@ -291,7 +291,7 @@ async def scenario_paused_orphan_selfheal():
     from agent.graceful_yield import PAUSED_ORPHAN_S
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
-    frames = build("S" * 20 + "." * 10)   # 講到邊界會自己停
+    frames = build("S" * 20 + "." * 25)   # 講到邊界會自己停
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     out.pause()                            # 讓位 → 邊界暫停；之後框架消失（默殺路徑）
@@ -308,6 +308,75 @@ async def scenario_paused_orphan_selfheal():
     return f"暫停孤兒自癒 OK（{PAUSED_ORPHAN_S}s 收攤、新句 10 幀放行）"
 
 
+async def scenario_volume_gate_math():
+    """VolumeGate 數學：正常音量不算提高、大聲算、無基線 fail-open、純雜訊不算。"""
+    from agent.graceful_yield import VolumeGate
+    g = VolumeGate()
+    assert g.is_raised() is True, "無基線要 fail-open"
+    for _ in range(120):                      # 2.4s 正常語音（amp 8000）建基線
+        g.push(speech_frame(8000))
+    assert g.is_raised() is False, "同音量不該算提高"
+    for _ in range(20):                       # 0.4s 大聲（amp 16000）
+        g.push(speech_frame(16000))
+    assert g.is_raised() is True, "音量翻倍該算提高"
+    for _ in range(20):                       # 最近窗換成靜音 → 雜訊誤觸不算
+        g.push(silence_frame())
+    assert g.is_raised() is False, "最近窗無語音能量不該算提高"
+    return "音量閘數學 OK（基線/提高/fail-open/雜訊四態）"
+
+
+async def scenario_shadow_no_yield():
+    """影子模式：音量未提高的 pause → 她完全不受影響（不停、不減音量）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink, raised_check=lambda: False)
+    frames = build("S" * 40 + "." * 15)
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()   # 正常音量的說話 → 影子
+    await asyncio.sleep(1.5)
+    await task
+    assert "pause" not in sink.ops, f"影子不該停: {sink.ops}"
+    assert len(sink.frames) == 55, f"影子掉幀: {len(sink.frames)}/55"
+    head, tail = frame_rms(sink.frames[5]), frame_rms(sink.frames[38])
+    assert tail > head * 0.98, f"影子不該減音量: {head:.0f}→{tail:.0f}"
+    await out.aclose()
+    return "影子模式 OK（不停、不減音、零掉幀）"
+
+
+async def scenario_shadow_commit_finishes_sentence():
+    """影子後真 commit（正常音量講了完整一句）→ 仍收完整句才清，不瞬砍。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink, raised_check=lambda: False)
+    frames = build("S" * 25 + "." * 25 + "S" * 30)
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()          # 影子
+    await asyncio.sleep(0.1)
+    out.clear_buffer()   # 回合成立 → commit
+    await asyncio.sleep(1.5)
+    task.cancel()
+    assert "clear" in sink.ops, f"影子 commit 沒清: {sink.ops}"
+    assert out.interrupt_state["cut"] is True
+    assert 23 <= len(sink.frames) <= 52, f"影子 commit 沒收完句/收太多: {len(sink.frames)} 幀"
+    await out.aclose()
+    return f"影子 commit 收整句 OK（{len(sink.frames)} 幀後清）"
+
+
+async def scenario_raised_yields():
+    """音量提高的 pause → 正常讓位路徑（對照組）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink, raised_check=lambda: True)
+    frames = build("S" * 30 + "." * 15 + "S" * 20)
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()
+    await asyncio.sleep(2.0)
+    await task
+    assert "pause" in sink.ops, f"提高音量該讓位: {sink.ops}"
+    await out.aclose()
+    return "提高音量讓位 OK（對照組）"
+
+
 async def main():
     results = []
     for fn in (scenario_passthrough, scenario_yield_at_boundary,
@@ -315,10 +384,12 @@ async def main():
                scenario_cold_clear_immediate, scenario_max_yield_cap,
                scenario_multi_segment_clock, scenario_resume_cancels_clear,
                scenario_failsafe_empty_queue, scenario_statereset_resume_keeps_clear,
-               scenario_new_frames_survive_clear, scenario_paused_orphan_selfheal):
+               scenario_new_frames_survive_clear, scenario_paused_orphan_selfheal,
+               scenario_volume_gate_math, scenario_shadow_no_yield,
+               scenario_shadow_commit_finishes_sentence, scenario_raised_yields):
         results.append(f"✅ {await fn()}")
     print("\n".join(results))
-    print(f"ALL PASS — {len(results)}/12")
+    print(f"ALL PASS — {len(results)}/16")
 
 
 if __name__ == "__main__":
