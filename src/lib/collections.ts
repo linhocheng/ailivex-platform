@@ -136,7 +136,7 @@ export const VOICE_VERSIONS = [
   { id: 'v14', label: '14',   agentName: 'ailivex-realtime-v14' },
   { id: 'v15', label: '15',   agentName: 'ailivex-realtime-v15' }, // 記憶對等 + 通話中動態想起
   { id: 'v16', label: '16',   agentName: 'ailivex-realtime-v16' }, // 語音延遲優化（prewarm/VAD 0.3/首段 flush）＋v16.5 3a 防護——2026-07-10 收案降 0
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）＋v16.5 3a 防護（道別待命/去重/靜默對齊）
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）；v17.4 移除 3a 主動發話（輪詢式填空與「活」的目的相悖，Adam 拍板）
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v17';

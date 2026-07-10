@@ -22,7 +22,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import sys
 import threading
 import time
@@ -37,10 +36,7 @@ load_dotenv(ROOT_DIR / ".env")
 from livekit.agents import Agent, AgentSession, JobContext, function_tool
 from livekit.plugins import silero, anthropic, soniox
 from agent.minimax_tts import MiniMaxCustomTTS
-from agent.conv_tuning import (
-    build_turn_handling, get_im_threshold, get_temperature,
-    is_farewell, is_semantic_repeat,
-)
+from agent.conv_tuning import build_turn_handling, get_temperature
 from agent.source_intake import handle_share_source
 from agent.quota_meter import VoiceMeter, consume_doc_quota, consume_media_quota
 from livekit import api as lk_api
@@ -99,7 +95,10 @@ def _sanitize_chat_ctx(chat_ctx) -> None:
          to_provider_format 內部生的，sanitize items 攔不到 → 改成：若轉換後最後
          一則是 assistant，搶先補一則非空白的 '(empty)' user（plugin 自己 leading
          dummy 用的同一個慣用值），plugin 條件不成立就不會再塞那個空格。
-    釘在 chat_ctx → Anthropic 的咽喉，所有 generate_reply 都受保護。"""
+    釘在 chat_ctx → Anthropic 的咽喉，所有 generate_reply 都受保護。
+    v17.4：我們補的 '(empty)' 佔位是持久寫入 chat_ctx 的——不先清掉，多次
+    assistant 結尾的生成（讀網址等）會讓幻影 user 訊息越積越多，模型可能把
+    「(empty)」當成用戶沉默去回應。改為每次先清舊佔位、需要時再補，全程最多一則。"""
     items = chat_ctx.items
     kept = []
     for it in items:
@@ -111,6 +110,10 @@ def _sanitize_chat_ctx(chat_ctx) -> None:
                     if not (isinstance(b, str) and not b.strip())
                 ]
                 if len(content) == 0:
+                    continue
+                # 清掉我們先前補的 '(empty)' 佔位（只認 user + 單一 '(empty)' 內容）
+                if (getattr(it, "role", "") == "user"
+                        and len(content) == 1 and content[0] == "(empty)"):
                     continue
         kept.append(it)
     items[:] = kept
@@ -427,9 +430,6 @@ async def entrypoint(ctx: JobContext):
     transcript: list = []
     _finalize_lock = asyncio.Lock()
     _finalized = {"done": False}
-    # v16.2: 3a 停止鉤子——自我重排 timer 必綁 lifecycle 停止條件（v6-v10 斷線空轉家族雷）。
-    # 3a 區塊在後段初始化後填入真身；在那之前斷線，呼叫 no-op 安全。
-    _stop_3a = {"fn": lambda: None}
 
     # ── v15 動態想起：用戶聊到新話題 → 背景撈相關舊記憶注入 ──────────────
     # 分工（天條）：節流/門檻/去重＝確定性程式；相關與否＝cosine 分數；
@@ -503,7 +503,6 @@ async def entrypoint(ctx: JobContext):
         """掛斷收尾。idempotent（asyncio.Lock + done flag，只成功跑一次）。
         順序＝最不能丟的先做：①快存逐字稿（無 LLM，秒級）②提煉記憶 ③上次對話快照。
         在 shutdown callback 裡跑，shutdown_process_timeout 已拉到 90s 容得下兩通 bridge LLM。"""
-        _stop_3a["fn"]()   # v16.2: 收尾第一件事＝停 3a，不再對空房評估/發話
         async with _finalize_lock:
             if _finalized["done"]:
                 return
@@ -606,8 +605,6 @@ async def entrypoint(ctx: JobContext):
     #   flush 有 idempotent guard，三層重疊不會重複扣。
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(_p):
-        if len(ctx.room.remote_participants) == 0:
-            _stop_3a["fn"]()   # v16.2: 人走光 → 3a 停
         if not _voice_meter:
             return
         humans_left = len(ctx.room.remote_participants)
@@ -626,7 +623,6 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("disconnected")
     def _on_room_gone():
-        _stop_3a["fn"]()   # v16.2: 房間斷 → 3a 停
         if _voice_meter:
             asyncio.create_task(_voice_meter.flush())
 
@@ -674,144 +670,3 @@ async def entrypoint(ctx: JobContext):
     except Exception as e:
         logger.error(f"Initial greeting failed: {e}")
 
-    # ── 3a 主動發話：擬真 backoff + 抖動 + 情境化判斷（v3 第二口蛋糕）──
-    # 分工（天條）：節奏(backoff/抖動/間隔保護)＝確定性程式；開不開口＋說什麼＝LLM 看脈絡判斷；
-    # baseline 快慢＝soul 的 imThreshold。被晾著越久間隔越拉長、語氣越退，像真人逐漸給空間，
-    # 用戶一開口就整個歸零、重新變得很在線。
-    im_threshold = get_im_threshold(_conv)               # 1-5，越高越主動
-    # v17.3.2：3a 是輔助系統不該主動介入太多（Adam 拍板）——起手 6-15s 真冷場才出手
-    baseline_secs = max(6.0, 18.0 - im_threshold * 3.0)
-    BACKOFF = 2.1            # 每戳一次沒回應，下次間隔 ×這個（退讓）
-    MAX_INTERVAL = 120.0     # 間隔上限：最久約兩分鐘才探一次
-    JITTER = 0.25            # ±25% 有界抖動（不是純亂數，去機械感）
-    MIN_GAP = 8.0            # 兩次主動發話最短間隔保護
-    _itj = {"timer": None, "interval": baseline_secs, "nudges": 0, "last_say": 0.0,
-            "quiet_since": time.time(), "stopped": False}
-
-    def _cancel_timer():
-        if _itj["timer"] is not None:
-            _itj["timer"].cancel()
-            _itj["timer"] = None
-
-    def _stop_interject():
-        if not _itj["stopped"]:
-            logger.info("3a: lifecycle 停止（房間收尾）")
-        _itj["stopped"] = True
-        _cancel_timer()
-
-    _stop_3a["fn"] = _stop_interject
-
-    def _arm(interval: float):
-        if _itj["stopped"]:
-            return
-        _cancel_timer()
-        jittered = max(1.0, interval * (1.0 + random.uniform(-JITTER, JITTER)))
-        loop = asyncio.get_running_loop()
-        _itj["timer"] = loop.call_later(jittered, lambda: asyncio.create_task(_maybe_interject()))
-
-    async def _maybe_interject():
-        _itj["timer"] = None
-        if _itj["stopped"]:
-            return
-        # gate：不蓋過人、自己沒在說 → 稍後再看，不算一次 nudge
-        if session.current_speech is not None or getattr(session, "agent_state", "") == "speaking":
-            _arm(2.5)
-            return
-        if time.time() - _itj["last_say"] < MIN_GAP:
-            _arm(MIN_GAP)
-            return
-        # v16.5 道別待命：雙方最後一句都是道別 → 停止自我重排，不再對「掛斷前的沉默」開口。
-        # 用戶再開口會經 _on_user_state（speaking 歸零 → listening 補種 timer）自動復活。
-        try:
-            _last_user = next((t["content"] for t in reversed(transcript) if t["role"] == "user"), "")
-            _last_asst = next((t["content"] for t in reversed(transcript) if t["role"] == "assistant"), "")
-            if _last_user and _last_asst and is_farewell(_last_user) and is_farewell(_last_asst):
-                logger.info("3a: 道別待命（雙方已互道再見，停止主動發話；用戶再開口即復活）")
-                return
-        except Exception as e:
-            logger.warning(f"3a farewell check failed: {e}")
-        quiet_for = int(time.time() - _itj["quiet_since"])
-        n = _itj["nudges"]
-        logger.info(f"3a: 評估主動開口 (第{n+1}次, 已靜默{quiet_for}s, interval={_itj['interval']:.0f}s, im={im_threshold})")
-        try:
-            from anthropic import AsyncAnthropic
-            recent = "\n".join(f"{t['role']}: {t['content']}" for t in transcript[-6:]) or "（還沒有對話）"
-            _bu = os.environ.get("BRIDGE_URL", "")
-            _bs = os.environ.get("BRIDGE_SECRET", "")
-            if _bu and _bs:
-                _client = AsyncAnthropic(api_key=_bs, base_url=_bu)   # 走 Bridge 吃 Max
-                _model = "claude-sonnet-4-6"
-            else:
-                _client = AsyncAnthropic(api_key=anthropic_key)
-                _model = "claude-haiku-4-5-20251001"
-            resp = await _client.messages.create(
-                model=_model,
-                max_tokens=80,
-                system=system_prompt + (
-                    "\n\n[主動性·此刻是否開口] 對方沉默了。以你這個角色的本性判斷——"
-                    "此刻你心裡有沒有什麼念頭真的自然地想說出來？"
-                    "沉默很多時候才是對的，不要為了填空間而開口。"
-                    "如果你是沉思型、會讓話沉澱的角色，沉默就是答案。"
-                ),
-                messages=[{"role": "user", "content": (
-                    f"最近的對話（逐字）：\n{recent}\n\n"
-                    f"狀況：已經安靜約 {quiet_for} 秒，你已主動開口 {n} 次、對方都還沒回。\n"
-                    "以你這個角色的本性，判斷此刻要不要開口。\n\n"
-                    "若開口——這句話必須是你此刻真實浮現的念頭：\n"
-                    "・接住對方剛說、還沒聊完的某個點，說出你此刻真實的反應或感受；\n"
-                    "・帶你這個角色獨有的語氣和視角，是『只有你會這樣說』的話，不是任何角色都能講的通用句；\n"
-                    "・可以是一個觀察、一個反應、一句從你的個性自然長出來的話；\n"
-                    "・問題只有在你這個角色的本性就是會問的情況下才自然，不要為了推動對話而問。\n"
-                    "嚴禁通用罐頭問候——『在嗎／還在嗎／你還好嗎／有在聽嗎／怎麼不說話了』一律不准。\n"
-                    "被晾越久語氣越淡、越收，或乾脆保持沉默。\n\n"
-                    "只輸出那一句話本身；若沉默才自然，就輸出空字串，什麼都別寫。"
-                )}],
-            )
-            text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
-            text = text.strip("（）()「」\"' ")
-            if text and text not in ("沉默", "NOTHING", "無", "空", "（沉默）"):
-                # v16.5 去重防護：跟角色最近說過的話語意重複 → 擋下不說（機制保證，不靠 prompt 自律）。
-                # 治「回合路剛回完，3a 把同一句換個皮再說一次」的兩張嘴打架。
-                _recent_asst = [t["content"] for t in transcript if t["role"] == "assistant"][-3:]
-                if is_semantic_repeat(text, _recent_asst):
-                    logger.info(f"3a: 去重擋下(第{n+1}次)（與剛說過的話重複）→ {text[:60]!r}")
-                else:
-                    logger.info(f"3a: 主動說(第{n+1}次) → {text[:60]!r}")
-                    session.say(text)   # 走 MiniMax TTS（內含 opencc 繁→簡）
-                    _itj["last_say"] = time.time()
-            else:
-                logger.info(f"3a: 評估後選擇沉默(第{n+1}次)")
-        except Exception as e:
-            logger.error(f"3a interject failed: {e}")
-        # backoff：對方還沒回（用戶開口會在 _on_user_state 歸零），間隔越拉越長、自我重排持續探
-        _itj["nudges"] += 1
-        _itj["interval"] = min(_itj["interval"] * BACKOFF, MAX_INTERVAL)
-        _arm(_itj["interval"])
-
-    @session.on("user_state_changed")
-    def _on_user_state(ev):
-        new = getattr(ev, "new_state", "")
-        if new == "speaking":
-            # 用戶開口＝一切歸零，重新很在線
-            _cancel_timer()
-            _itj["interval"] = baseline_secs
-            _itj["nudges"] = 0
-            _itj["quiet_since"] = time.time()
-            if getattr(session, "agent_state", "") == "speaking":
-                logger.info("3a: 用戶在角色說話時插話 → 讓位（被打斷回饋）")
-        elif new == "listening":
-            # 回合邊界＝一段新靜默的起點。沒有 pending timer 才種一個（避免和自我重排打架）
-            if _itj["nudges"] == 0:
-                _itj["quiet_since"] = time.time()
-            if _itj["timer"] is None:
-                _arm(_itj["interval"])
-
-    @session.on("agent_state_changed")
-    def _on_agent_state(ev):
-        # v16.5 靜默起點對齊：角色說完話（回合回覆或 3a 自己）才是這段靜默的起點。
-        # 原本從用戶最後一句起算，角色講話的時間也被算進「已靜默」→ 判斷 LLM 高估冷場，
-        # 回合路剛回完幾秒 3a 就想接自己的話。
-        if getattr(ev, "new_state", "") == "listening":
-            _itj["quiet_since"] = time.time()
-
-    logger.info(f"3a active(擬真backoff): baseline={baseline_secs:.1f}s ×{BACKOFF} cap={MAX_INTERVAL:.0f}s im={im_threshold}")
