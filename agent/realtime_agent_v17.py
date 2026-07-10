@@ -400,8 +400,25 @@ async def entrypoint(ctx: JobContext):
     sources_state: list = []
 
     _conv = char_ctx.conv_settings if char_ctx else {}
+    # v17.3.1 打斷分真假（不是拉高門檻，是分辨 backchannel vs 真搶話）：
+    #   min_words=3 —— split_words 對中文逐字計，「嗯」(1)「對對」(2) 這類應和不奪麥，
+    #     角色照講；真搶話（你等一下/我想問…）到第 3 字就讓。字數不到時連暫停都不觸發。
+    #   resume_false_interruption —— 被切但沒接出真正的話（咳嗽/背景音）→ 自動把話接回去講完。
+    #   false_interruption_timeout=1.2s —— 預設 2.0s 死空氣太長；Soniox 轉寫 ~0.5s 內到，1.2s 夠判定。
+    # min_duration 仍由後台 interruptSensitivity 旋鈕控制（build_turn_handling）。
+    _turn_handling = build_turn_handling(_conv)
+    _turn_handling["interruption"].update({
+        "min_words": 3,
+        "resume_false_interruption": True,
+        "false_interruption_timeout": 1.2,
+    })
     session = AgentSession(stt=stt, llm=llm, tts=tts, vad=vad,
-                           turn_handling=build_turn_handling(_conv))
+                           turn_handling=_turn_handling)
+
+    @session.on("agent_false_interruption")
+    def _on_false_interruption(ev):
+        # 內建 resume log 是 DEBUG 級，production 看不到；補 INFO 當鑑別信號
+        logger.info(f"打斷判定為誤觸 → {'已把話接回去' if getattr(ev, 'resumed', False) else '未能恢復（音訊不可續播）'}")
 
     call_start = time.time()
     transcript: list = []
