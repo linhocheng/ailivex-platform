@@ -215,18 +215,13 @@ class BoundaryAwareAudioOutput(AudioOutput):
                 self.next_in_chain.resume()
             logger.info("誤觸恢復：從子句邊界續播")
         elif self._state == _CLEAR_AT_BOUNDARY:
-            # resume 有兩種身分（1.5.1 源碼核對）：
-            #   a) commit 後的狀態重置（agent_activity.py:3143，clear 後同一呼叫堆疊、µs 級）
-            #      → 不能取消清除，否則真打斷變沒打斷
-            #   b) 誤觸翻案（false-interruption fire，秒級之後）→ 取消清除續講
-            # 兩者時間差四個數量級，用 0.25s 護欄區分（實測 74µs vs 3.2s）。
-            if time.monotonic() - self._clear_at < 0.25:
-                logger.info("resume＝commit 後狀態重置（%.0fµs），清除照排程",
-                            (time.monotonic() - self._clear_at) * 1e6)
-            else:
-                self._state = _NORMAL
-                self.interrupt_state["cut"] = False
-                logger.info("誤觸翻案：取消排程中的清除，續講")
+            # commit 之後的 resume 一律視為框架狀態重置，絕不翻案取消清除。
+            # 理由：clear 到達＝框架已把回合定案（逐字稿已截斷、開始生成新回覆），
+            # 事後續播舊句必然「消化兩次」。時間護欄不可靠——狀態重置 resume 會先等
+            # 生成收尾才發，實測 74µs 到 459ms 都出現過（2026-07-10 兩通實測）。
+            # 真正的誤觸翻案只存在於 commit 之前（上面 _YIELDING/_PAUSED 兩條路徑）。
+            logger.info("resume 於清除排程中（+%.0fms）＝框架狀態重置，清除照排程",
+                        (time.monotonic() - self._clear_at) * 1000)
         self._gain_target_normal()
         self._resume_ev.set()
 

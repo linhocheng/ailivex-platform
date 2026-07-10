@@ -204,25 +204,26 @@ async def scenario_multi_segment_clock():
     return f"跨段時鐘 OK（第二段讓位撐了 {waited:.2f}s 才到邊界）"
 
 
-async def scenario_resume_cancels_clear():
-    """回歸：CLEAR_AT_BOUNDARY 中收到 resume（框架誤觸翻案）→ 取消清除繼續講。"""
+async def scenario_resume_never_cancels_clear():
+    """回歸：commit 之後任何時機的 resume 都不翻案（實測狀態重置 74µs~459ms 都有，
+    時間護欄不可靠；commit＝回合已定案，續播舊句必消化兩次）。"""
     sink = FakeSink()
     out = BoundaryAwareAudioOutput(next_in_chain=sink)
-    frames = build("S" * 50)  # 1.0s 純語音
+    frames = build("S" * 30 + "." * 25 + "S" * 20)
     task = asyncio.create_task(feed(out, frames))
     await asyncio.sleep(0.15)
     out.pause()
     await asyncio.sleep(0.05)
     out.clear_buffer()        # 真打斷 commit → CLEAR_AT_BOUNDARY
-    await asyncio.sleep(0.4)  # 超過 0.25s 護欄 → 這才是真的翻案（µs 級是狀態重置）
-    out.resume()              # 框架翻案：誤觸
-    await asyncio.sleep(1.2)
-    await task
-    assert "clear" not in sink.ops, f"翻案後不該清: {sink.ops}"
-    assert len(sink.frames) == 50, f"翻案後掉幀: {len(sink.frames)}/50"
-    assert out.interrupt_state["cut"] is False, "翻案後不該留打斷標記"
+    await asyncio.sleep(0.4)
+    out.resume()              # 遲到的狀態重置（舊設計會誤翻案）
+    await asyncio.sleep(1.5)
+    task.cancel()
+    assert "clear" in sink.ops, f"commit 後 resume 不該取消清除: {sink.ops}"
+    assert out.interrupt_state["cut"] is True, "打斷標記不該被洗掉"
+    assert len(sink.frames) <= 58, f"清除沒生效: {len(sink.frames)} 幀"
     await out.aclose()
-    return "誤觸翻案 OK（清除取消、零掉幀、標記清空）"
+    return f"commit 後 resume 不翻案 OK（{len(sink.frames)} 幀後清）"
 
 
 async def scenario_failsafe_empty_queue():
@@ -382,7 +383,7 @@ async def main():
     for fn in (scenario_passthrough, scenario_yield_at_boundary,
                scenario_false_interrupt_cancel, scenario_hot_clear_finishes_clause,
                scenario_cold_clear_immediate, scenario_max_yield_cap,
-               scenario_multi_segment_clock, scenario_resume_cancels_clear,
+               scenario_multi_segment_clock, scenario_resume_never_cancels_clear,
                scenario_failsafe_empty_queue, scenario_statereset_resume_keeps_clear,
                scenario_new_frames_survive_clear, scenario_paused_orphan_selfheal,
                scenario_volume_gate_math, scenario_shadow_no_yield,
