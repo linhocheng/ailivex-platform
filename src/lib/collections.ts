@@ -124,7 +124,7 @@ export interface AccessDoc {
  *   v18   打斷音量閘（重設計版：只攔 pause 不碰 commit；讓位層舊版資產在 git 4993b28）
  */
 export const VOICE_VERSIONS = [
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // 熱備（v18 出事 DEFAULT 切回來即回滾）
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // 冷備已降 0（agent 降 0＝聾：回滾要先 scale up min=1 再切 DEFAULT）
   { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18' }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
 ] as const;
 
