@@ -11,7 +11,7 @@ import { DEFAULT_VOICE_VERSION } from '@/lib/collections';
 
 // canary 版本也掛在同一個電源開關＋自動關機傘下（天條：常駐必配開關＋自動關機）。
 // canary 收案（升 DEFAULT 或退役）時從這裡拔掉。
-const CANARY_VOICE_VERSIONS: string[] = ['v17'];
+const CANARY_VOICE_VERSIONS: string[] = ['v18'];  // v17 已是 DEFAULT（開關本來就管它），v18=優雅讓位 canary
 
 const REGION = 'asia-east1';
 export const AUTO_OFF_HOURS_DEFAULT = 3;
