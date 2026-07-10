@@ -214,7 +214,7 @@ async def scenario_resume_cancels_clear():
     out.pause()
     await asyncio.sleep(0.05)
     out.clear_buffer()        # 真打斷 commit → CLEAR_AT_BOUNDARY
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.4)  # 超過 0.25s 護欄 → 這才是真的翻案（µs 級是狀態重置）
     out.resume()              # 框架翻案：誤觸
     await asyncio.sleep(1.2)
     await task
@@ -245,16 +245,57 @@ async def scenario_failsafe_empty_queue():
     return f"空佇列保底 OK（{waited:.2f}s 內清除，不懸置）"
 
 
+async def scenario_statereset_resume_keeps_clear():
+    """回歸：clear 後 µs 級的 resume＝框架 commit 狀態重置（agent_activity:3143），
+    不能取消清除（實測：誤當翻案 → 舊句照播＋新回覆排後面＝「消化兩次」）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    frames = build("S" * 20 + "." * 10 + "S" * 30)
+    task = asyncio.create_task(feed(out, frames))
+    await asyncio.sleep(0.15)
+    out.pause()
+    await asyncio.sleep(0.05)
+    out.clear_buffer()
+    out.resume()              # 同一 tick 的狀態重置
+    await asyncio.sleep(1.0)
+    task.cancel()
+    assert "clear" in sink.ops, f"狀態重置不該取消清除: {sink.ops}"
+    assert out.interrupt_state["cut"] is True, "打斷標記不該被狀態重置洗掉"
+    assert len(sink.frames) <= 32, f"清除沒生效: {len(sink.frames)} 幀"
+    await out.aclose()
+    return f"狀態重置護欄 OK（清除照排程，{len(sink.frames)} 幀停）"
+
+
+async def scenario_new_frames_survive_clear():
+    """回歸：clear 之後才到的新回覆音框必須倖存（序號截斷，不整鍋端）。"""
+    sink = FakeSink()
+    out = BoundaryAwareAudioOutput(next_in_chain=sink)
+    old = build("S" * 20 + "." * 10)
+    task = asyncio.create_task(feed(out, old))
+    await asyncio.sleep(0.15)
+    out.pause()
+    await asyncio.sleep(0.05)
+    out.clear_buffer()        # 截斷序號＝此刻佇列裡的舊句
+    await task
+    await feed(out, build("S" * 15))   # 新回覆音框（clear 之後才到）
+    await asyncio.sleep(1.5)
+    assert "clear" in sink.ops, f"沒清舊句: {sink.ops}"
+    assert len(sink.frames) >= 33, f"新回覆被誤殺: {len(sink.frames)} 幀（新句 15 幀該倖存）"
+    await out.aclose()
+    return f"新句倖存 OK（共 {len(sink.frames)} 幀，含清除後的新回覆）"
+
+
 async def main():
     results = []
     for fn in (scenario_passthrough, scenario_yield_at_boundary,
                scenario_false_interrupt_cancel, scenario_hot_clear_finishes_clause,
                scenario_cold_clear_immediate, scenario_max_yield_cap,
                scenario_multi_segment_clock, scenario_resume_cancels_clear,
-               scenario_failsafe_empty_queue):
+               scenario_failsafe_empty_queue, scenario_statereset_resume_keeps_clear,
+               scenario_new_frames_survive_clear):
         results.append(f"✅ {await fn()}")
     print("\n".join(results))
-    print(f"ALL PASS — {len(results)}/9")
+    print(f"ALL PASS — {len(results)}/11")
 
 
 if __name__ == "__main__":

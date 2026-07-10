@@ -96,6 +96,9 @@ class BoundaryAwareAudioOutput(AudioOutput):
         self._forwarder_task: asyncio.Task | None = None
         self._failsafe_handle: asyncio.TimerHandle | None = None
         self._yield_token = 0
+        self._seq_in = 0            # 進佇列序號（clear 截斷用）
+        self._clear_at = 0.0        # 進入 CLEAR_AT_BOUNDARY 的時刻
+        self._clear_cut_seq = None  # 清除只殺 ≤ 此序號的舊句音框
         self._closed = False
         # 給 agent 端讀的打斷狀態（chat_ctx 標記用；one-shot，讀完自己清）
         self.interrupt_state: dict = {"cut": False}
@@ -119,11 +122,13 @@ class BoundaryAwareAudioOutput(AudioOutput):
         await super().capture_frame(frame)
         if self._forwarder_task is None or self._forwarder_task.done():
             self._forwarder_task = asyncio.create_task(self._forwarder())
-        self._q.put_nowait(frame)
+        self._seq_in += 1
+        self._q.put_nowait((self._seq_in, frame))
 
     def flush(self) -> None:
         super().flush()
-        self._q.put_nowait(_FLUSH)
+        self._seq_in += 1
+        self._q.put_nowait((self._seq_in, _FLUSH))
 
     def pause(self) -> None:
         # 框架偵測到用戶開口。不立停——進讓位；已在讓位/暫停就不重進。
@@ -147,18 +152,29 @@ class BoundaryAwareAudioOutput(AudioOutput):
                 self.next_in_chain.resume()
             logger.info("誤觸恢復：從子句邊界續播")
         elif self._state == _CLEAR_AT_BOUNDARY:
-            # 框架在 clear 之後又判定誤觸要求續播（實測 2026-07-10 通話出現過）——
-            # 以最新信號為準：取消排程中的清除，繼續講。
-            self._state = _NORMAL
-            self.interrupt_state["cut"] = False
-            logger.info("誤觸翻案：取消排程中的清除，續講")
+            # resume 有兩種身分（1.5.1 源碼核對）：
+            #   a) commit 後的狀態重置（agent_activity.py:3143，clear 後同一呼叫堆疊、µs 級）
+            #      → 不能取消清除，否則真打斷變沒打斷
+            #   b) 誤觸翻案（false-interruption fire，秒級之後）→ 取消清除續講
+            # 兩者時間差四個數量級，用 0.25s 護欄區分（實測 74µs vs 3.2s）。
+            if time.monotonic() - self._clear_at < 0.25:
+                logger.info("resume＝commit 後狀態重置（%.0fµs），清除照排程",
+                            (time.monotonic() - self._clear_at) * 1e6)
+            else:
+                self._state = _NORMAL
+                self.interrupt_state["cut"] = False
+                logger.info("誤觸翻案：取消排程中的清除，續講")
         self._gain_target_normal()
         self._resume_ev.set()
 
     def clear_buffer(self) -> None:
         if self._state == _YIELDING:
-            # 真打斷 commit，但子句還沒收完 → 撐到邊界才清
+            # 真打斷 commit，但子句還沒收完 → 撐到邊界才清。
+            # 只清「clear 當下已在佇列的舊句音框」——commit 後框架就開始生成新回覆，
+            # 新句音框會在 drain 期間到達，不設界線會被邊界清除誤殺（回覆被吃掉）。
             self._state = _CLEAR_AT_BOUNDARY
+            self._clear_at = time.monotonic()
+            self._clear_cut_seq = self._seq_in
             self.interrupt_state["cut"] = True
             self._arm_failsafe()
             logger.info("真打斷：收完當前子句即讓位")
@@ -194,19 +210,23 @@ class BoundaryAwareAudioOutput(AudioOutput):
             logger.info("讓位保底（無音框可掃）→ 直接停")
         elif self._state == _CLEAR_AT_BOUNDARY:
             logger.info("清除保底（無音框可掃）→ 直接清")
-            self._hard_clear()
+            self._hard_clear(self._clear_cut_seq)
 
     def _gain_target_normal(self) -> None:
         self._gain = 1.0  # 恢復瞬間拉回（升音量突變無感，降才需要 ramp）
 
-    def _hard_clear(self) -> None:
-        # 丟掉內部佇列＋清底層。整段被吞（0 frame 轉發）要自行補 playback_finished 防 hang。
+    def _hard_clear(self, cut_seq: int | None = None) -> None:
+        # 丟掉內部佇列（cut_seq 給定時只殺 ≤cut_seq 的舊句，clear 之後才到的新回覆音框倖存）
+        # ＋清底層。整段被吞（0 frame 轉發）要自行補 playback_finished 防 hang。
         swallowed_open_segment = self._seg_forwarded == 0 and not self._q.empty()
+        survivors = []
         while not self._q.empty():
             try:
-                self._q.get_nowait()
+                sq, it = self._q.get_nowait()
             except asyncio.QueueEmpty:
                 break
+            if cut_seq is not None and sq > cut_seq:
+                survivors.append((sq, it))
         if self._state == _PAUSED and self.next_in_chain:
             self.next_in_chain.resume()  # 底層在 pause 狀態下 clear 行為未定義，先 resume 再清
         self._state = _NORMAL
@@ -218,11 +238,14 @@ class BoundaryAwareAudioOutput(AudioOutput):
             elif swallowed_open_segment:
                 self.on_playback_finished(playback_position=0.0, interrupted=True)
         self._seg_forwarded = 0
+        self._clear_cut_seq = None
+        for x in survivors:
+            self._q.put_nowait(x)
 
     async def _forwarder(self) -> None:
         try:
             while not self._closed:
-                item = await self._q.get()
+                _sq, item = await self._q.get()
                 if item is _FLUSH:
                     if self.next_in_chain:
                         self.next_in_chain.flush()
@@ -262,7 +285,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
                         if self._state == _CLEAR_AT_BOUNDARY:
                             logger.info("子句收完 → 清除讓位（%s）",
                                         "邊界" if at_boundary else "保底")
-                            self._hard_clear()
+                            self._hard_clear(self._clear_cut_seq)
                             continue
                         # YIELDING → 停在邊界，等 resume（誤觸）或 clear（真打斷）
                         self._state = _PAUSED
@@ -296,7 +319,7 @@ class BoundaryAwareAudioOutput(AudioOutput):
             logger.exception("graceful-yield forwarder 掛了，退化為直通")
             # 防聾：轉發迴圈死掉時把剩餘佇列直通底層
             while not self._q.empty():
-                item = self._q.get_nowait()
+                _sq, item = self._q.get_nowait()
                 if item is _FLUSH and self.next_in_chain:
                     self.next_in_chain.flush()
                 elif self.next_in_chain and item is not _FLUSH:
