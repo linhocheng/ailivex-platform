@@ -407,8 +407,11 @@ async def entrypoint(ctx: JobContext):
     #   false_interruption_timeout=1.2s —— 預設 2.0s 死空氣太長；Soniox 轉寫 ~0.5s 內到，1.2s 夠判定。
     # min_duration 仍由後台 interruptSensitivity 旋鈕控制（build_turn_handling）。
     _turn_handling = build_turn_handling(_conv)
+    # v17.3.2 回滾 min_words=3（2026-07-10 下午實測反效果）：教練型角色長回覆＋用戶
+    # 短答「对/嗯/好」（1-2字）——字數門檻讓短答完全停不下她，回覆排隊越疊越深＝「超慢」。
+    # 真正的解是 v18 優雅讓位（每次開口都讓、收完子句才讓），不是字數猜真假。
+    # 保留誤觸回復：被切但沒接出真話（雜音/咳嗽）→ 1.2s 自動把話接回去，這部分是純贏。
     _turn_handling["interruption"].update({
-        "min_words": 3,
         "resume_false_interruption": True,
         "false_interruption_timeout": 1.2,
     })
@@ -676,7 +679,8 @@ async def entrypoint(ctx: JobContext):
     # baseline 快慢＝soul 的 imThreshold。被晾著越久間隔越拉長、語氣越退，像真人逐漸給空間，
     # 用戶一開口就整個歸零、重新變得很在線。
     im_threshold = get_im_threshold(_conv)               # 1-5，越高越主動
-    baseline_secs = max(2.0, 4.5 - im_threshold * 0.5)   # im1→4.0s … im5→2.0s：起手多快開口
+    # v17.3.2：3a 是輔助系統不該主動介入太多（Adam 拍板）——起手 6-15s 真冷場才出手
+    baseline_secs = max(6.0, 18.0 - im_threshold * 3.0)
     BACKOFF = 2.1            # 每戳一次沒回應，下次間隔 ×這個（退讓）
     MAX_INTERVAL = 120.0     # 間隔上限：最久約兩分鐘才探一次
     JITTER = 0.25            # ±25% 有界抖動（不是純亂數，去機械感）
