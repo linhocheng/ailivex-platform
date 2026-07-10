@@ -25,6 +25,8 @@ const KNOWLEDGE_FLOOR = 0.68;   // τ：cosine 低於此不得當事實注入（
 const KNOWLEDGE_LEX_RESCUE = 0.25; // 詞彙重疊夠高也可入選——用戶逐字引原句（「其疾如風」）是最強信號，
                                   // 且 query 的閒聊 bigram（是什/意思）幾乎不會出現在文本裡，誤放行風險低
 const MAX_POOL = 2000;          // 程式端 cosine 的池子上限（超過要升向量索引）
+const SMALL_DOC_CHUNKS = 6;     // 文件總塊數 ≤ 此值時，命中即整份帶入（定義/清單類內容不能殘缺）
+const SIBLING_CAP = 8;          // 兄弟塊補帶的總量上限（防 prompt 爆量）
 
 // ── 切塊參數（確定性，無 LLM）─────────────────────────────────────────────────
 const CHUNK_TARGET = 500;  // 目標塊長（字元）
@@ -311,23 +313,44 @@ export async function loadKnowledgeBlock(
 
     if (scored.length === 0) return '';
 
+    // 小文件整份帶入：top-K 命中某文件、且該文件總塊數 ≤ SMALL_DOC_CHUNKS 時，
+    // 把缺席的兄弟塊一併帶入。定義/清單類內容（如「換框八法」）常橫跨多塊，
+    // 只帶命中塊會讓角色只拿到清單的一半——寧可多幾百字也不能讓專業內容殘缺。
+    const byDoc = new Map<string, KnowledgeChunkDoc[]>();
+    for (const d of snap.docs) {
+      const c = d.data() as KnowledgeChunkDoc;
+      const arr = byDoc.get(c.documentId);
+      if (arr) arr.push(c); else byDoc.set(c.documentId, [c]);
+    }
+    const inScored = new Set(scored.map(x => x.c));
+    const siblings: KnowledgeChunkDoc[] = [];
+    for (const docId of new Set(scored.map(x => x.c.documentId))) {
+      const all = byDoc.get(docId) ?? [];
+      if (all.length === 0 || all.length > SMALL_DOC_CHUNKS) continue;
+      for (const c of all) {
+        if (!inScored.has(c) && siblings.length < SIBLING_CAP) siblings.push(c);
+      }
+    }
+    siblings.sort((a, b) =>
+      (parseInt(a.sectionRef.match(/\d+/)?.[0] ?? '0', 10)) - (parseInt(b.sectionRef.match(/\d+/)?.[0] ?? '0', 10)));
+
     // 補母表標題（出處要人話：書名＋段落）
-    const docIds = [...new Set(scored.map(x => x.c.documentId))];
+    const docIds = [...new Set([...scored.map(x => x.c.documentId), ...siblings.map(c => c.documentId)])];
     await Promise.all(docIds.map(async id => {
       const s = await db.collection(COL.knowledgeDocs).doc(id).get().catch(() => null);
       if (s?.exists) docTitles.set(id, (s.data() as KnowledgeDocDoc).title);
     }));
 
-    const lines = scored.map(x => {
-      const title = docTitles.get(x.c.documentId) || '未知出處';
-      return `〔${title}·${x.c.sectionRef}｜${AUTHORITY_LABELS[x.c.authority] ?? x.c.authority}〕${x.c.content}`;
+    const lines = [...scored.map(x => x.c), ...siblings].map(c => {
+      const title = docTitles.get(c.documentId) || '未知出處';
+      return `〔${title}·${c.sectionRef}｜${AUTHORITY_LABELS[c.authority] ?? c.authority}〕${c.content}`;
     });
 
     // 三態區分規則跟著塊走（只在有知識時注入 → 沒知識庫的角色 prompt 一字不多）。
     // 規則只管格式（要分清三態），措辭留給角色的靈魂——不寫死認輸的說法。
     return `\n\n【我寫過/講過的內容——依對方這句話撈出的相關段落】
 ${lines.map(l => `- ${l}`).join('\n')}
-（用的時候分清楚三種話：引用上面內容時，那是你真正寫過/講過的，可以自然指出出處；上面沒有、但你想談自己的看法時，明白說這是你此刻的想法、不是你寫過的內容；如果對方問的東西不在你寫過的範圍、你也沒把握，就用你自己的方式坦白承認，不要編造你沒寫過的主張。）`;
+（用的時候分清楚三種話：引用上面內容時，那是你真正寫過/講過的，可以自然指出出處；上面沒有、但你想談自己的看法時，明白說這是你此刻的想法、不是你寫過的內容；如果對方問的東西不在你寫過的範圍、你也沒把握，就用你自己的方式坦白承認，不要編造你沒寫過的主張。另外，上面若含方法、工具、名詞的定義，名稱與內涵以原文為準——不要用自己的話重新定義，也不要把 A 方法的內容講成 B 方法的。）`;
   } catch (e) {
     console.error('[knowledge] loadKnowledgeBlock failed:', e instanceof Error ? e.message : String(e));
     return '';
