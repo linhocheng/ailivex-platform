@@ -135,11 +135,11 @@ export const VOICE_VERSIONS = [
   { id: 'v13', label: '13',   agentName: 'ailivex-realtime-v13' },
   { id: 'v14', label: '14',   agentName: 'ailivex-realtime-v14' },
   { id: 'v15', label: '15',   agentName: 'ailivex-realtime-v15' }, // 記憶對等 + 通話中動態想起
-  { id: 'v16', label: '16',   agentName: 'ailivex-realtime-v16' }, // LIVE — 語音延遲優化（prewarm/VAD 0.3/首段 flush）
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // 記憶全景圖語音道（remote 記憶塊＋掛斷日記）——canary 經 access.voiceVersion 指派
+  { id: 'v16', label: '16',   agentName: 'ailivex-realtime-v16' }, // 語音延遲優化（prewarm/VAD 0.3/首段 flush）＋v16.5 3a 防護——2026-07-10 收案降 0
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）＋v16.5 3a 防護（道別待命/去重/靜默對齊）
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v16';
+export const DEFAULT_VOICE_VERSION = 'v17';
 
 /** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
 export function agentNameForVersion(version?: string): string {
