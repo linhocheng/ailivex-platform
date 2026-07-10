@@ -290,3 +290,85 @@ def parse_inner_state(raw: str) -> dict:
         "want_to_speak": bool(d.get("want_to_speak", False)),
         "what_to_say": str(d.get("what_to_say", "") or "")[:200],
     }
+
+
+# ── v16.5 道別偵測＋語意重複防護（3a「兩張嘴打架」修法，確定性不丟 LLM）──────────
+# 場景：回合路回完話後用戶沉默，3a 主動發話迴圈把語意相同的話再說一次；
+# 或雙方互道再見後用戶沒掛斷，沉默觸發 3a 反覆道別。
+# 天條：擋不擋＝程式決定；prompt 只負責讓 LLM 少產生重複，防線在這裡。
+
+_S2T_CC = None
+_S2T_FAILED = False
+
+
+def _norm_zh(text: str) -> str:
+    """比對用正規化：去標點/空白 + 統一轉簡體（3a 可能吐繁體、turn 路吐簡體，混用會漏比）。
+    opencc 缺失時退化為只去標點（不擋語音路徑，比對照樣跑）。"""
+    global _S2T_CC, _S2T_FAILED
+    s = re.sub(r"[\s，。！？!?…、；;：:「」『』（）()\"'\-—~～·.]+", "", text or "")
+    if _S2T_FAILED:
+        return s
+    try:
+        if _S2T_CC is None:
+            from opencc import OpenCC
+            _S2T_CC = OpenCC("t2s")
+        return _S2T_CC.convert(s)
+    except Exception:
+        _S2T_FAILED = True
+        return s
+
+
+# 道別強 token（誤中率低的才入表；「再找你聊」「去忙」這類會出現在句中的不收）
+_FAREWELL_TOKENS = (
+    "拜拜", "掰掰", "再見", "再见", "下次見", "下次见", "下次聊",
+    "回頭聊", "回头聊", "晚安", "先走了", "先這樣", "先这样", "886", "byebye", "bye",
+)
+
+
+def is_farewell(text: str) -> bool:
+    """道別語偵測（確定性）：token 出現在句尾附近（正規化後末 6 字內），
+    或全句很短（正規化後 ≤ 12 字）且含 token。
+    「上次说拜拜说了好几次」→ False（token 在句中，且全句不短）。"""
+    s = _norm_zh(text).lower()
+    if not s:
+        return False
+    for tok in _FAREWELL_TOKENS:
+        t = _norm_zh(tok).lower()
+        idx = s.rfind(t)
+        if idx < 0:
+            continue
+        near_end = idx + len(t) >= len(s) - 6
+        if near_end or len(s) <= 12:
+            return True
+    return False
+
+
+def _char_bigrams(s: str) -> set:
+    if len(s) < 2:
+        return {s} if s else set()
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def is_semantic_repeat(candidate: str, recent: list[str], threshold: float = 0.5) -> bool:
+    """candidate 是否在重複 recent 裡任一句（確定性字 bigram 比對）。
+    判準：互為包含，或 bigram overlap-coefficient（交集/較短方）≥ threshold。
+    正規化後 < 4 字的短句只擋完全相同（「嗯，好。」這種短應答不誤殺）。"""
+    c = _norm_zh(candidate)
+    if not c:
+        return False
+    cb = _char_bigrams(c)
+    for prev in recent:
+        p = _norm_zh(prev)
+        if not p:
+            continue
+        if c == p:
+            return True
+        if len(c) < 4 or len(p) < 4:
+            continue
+        if c in p or p in c:
+            return True
+        pb = _char_bigrams(p)
+        denom = min(len(cb), len(pb))
+        if denom and len(cb & pb) / denom >= threshold:
+            return True
+    return False

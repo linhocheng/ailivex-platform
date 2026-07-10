@@ -37,7 +37,10 @@ load_dotenv(ROOT_DIR / ".env")
 from livekit.agents import Agent, AgentSession, JobContext, function_tool
 from livekit.plugins import silero, anthropic, soniox
 from agent.minimax_tts import MiniMaxCustomTTS
-from agent.conv_tuning import build_turn_handling, get_im_threshold, get_temperature
+from agent.conv_tuning import (
+    build_turn_handling, get_im_threshold, get_temperature,
+    is_farewell, is_semantic_repeat,
+)
 from agent.source_intake import handle_share_source
 from agent.quota_meter import VoiceMeter, consume_doc_quota, consume_media_quota
 from livekit import api as lk_api
@@ -59,7 +62,9 @@ from agent.firestore_loader import (
     dispatch_story_draft,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# v16.5 不再自掛 basicConfig handler：livekit cli 的 setup_logging 會往 root 加唯一出口
+# （production=JSON stdout）。過去 basicConfig(stderr) 疊上去＝同一行 log 印三次
+# （主進程 stderr＋job 子進程 stderr＋livekit JSON stdout）。查 log 改看 jsonPayload.message。
 logger = logging.getLogger("ailivex-realtime-v16")
 
 PROJECT_NAMESPACE = os.environ.get("PROJECT_NAMESPACE", "ailivex")
@@ -660,6 +665,16 @@ async def entrypoint(ctx: JobContext):
         if time.time() - _itj["last_say"] < MIN_GAP:
             _arm(MIN_GAP)
             return
+        # v16.5 道別待命：雙方最後一句都是道別 → 停止自我重排，不再對「掛斷前的沉默」開口。
+        # 用戶再開口會經 _on_user_state（speaking 歸零 → listening 補種 timer）自動復活。
+        try:
+            _last_user = next((t["content"] for t in reversed(transcript) if t["role"] == "user"), "")
+            _last_asst = next((t["content"] for t in reversed(transcript) if t["role"] == "assistant"), "")
+            if _last_user and _last_asst and is_farewell(_last_user) and is_farewell(_last_asst):
+                logger.info("3a: 道別待命（雙方已互道再見，停止主動發話；用戶再開口即復活）")
+                return
+        except Exception as e:
+            logger.warning(f"3a farewell check failed: {e}")
         quiet_for = int(time.time() - _itj["quiet_since"])
         n = _itj["nudges"]
         logger.info(f"3a: 評估主動開口 (第{n+1}次, 已靜默{quiet_for}s, interval={_itj['interval']:.0f}s, im={im_threshold})")
@@ -700,9 +715,15 @@ async def entrypoint(ctx: JobContext):
             text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
             text = text.strip("（）()「」\"' ")
             if text and text not in ("沉默", "NOTHING", "無", "空", "（沉默）"):
-                logger.info(f"3a: 主動說(第{n+1}次) → {text[:60]!r}")
-                session.say(text)   # 走 MiniMax TTS（內含 opencc 繁→簡）
-                _itj["last_say"] = time.time()
+                # v16.5 去重防護：跟角色最近說過的話語意重複 → 擋下不說（機制保證，不靠 prompt 自律）。
+                # 治「回合路剛回完，3a 把同一句換個皮再說一次」的兩張嘴打架。
+                _recent_asst = [t["content"] for t in transcript if t["role"] == "assistant"][-3:]
+                if is_semantic_repeat(text, _recent_asst):
+                    logger.info(f"3a: 去重擋下(第{n+1}次)（與剛說過的話重複）→ {text[:60]!r}")
+                else:
+                    logger.info(f"3a: 主動說(第{n+1}次) → {text[:60]!r}")
+                    session.say(text)   # 走 MiniMax TTS（內含 opencc 繁→簡）
+                    _itj["last_say"] = time.time()
             else:
                 logger.info(f"3a: 評估後選擇沉默(第{n+1}次)")
         except Exception as e:
@@ -729,5 +750,13 @@ async def entrypoint(ctx: JobContext):
                 _itj["quiet_since"] = time.time()
             if _itj["timer"] is None:
                 _arm(_itj["interval"])
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev):
+        # v16.5 靜默起點對齊：角色說完話（回合回覆或 3a 自己）才是這段靜默的起點。
+        # 原本從用戶最後一句起算，角色講話的時間也被算進「已靜默」→ 判斷 LLM 高估冷場，
+        # 回合路剛回完幾秒 3a 就想接自己的話。
+        if getattr(ev, "new_state", "") == "listening":
+            _itj["quiet_since"] = time.time()
 
     logger.info(f"3a active(擬真backoff): baseline={baseline_secs:.1f}s ×{BACKOFF} cap={MAX_INTERVAL:.0f}s im={im_threshold}")
