@@ -99,14 +99,15 @@ export interface AccessDoc {
 }
 
 /**
- * 語音 agent 版本登錄表 —— 單一真相源（封存備查）。
- * 前台只顯示 DEFAULT_VOICE_VERSION（v14）；舊版本封存於此作為迭代紀錄。
- * token route 只走 DEFAULT_VOICE_VERSION，不再逐版切換。
+ * 語音 agent 版本登錄表 —— 單一真相源。
+ * 只登錄「活著的服務」：登錄了就代表可以被 access.voiceVersion 指派、可以接到真實通話。
+ * 退役版本一律移出登錄表（服務已降 0，LiveKit agent 降 0＝聾——指派過去就是死通話；
+ * 未知版本 agentNameForVersion 會安全回落 DEFAULT）。頁面路由只有 /realtime/（2026-07-10 殼頁全清）。
  *
- * 版本迭代歷史：
+ * 版本迭代歷史（封存備查；服務降 0 保留在 Cloud Run，重啟需先 scale up）：
  *   base  基礎 1:1 語音對話
  *   v2    記憶連貫（lastSession 快照、時間感知）
- *   v3    主動發話（3a 一吋蛋糕實驗）
+ *   v3    主動發話（3a 一吋蛋糕實驗；2026-07-10 於 v17.4 整組退役）
  *   v4    單機群聊（Soniox diarization 多人辨識）
  *   v5    讓位偵測（偵測發話對象，交棒第三方時靜音）
  *   v6    雙腦架構（判斷腦 Haiku / 開口腦 Sonnet）
@@ -118,25 +119,12 @@ export interface AccessDoc {
  *   v13   任務派發（語音下指令生圖 / 生音檔）
  *   v14   腳本草稿 + 音檔生成（dispatch_task script_draft）
  *   v15   記憶對等（embedding/dedup/hitCount）+ 通話中動態想起
- *   v16   ★ LIVE — 語音延遲優化（VAD prewarm + min_silence 0.3 + TTS 首段 flush）（回滾=DEFAULT 切回 v15，v15 服務保持熱備）
+ *   v16   語音延遲優化（VAD prewarm + min_silence 0.3 + TTS 首段 flush）＋v16.5 3a 防護——2026-07-10 收案降 0
+ *   v17   ★ LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）；v17.4 移除 3a
+ *   v18   優雅讓位（讓位層＋音量閘）——2026-07-10 全退役歸零，重設計中（資產在 git 4993b28）
  */
 export const VOICE_VERSIONS = [
-  { id: 'base', label: '基礎', agentName: 'ailivex-realtime' },
-  { id: 'v2',  label: '2.0',  agentName: 'ailivex-realtime-v2' },
-  { id: 'v3',  label: '3.0',  agentName: 'ailivex-realtime-v3' },
-  { id: 'v4',  label: '4.0',  agentName: 'ailivex-realtime-v4' },
-  { id: 'v5',  label: '5.0',  agentName: 'ailivex-realtime-v5' },
-  { id: 'v6',  label: '6.0',  agentName: 'ailivex-realtime-v6' },
-  { id: 'v8',  label: '8.0',  agentName: 'ailivex-realtime-v8' },
-  { id: 'v9',  label: '9.0',  agentName: 'ailivex-realtime-v9' },
-  { id: 'v10', label: '10',   agentName: 'ailivex-realtime-v10' },
-  { id: 'v11', label: '11',   agentName: 'ailivex-realtime-v11' },
-  { id: 'v12', label: '12',   agentName: 'ailivex-realtime-v12' },
-  { id: 'v13', label: '13',   agentName: 'ailivex-realtime-v13' },
-  { id: 'v14', label: '14',   agentName: 'ailivex-realtime-v14' },
-  { id: 'v15', label: '15',   agentName: 'ailivex-realtime-v15' }, // 記憶對等 + 通話中動態想起
-  { id: 'v16', label: '16',   agentName: 'ailivex-realtime-v16' }, // 語音延遲優化（prewarm/VAD 0.3/首段 flush）＋v16.5 3a 防護——2026-07-10 收案降 0
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）；v17.4 移除 3a 主動發話（輪詢式填空與「活」的目的相悖，Adam 拍板）
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // LIVE — v17.4
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v17';

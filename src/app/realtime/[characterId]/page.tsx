@@ -1,5 +1,4 @@
 'use client';
-// [封存] 此頁面不再接收流量，僅作歷史參考。現役版本：/realtime-v14/
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
@@ -9,7 +8,8 @@ import {
   Track, ConnectionState, ConnectionQuality,
 } from 'livekit-client';
 
-type CallState = 'idle' | 'connecting' | 'connected' | 'waiting-agent' | 'in-call' | 'disconnected' | 'error';
+type CallState = 'idle' | 'connecting' | 'connected' | 'waiting-agent' | 'in-call' | 'finalizing' | 'disconnected' | 'error';
+type SourceStatus = 'idle' | 'sending' | 'done' | 'error';
 
 interface Caption { who: 'user' | 'agent'; text: string; ts: number; }
 interface Health {
@@ -101,8 +101,12 @@ export default function RealtimeCallPage() {
   const characterId = params.characterId;
 
   const [state, setState] = useState<CallState>('idle');
+  const [agentVersion, setAgentVersion] = useState(''); // 實際派工版本（token 回傳），非頁面死標籤
   const [errorMsg, setErrorMsg] = useState('');
   const [characterName, setCharacterName] = useState('');
+  // 用量管制：點數用盡不是技術錯誤，用角色名下方的文案溝通，不走紅字 error
+  const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const [powerOff, setPowerOff] = useState(false);
   const [characterImage, setCharacterImage] = useState('');
   const [captions, setCaptions] = useState<Caption[]>([]);
   const [elapsed, setElapsed] = useState(0);
@@ -110,14 +114,14 @@ export default function RealtimeCallPage() {
   const [diagLogs, setDiagLogs] = useState<DiagLog[]>([]);
   const [micMuted, setMicMuted] = useState(false);
   const [agentPhase, setAgentPhase] = useState<'idle'|'thinking'|'speaking'>('idle');
-  const [sourceUrl, setSourceUrl] = useState('');     // 同步框：分享給角色的網址
-  const [sourceBusy, setSourceBusy] = useState(false); // 角色正在讀（思考動畫）
-  const [sourceMsg, setSourceMsg] = useState('');
-  const [webSearch, setWebSearch] = useState(false);  // 角色是否有 web_search 能力（決定是否顯示貼網址框）
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [sourceStatus, setSourceStatus] = useState<SourceStatus>('idle');
+  const [webSearch, setWebSearch] = useState(false);
 
   const identityRef = useRef('');
-  const agentIdentityRef = useRef('');   // 角色 participant identity，performRpc 目的地
+  const agentIdentityRef = useRef('');  // v16: for RPC destinationIdentity
   const roomRef = useRef<Room | null>(null);
+  const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const callStartRef = useRef<number>(0);
   const voiceEndFiredRef = useRef(false);
@@ -194,7 +198,7 @@ export default function RealtimeCallPage() {
   const setFlowForState = useCallback((s: CallState) => {
     if (s === 'idle' || s === 'disconnected' || s === 'error') {
       targetFlowRef.current = { ...FLOW.idle };
-    } else if (s === 'connecting' || s === 'waiting-agent') {
+    } else if (s === 'connecting' || s === 'waiting-agent' || s === 'finalizing') {
       targetFlowRef.current = { ...FLOW.processing };
     } else {
       targetFlowRef.current = { ...FLOW.speaking };
@@ -253,6 +257,7 @@ export default function RealtimeCallPage() {
   const handleConnect = async () => {
     setState('connecting'); setFlowForState('connecting');
     setErrorMsg(''); setHealth(INITIAL_HEALTH); setDiagLogs([]);
+    agentIdentityRef.current = '';
     log('info', `connect: ${characterId}`);
     try {
       await startMicMonitor();
@@ -264,9 +269,26 @@ export default function RealtimeCallPage() {
       if (!tokenRes.ok) {
         const err = await tokenRes.json().catch(() => ({}));
         setHealth(h => ({ ...h, token: 'fail' }));
+        // 點數用盡：收掉麥克風、回 idle，讓角色名下方的文案說話（不進紅字 error 流程）
+        if (err.error === 'voice_quota_exhausted') {
+          stopMicMonitor();
+          setQuotaExhausted(true);
+          setState('idle'); setFlowForState('idle');
+          log('info', 'voice quota exhausted');
+          return;
+        }
+        // 語音引擎關閉：同 quota 的擋法，回 idle 讓按鈕文案說話
+        if (err.error === 'voice_power_off') {
+          stopMicMonitor();
+          setPowerOff(true);
+          setState('idle'); setFlowForState('idle');
+          log('info', 'voice power off');
+          return;
+        }
         throw new Error(err.error || `token ${tokenRes.status}`);
       }
-      const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws } = await tokenRes.json();
+      const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws, voiceVersion: vv } = await tokenRes.json();
+      if (vv) setAgentVersion(vv);
       identityRef.current = identity;
       setHealth(h => ({ ...h, token: 'ok' }));
       if (cName) setCharacterName(cName);
@@ -294,7 +316,7 @@ export default function RealtimeCallPage() {
         })
         .on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
           log('info', `agent joined: ${p.identity}`);
-          agentIdentityRef.current = p.identity;
+          agentIdentityRef.current = p.identity;  // v16: capture for RPC
           setHealth(h => ({ ...h, agent: 'present' }));
           setState('in-call'); setFlowForState('in-call');
         })
@@ -331,9 +353,10 @@ export default function RealtimeCallPage() {
       await room.localParticipant.setMicrophoneEnabled(true);
       log('info', 'mic published');
 
+      // capture agent identity if already in room before ParticipantConnected fires
       if (room.remoteParticipants.size > 0) {
-        const first = room.remoteParticipants.values().next().value;
-        if (first) agentIdentityRef.current = first.identity;
+        const firstAgent = Array.from(room.remoteParticipants.values())[0];
+        if (firstAgent && !agentIdentityRef.current) agentIdentityRef.current = firstAgent.identity;
         setHealth(h => ({ ...h, agent: 'present' }));
         setState('in-call'); setFlowForState('in-call');
       }
@@ -346,6 +369,29 @@ export default function RealtimeCallPage() {
     }
   };
 
+  // v16: send URL to agent via RPC share_source
+  const handleShareSource = useCallback(async () => {
+    const url = sourceUrl.trim();
+    if (!url || !roomRef.current || !agentIdentityRef.current) return;
+    setSourceStatus('sending');
+    log('info', `share_source → ${url}`);
+    try {
+      const result = await roomRef.current.localParticipant.performRpc({
+        destinationIdentity: agentIdentityRef.current,
+        method: 'share_source',
+        payload: JSON.stringify({ url }),
+      });
+      log('info', `share_source queued: ${result}`);
+      setSourceStatus('done');
+      setSourceUrl('');
+      setTimeout(() => setSourceStatus('idle'), 2000);
+    } catch (e) {
+      log('error', `share_source fail: ${e instanceof Error ? e.message : String(e)}`);
+      setSourceStatus('error');
+      setTimeout(() => setSourceStatus('idle'), 3000);
+    }
+  }, [sourceUrl]);
+
   const fireVoiceEnd = useCallback(() => {
     if (voiceEndFiredRef.current) return;
     voiceEndFiredRef.current = true;
@@ -356,12 +402,27 @@ export default function RealtimeCallPage() {
     ));
   }, [characterId]);
 
-  const handleDisconnect = useCallback(async () => {
+  const reallyDisconnect = useCallback(async () => {
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
     fireVoiceEnd();
     if (roomRef.current) { await roomRef.current.disconnect(); roomRef.current = null; }
     stopMicMonitor();
     setState('disconnected'); setFlowForState('disconnected'); setElapsed(0); setMicMuted(false);
+    setSourceStatus('idle'); setSourceUrl('');
   }, [fireVoiceEnd, setFlowForState]);
+
+  const handleDisconnect = useCallback(async () => {
+    const room = roomRef.current;
+    if (room && room.state === ConnectionState.Connected) {
+      setState('finalizing'); setFlowForState('finalizing');
+      try { await room.localParticipant.setMicrophoneEnabled(false); } catch { /* ignore */ }
+      setMicMuted(true);
+      if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
+      finalizeTimerRef.current = setTimeout(() => { void reallyDisconnect(); }, 1800);
+    } else {
+      void reallyDisconnect();
+    }
+  }, [reallyDisconnect, setFlowForState]);
 
   const toggleMic = useCallback(async () => {
     const room = roomRef.current; if (!room) return;
@@ -370,40 +431,34 @@ export default function RealtimeCallPage() {
     setMicMuted(next);
   }, [micMuted]);
 
-  // 同步框：把網址分享給角色 → 角色暫停→讀→帶內容接話。RPC 回來才收掉思考動畫。
-  const shareSource = useCallback(async () => {
-    const room = roomRef.current;
-    const dest = agentIdentityRef.current;
-    const url = sourceUrl.trim();
-    if (!room || !dest || !url || sourceBusy) return;
-    setSourceMsg(''); setSourceBusy(true);
-    try {
-      const res = await room.localParticipant.performRpc({
-        destinationIdentity: dest,
-        method: 'share_source',
-        payload: JSON.stringify({ url }),
-        responseTimeout: 30000,
-      });
-      let ok = true, parsed: { ok?: boolean; error?: string } = {};
-      try { parsed = JSON.parse(res); ok = parsed.ok !== false; } catch { /* 非 JSON 當成功 */ }
-      if (ok) { setSourceUrl(''); setSourceMsg(''); }
-      else setSourceMsg(parsed.error || '角色讀不了這個連結');
-    } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
-      setSourceMsg(m.includes('UNSUPPORTED') || m.includes('not found') ? '這個角色版本還不支援讀網址' : '分享失敗，再試一次');
-    } finally {
-      setSourceBusy(false);
-    }
-  }, [sourceUrl, sourceBusy]);
-
   // unmount cleanup
   useEffect(() => () => {
+    if (finalizeTimerRef.current) clearTimeout(finalizeTimerRef.current);
     fireVoiceEnd();
     if (roomRef.current) void roomRef.current.disconnect();
     stopMicMonitor();
   }, [fireVoiceEnd]);
 
-  // 頁面載入時預取角色名 + 頭像（ailive 同款：進頁面就有圖，不等接通）
+  // 開頁主動查用量：點數用盡在撥號前就告知，不讓用戶按了才碰壁
+  useEffect(() => {
+    fetch('/api/me')
+      .then(r => r.json())
+      .then(d => {
+        if (d?.quota && d.quota.voiceSecondsRemaining !== null && d.quota.voiceSecondsRemaining <= 0) {
+          setQuotaExhausted(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // 開頁主動查語音引擎電源：後台關閉時撥號鈕直接顯示「現在無法撥號」
+  useEffect(() => {
+    fetch('/api/voice-status')
+      .then(r => r.json())
+      .then(d => { if (d?.on === false) setPowerOff(true); })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetch(`/api/characters/${characterId}`)
       .then(r => r.json())
@@ -422,9 +477,9 @@ export default function RealtimeCallPage() {
   const min = Math.floor(elapsed / 60), sec = elapsed % 60;
 
   const stateLabel: Record<CallState, string> = {
-    idle: '( 通話 )', connecting: '( 連線中 )', connected: '( 進房 )',
-    'waiting-agent': '( 等待中 )', 'in-call': '( 通話中 )',
-    disconnected: '( 已掛斷 )', error: '( 錯誤 )',
+    idle: '( 通話 )', connecting: '( 連線中 )', connected: '( 接通中 )',
+    'waiting-agent': '( 等待中 )', 'in-call': '( 通話中 )', finalizing: '( 整理記憶中… )',
+    disconnected: '( 已掛斷 )', error: '( 連線異常 )',
   };
 
   const speaking = agentPhase === 'speaking';
@@ -441,36 +496,61 @@ export default function RealtimeCallPage() {
       fail: health.netQuality==='lost' },
   ];
 
+  const sourceBorderColor = sourceStatus === 'done' ? 'rgba(111,140,95,0.6)'
+    : sourceStatus === 'error' ? 'rgba(181,101,74,0.6)'
+    : 'rgba(255,255,255,0.12)';
+
   return (
     <div style={{ position:'fixed', inset:0, overflow:'hidden', background:'#111' }}>
-      {/* 底色 — 單色深底 */}
       <div style={{ position:'absolute', inset:0, background:'#0e0d0c' }} />
-      {/* 全屏氛圍漸層 */}
       <div style={{ position:'absolute', inset:0,
         background: speaking
           ? 'radial-gradient(60% 50% at 50% 35%, rgba(160,110,84,0.25), transparent 65%), radial-gradient(50% 40% at 50% 100%, rgba(127,138,114,0.2), transparent 60%)'
           : 'radial-gradient(60% 50% at 50% 35%, rgba(160,110,84,0.12), transparent 65%)',
         transition:'opacity 1s' }} />
-      {/* 粒子 canvas */}
       <canvas ref={canvasRef} style={{ position:'absolute', inset:0, display:'block', filter:'contrast(1.1) brightness(1.2)', mixBlendMode:'screen', opacity:0.6 }} />
 
       {/* Top bar */}
       <header style={{ position:'relative', zIndex:3, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 22px' }}>
-        <Link href={`/chat/${characterId}`} style={{ width:38, height:38, borderRadius:7,
-          border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)',
-          color:'rgba(255,255,255,0.8)', display:'grid', placeItems:'center', flexShrink:0 }}>
-          <svg viewBox="0 0 24 24" style={{width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'}}>
-            <path d="M15 5l-7 7 7 7"/>
-          </svg>
-        </Link>
-        <div style={{ width:38 }} />
-        <div style={{ width:38 }} />
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <Link href={`/chat/${characterId}`} style={{ width:38, height:38, borderRadius:7,
+            border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)',
+            color:'rgba(255,255,255,0.8)', display:'grid', placeItems:'center', flexShrink:0 }}>
+            <svg viewBox="0 0 24 24" style={{width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'}}>
+              <path d="M15 5l-7 7 7 7"/>
+            </svg>
+          </Link>
+          <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.08em', padding:'3px 9px', borderRadius:5,
+            border:'1px solid rgba(255,255,255,0.18)', background:'rgba(255,255,255,0.07)',
+            color:'rgba(255,255,255,0.65)', flexShrink:0 }}>
+            {agentVersion}
+          </span>
+          <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+            {HEALTH_ITEMS.map(h => (
+              <span key={h.key} style={{ width:7, height:7, borderRadius:'50%', display:'inline-block', flexShrink:0,
+                background: h.ok ? '#6f8c5f' : h.fail ? '#b5654a' : 'rgba(255,255,255,0.25)' }} />
+            ))}
+          </div>
+        </div>
+        {/* Status dot — top right, no frame */}
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          {inCall && <span style={{ fontSize:12, color:'rgba(255,255,255,0.3)', fontVariantNumeric:'tabular-nums' }}>
+            {String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}
+          </span>}
+          <div style={{
+            width:9, height:9, borderRadius:'50%', flexShrink:0,
+            background: state === 'in-call' ? '#6f8c5f'
+              : state === 'error' ? '#b5654a'
+              : (state === 'connecting' || state === 'waiting-agent' || state === 'finalizing') ? '#c2954e'
+              : 'rgba(255,255,255,0.22)',
+          }} />
+        </div>
       </header>
 
       {/* Centre stage */}
       <div style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column',
         alignItems:'center', justifyContent:'center', zIndex:2, gap:28, padding:20,
-        paddingTop:80, paddingBottom:200 }}>
+        paddingTop:80, paddingBottom:220 }}>
         {/* Avatar + aura rings */}
         <div style={{ position:'relative', display:'grid', placeItems:'center' }}>
           {[0,1,2].map(i => (
@@ -490,20 +570,54 @@ export default function RealtimeCallPage() {
               </div>}
         </div>
 
-        {/* Name + status */}
-        <div style={{ textAlign:'center' }}>
-          <h2 style={{ fontSize:30, margin:'0 0 10px', fontWeight:600, color:'#fbfaf6', textShadow:'0 2px 12px rgba(0,0,0,0.6)' }}>{characterName||characterId}</h2>
-          <div style={{ display:'inline-flex', alignItems:'center', gap:10, fontSize:14.5, color:'rgba(255,255,255,0.85)',
-            background:'rgba(10,10,10,0.5)', border:'1px solid rgba(255,255,255,0.12)', padding:'8px 16px', borderRadius:6, backdropFilter:'blur(10px)' }}>
-            {state==='connecting' || state==='waiting-agent'
-              ? <span className="ax-spin" style={{display:'grid'}}><svg viewBox="0 0 24 24" style={{width:15,height:15,fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round'}}><circle cx="12" cy="12" r="8" strokeDasharray="38" strokeDashoffset="12"/></svg></span>
-              : speaking
-                ? <div style={{display:'flex',alignItems:'center',gap:4,height:22}}>{[0,1,2,3,4].map(i=><span key={i} style={{width:3,borderRadius:2,background:'#c2954e',animation:`ax-eq 0.9s ease-in-out ${i*0.12}s infinite`}}/>)}</div>
-                : <span style={{width:7,height:7,borderRadius:'50%',background:'rgba(255,255,255,0.4)',display:'inline-block'}}/>}
-            {stateLabel[state]}
-            {inCall && <span style={{fontSize:12,color:'rgba(255,255,255,0.45)',fontVariantNumeric:'tabular-nums'}}>{String(min).padStart(2,'0')}:{String(sec).padStart(2,'0')}</span>}
-          </div>
-          <div style={{fontSize:10,color:'rgba(255,255,255,0.2)',marginTop:6,letterSpacing:1}}>v2026-06-10c-voice-ws</div>
+        {/* Name + search bar */}
+        <div style={{ textAlign:'center', width:'100%', maxWidth:340 }}>
+          <h2 style={{ fontSize:30, margin:'0 0 16px', fontWeight:600, color:'#fbfaf6', textShadow:'0 2px 12px rgba(0,0,0,0.6)' }}>{characterName||characterId}</h2>
+          {quotaExhausted && (
+            <div className="ax-enter" style={{ margin:'-6px 0 16px', padding:'10px 18px', borderRadius:10,
+              background:'rgba(194,149,78,0.12)', border:'1px solid rgba(194,149,78,0.35)',
+              backdropFilter:'blur(8px)', display:'inline-block' }}>
+              <div style={{ fontSize:14, fontWeight:500, color:'#e8c88f' }}>您的語音通話時數已用罄</div>
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.55)', marginTop:3 }}>如需增購時數，請聯繫您的服務窗口</div>
+            </div>
+          )}
+          {webSearch && (
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              <div style={{ display:'flex', gap:8 }}>
+                <input
+                  type="url"
+                  value={sourceUrl}
+                  onChange={e => setSourceUrl(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') void handleShareSource(); }}
+                  placeholder="貼網址讓角色幫你讀…"
+                  disabled={state !== 'in-call' || sourceStatus === 'sending'}
+                  style={{
+                    flex:1, fontSize:13, padding:'9px 12px', borderRadius:7,
+                    border: `1px solid ${sourceBorderColor}`,
+                    background:'rgba(10,10,10,0.6)', color:'rgba(255,255,255,0.85)',
+                    backdropFilter:'blur(8px)', outline:'none',
+                    opacity: (state !== 'in-call' || sourceStatus === 'sending') ? 0.4 : 1,
+                  }}
+                />
+                <button
+                  onClick={() => void handleShareSource()}
+                  disabled={state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending'}
+                  style={{
+                    padding:'9px 14px', borderRadius:7, border:'1px solid rgba(255,255,255,0.15)',
+                    background: sourceStatus === 'sending' ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.1)',
+                    color:'rgba(255,255,255,0.8)', fontSize:13,
+                    cursor: (state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending') ? 'default' : 'pointer',
+                    opacity: (state !== 'in-call' || !sourceUrl.trim() || sourceStatus === 'sending') ? 0.35 : 1,
+                    transition:'background .15s',
+                  }}>
+                  {sourceStatus === 'sending' ? '送出中…' : sourceStatus === 'done' ? '已收到' : sourceStatus === 'error' ? '失敗' : '送出'}
+                </button>
+              </div>
+              {sourceStatus === 'error' && (
+                <div style={{ fontSize:11, color:'rgba(248,113,113,0.8)', textAlign:'center' }}>讀取失敗，請確認網址後重試</div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Latest caption */}
@@ -512,69 +626,34 @@ export default function RealtimeCallPage() {
             {captions[captions.length-1].text}
           </div>
         )}
-      </div>
 
-      {/* Health pills */}
-      <div style={{ position:'absolute', bottom:130, left:0, right:0, zIndex:3,
-        display:'flex', justifyContent:'center', gap:7, flexWrap:'wrap', padding:'0 20px' }}>
-        {HEALTH_ITEMS.map(h => (
-          <div key={h.key} style={{ display:'flex', alignItems:'center', gap:7, fontSize:12, color:'rgba(255,255,255,0.7)',
-            background:'rgba(10,10,10,0.5)', border:'1px solid rgba(255,255,255,0.1)', padding:'6px 11px', borderRadius:6, backdropFilter:'blur(8px)' }}>
-            <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, display:'inline-block',
-              background: h.ok ? '#6f8c5f' : h.fail ? '#b5654a' : 'rgba(255,255,255,0.3)' }} />
-          </div>
-        ))}
       </div>
-
-      {/* 同步框：通話中把網址分享給角色（僅 web_search 能力的角色顯示） */}
-      {inCall && webSearch && (
-        <div style={{ position:'absolute', bottom:96, left:0, right:0, zIndex:4,
-          display:'flex', flexDirection:'column', alignItems:'center', gap:7, padding:'0 20px' }}>
-          {sourceBusy ? (
-            <div style={{ display:'inline-flex', alignItems:'center', gap:10, fontSize:13.5, color:'rgba(255,255,255,0.85)',
-              background:'rgba(10,10,10,0.6)', border:'1px solid rgba(160,110,84,0.4)', padding:'10px 18px', borderRadius:24, backdropFilter:'blur(10px)' }}>
-              <span style={{ display:'flex', gap:4 }}>
-                {[0,1,2].map(i => <span key={i} style={{ width:6, height:6, borderRadius:'50%', background:'#c2954e', animation:`ax-eq 1s ease-in-out ${i*0.18}s infinite` }} />)}
-              </span>
-              {characterName || '角色'}正在讀你給的連結…
-            </div>
-          ) : (
-            <div style={{ display:'flex', alignItems:'center', gap:8, width:'100%', maxWidth:440,
-              background:'rgba(10,10,10,0.55)', border:'1px solid rgba(255,255,255,0.14)', borderRadius:24,
-              padding:'6px 6px 6px 16px', backdropFilter:'blur(10px)' }}>
-              <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') shareSource(); }}
-                placeholder="貼一個網址，讓他現在讀…" inputMode="url"
-                style={{ flex:1, minWidth:0, background:'transparent', border:'none', outline:'none',
-                  color:'#fbfaf6', fontSize:14 }} />
-              <button onClick={shareSource} disabled={!sourceUrl.trim()}
-                style={{ flexShrink:0, height:34, padding:'0 16px', borderRadius:20, border:'none', fontSize:13.5, fontWeight:500,
-                  background: sourceUrl.trim() ? '#a06e54' : 'rgba(255,255,255,0.08)', color:'#fff',
-                  cursor: sourceUrl.trim() ? 'pointer' : 'default', opacity: sourceUrl.trim() ? 1 : 0.5 }}>
-                分享
-              </button>
-            </div>
-          )}
-          {sourceMsg && <div style={{ fontSize:12, color:'#e0a075' }}>{sourceMsg}</div>}
-        </div>
-      )}
 
       {/* Controls */}
       <div style={{ position:'absolute', bottom:32, left:0, right:0, zIndex:3,
-        display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
-        <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
-        {canConnect
-          ? <CircleControl icon="phone" label="接通" onClick={handleConnect} big primary />
-          : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
-        <div style={{ width:56 }} />
+        display:'flex', flexDirection:'column', justifyContent:'center', alignItems:'center', gap:16 }}>
+        <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
+          <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
+          {canConnect
+            ? <CircleControl icon="phone" label={powerOff ? '現在無法撥號' : quotaExhausted ? '時數已用罄' : '接通'} onClick={handleConnect} big primary disabled={powerOff || quotaExhausted} />
+            : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
+          <div style={{ width:56 }} />
+        </div>
+        {state === 'disconnected' && (
+          <Link href={`/chat/${characterId}`}
+            style={{ padding:'9px 22px', borderRadius:22, fontSize:13.5, fontWeight:500, textDecoration:'none',
+              background:'rgba(255,255,255,0.1)', border:'1px solid rgba(255,255,255,0.2)', color:'rgba(255,255,255,0.85)' }}>
+            返回對話
+          </Link>
+        )}
       </div>
 
       {/* Diag log */}
       {logOpen && (
-        <div className="ax-enter" style={{ position:'absolute', right:18, bottom:110, width:320, maxHeight:260, zIndex:6,
+        <div className="ax-enter" style={{ position:'absolute', right:18, bottom:120, width:320, maxHeight:260, zIndex:6,
           background:'rgba(10,10,10,0.88)', border:'1px solid rgba(255,255,255,0.12)', borderRadius:8, padding:14, backdropFilter:'blur(10px)',
           boxShadow:'0 20px 34px -20px rgba(0,0,0,0.6)' }}>
-          <div style={{ fontSize:12.5, fontWeight:600, color:'rgba(255,255,255,0.4)', marginBottom:8 }}>診斷日誌 <span style={{fontSize:10,opacity:0.5}}>build:2026-06-10T14</span></div>
+          <div style={{ fontSize:12.5, fontWeight:600, color:'rgba(255,255,255,0.4)', marginBottom:8 }}>診斷日誌 <span style={{fontSize:10,opacity:0.5}}>讀網址</span></div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.5)', lineHeight:1.7, maxHeight:190, overflowY:'auto', fontFamily:'monospace' }}>
             {diagLogs.slice(-30).map((l,i)=>(
               <div key={i} style={{ color: l.level==='error'?'#f87171':l.level==='warn'?'#fbbf24':'rgba(255,255,255,0.4)' }}>{l.msg}</div>

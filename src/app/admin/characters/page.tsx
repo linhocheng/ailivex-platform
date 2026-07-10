@@ -425,7 +425,7 @@ export default function AdminCharacters() {
                     對話
                   </a>
                   {c.voiceIdMinimax && (
-                    <a href={`/realtime-v14/${c.id}`} target="_blank" rel="noopener" title="語音通話（測試）"
+                    <a href={`/realtime/${c.id}`} target="_blank" rel="noopener" title="語音通話（測試）"
                       style={{ padding:'5px 8px', borderRadius:6, border:'1px solid var(--border)',
                         background:'transparent', color:'var(--accent-2)', fontSize:12, textDecoration:'none' }}>
                       語音
