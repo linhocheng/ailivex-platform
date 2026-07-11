@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/voice-auto-off",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/ops-rollup",
+      "schedule": "5 * * * *"
     }
   ]
 }

@@ -35,7 +35,7 @@ function getAuth(): GoogleAuth {
   return authClient;
 }
 
-function getProjectId(): string {
+export function getProjectId(): string {
   const saJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (saJson) return JSON.parse(saJson).project_id;
   return process.env.GCP_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || '';

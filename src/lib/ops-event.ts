@@ -103,6 +103,26 @@ export function openVoiceSession(roomName: string, userId: string, characterId: 
 }
 
 /**
+ * abandoned session 清掃（voice-auto-off cron 每 30 分順路跑）。
+ * open 超過 maxAge（預設 3h）＝voice-end beacon 沒送達（當機/斷網/關瀏覽器），
+ * 標記 abandoned 收案——不然監控頁每次 refresh 都重數這批殭屍直到 30 天 TTL。
+ */
+export async function sweepAbandonedSessions(maxAgeMs = 3 * 3600_000): Promise<number> {
+  const db = getFirestore();
+  const open = await db.collection('voice_sessions').where('status', '==', 'open').get();
+  const cutoff = Date.now() - maxAgeMs;
+  let swept = 0;
+  for (const d of open.docs) {
+    const startedMs = d.data().startedAt?.toMillis?.() ?? 0;
+    if (startedMs && startedMs < cutoff) {
+      await d.ref.set({ status: 'abandoned', endedAt: new Date() }, { merge: true });
+      swept++;
+    }
+  }
+  return swept;
+}
+
+/**
  * 語音 session 收盤（voice-end beacon）。
  * 有 roomName 直接關；沒有（舊前端快取）就 fallback 找該 (userId, characterId) 最新的 open。
  */

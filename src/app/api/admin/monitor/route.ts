@@ -2,8 +2,10 @@
  * /api/admin/monitor — 監控中台聚合查詢
  * Phase 1：純讀現成資料（tasks/jobs/documents/cost/LiveKit/Cloud Run 探測）
  * Phase 2：事件脊椎（ops_events + voice_sessions）——文字/語音漏斗、第三方呼叫結果、cron 心跳、副作用吞錯
+ * Phase 2.5：時間軸＋計費錶——原始掃描鎖 48h，寬時間窗加總 ops_rollups；
+ *            趨勢 series 供 sparkline；Cloud Run billable_instance_time 真值（計費錶天條）
  *
- * 一次回傳：服務燈號 / 容量水位 / 在線用戶 / 使用漏斗 / 失敗事件 / 第三方依賴。
+ * 一次回傳：服務燈號 / 容量水位 / 計費錶 / 在線用戶 / 趨勢 / 使用漏斗 / 失敗事件 / 第三方依賴。
  * 原則：
  *  - 燈色只從證據亮（真的打 /health、真的 listRooms），不從設定推
  *  - 沒接管道的資料誠實回 phase2 標記，前端灰燈顯示，不裝綠
@@ -15,6 +17,8 @@ import { RoomServiceClient } from 'livekit-server-sdk';
 import { getFirestore } from '@/lib/firebase-admin';
 import { COL, DEFAULT_VOICE_VERSION } from '@/lib/collections';
 import { cloudRunServiceUrl, cloudRunAccessToken, readVoicePowerFlag } from '@/lib/voice-power';
+import { readBillableInstanceTime } from '@/lib/cloudrun-billing';
+import { TASK_TYPE_LABEL, type OpsRollup } from '@/lib/ops-rollup';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -51,6 +55,9 @@ async function probe(url: string, timeoutMs = 3500): Promise<{ ok: boolean; stat
 export async function GET(req: Request) {
   const windowH = Math.min(720, Math.max(1, Number(new URL(req.url).searchParams.get('window') || 24)));
   const since = new Date(Date.now() - windowH * 3600_000);
+  // 原始掃描永遠鎖在 48h 內；更寬的窗（7天/30天）從 ops_rollups 加總——讀量不隨資料量線性長大
+  const rawWindowH = Math.min(windowH, 48);
+  const rawSince = new Date(Date.now() - rawWindowH * 3600_000);
   const db = getFirestore();
 
   // ── 並行收料：Firestore 掃描 + 外部探測 ──
@@ -61,20 +68,23 @@ export async function GET(req: Request) {
 
   const [
     tasksSnap, jobsSnap, docsSnap, convsSnap, costSnap,
-    eventsSnap, sessionsSnap, openSessionsSnap,
+    eventsSnap, sessionsSnap, openSessionsSnap, rollupsSnap, billing,
     powerFlag, docWorker, bridge, roomsResult, runService,
   ] = await Promise.all([
-    db.collection(COL.tasks).where('createdAt', '>=', since).get(),
-    db.collection(COL.jobs).where('createdAt', '>=', since).get(),
+    db.collection(COL.tasks).where('createdAt', '>=', rawSince).get(),
+    db.collection(COL.jobs).where('createdAt', '>=', rawSince).get(),
     db.collection(COL.documents).where('createdAt', '>=', since).get(),
     db.collection(COL.conversations).where('updatedAt', '>=', new Date(Date.now() - 7 * 86400_000)).get(),
-    db.collection('zhu_vitals_cost').where('timestamp', '>=', since).get(),
+    db.collection('zhu_vitals_cost').where('timestamp', '>=', rawSince).get(),
     // Phase 2 事件脊椎：dialogue 成敗 / 第三方呼叫 / cron 心跳 / 副作用吞錯
-    // 起點取 min(窗, 48h 前)：cron 心跳固定 48h 回看（24h 窗會誤判每日 cron 斷線），其餘 kind 在聚合時照窗過濾
-    db.collection('ops_events').where('at', '>=', new Date(Math.min(since.getTime(), Date.now() - 48 * 3600_000))).get(),
-    // 語音 session：時間窗內開的（含已關）＋所有還開著的（抓窗外 abandoned）
-    db.collection('voice_sessions').where('startedAt', '>=', since).get(),
+    // 固定 48h 回看：cron 心跳需要（24h 窗會誤判每日 cron 斷線）；更舊的事件已在 rollup 裡
+    db.collection('ops_events').where('at', '>=', new Date(Date.now() - 48 * 3600_000)).get(),
+    // 語音 session：48h 內開的（含已關）＋所有還開著的（窗外長通話算 running；abandoned 由 cron 清掃收案）
+    db.collection('voice_sessions').where('startedAt', '>=', rawSince).get(),
     db.collection('voice_sessions').where('status', '==', 'open').get(),
+    // 時間軸：窗內全部 rollup（series 用全量；寬窗加總只取 rawSince 之前的小時，避免與原始掃描重複計數）
+    db.collection('ops_rollups').where('at', '>=', since).orderBy('at', 'asc').get(),
+    readBillableInstanceTime(windowH),
     readVoicePowerFlag().catch(() => ({ on: true } as { on: boolean; lastCallAt?: string })),
     process.env.CLOUD_RUN_DOC_WORKER_URL
       ? probe(`${process.env.CLOUD_RUN_DOC_WORKER_URL}/health`)
@@ -136,10 +146,6 @@ export async function GET(req: Request) {
 
   // ── 漏斗 + 卡死 + 失敗事件 ──
   type Row = { at: number; feature: string; userId: string; characterId: string; error: string; kind: 'fail' | 'stuck' };
-  const TYPE_LABEL: Record<string, string> = {
-    image: '圖片生成', audio: '音訊生成', video: '影片生成', podcast: 'Podcast',
-    script_draft: '腳本草稿', story_draft: '故事草稿',
-  };
   const funnel: Record<string, { ok: number; fail: number; running: number; stuck: number }> = {};
   const bump = (f: string, k: 'ok' | 'fail' | 'running' | 'stuck') => {
     funnel[f] = funnel[f] || { ok: 0, fail: 0, running: 0, stuck: 0 };
@@ -149,7 +155,7 @@ export async function GET(req: Request) {
 
   for (const d of tasksSnap.docs) {
     const t = d.data() as { type?: string; status?: string; error?: string; userId?: string; characterId?: string; createdAt?: unknown };
-    const feature = TYPE_LABEL[t.type || ''] || `任務(${t.type})`;
+    const feature = TASK_TYPE_LABEL[t.type || ''] || `任務(${t.type})`;
     const ageMin = (now - toMs(t.createdAt)) / 60_000;
     const stuckTh = (t.type || '').startsWith('podcast') ? STUCK_PODCAST_MIN : STUCK_TASK_MIN;
     if (t.status === 'done' || t.status === 'ready' || t.status === 'scripted') bump(feature, 'ok');
@@ -191,14 +197,17 @@ export async function GET(req: Request) {
     if (e.kind !== 'side_effect_error') continue;
     failures.push({ at: toMs(e.at), feature: `副作用·${e.sideEffect || '?'}`, userId: e.userId || '', characterId: e.characterId || '', error: e.error || '', kind: 'fail' });
   }
-  // 語音 session 漏斗：closed=成功、open 超過 3h=中斷（無 voice-end，疑當機/斷網）、open 新鮮=通話中
+  // 語音 session 漏斗：closed=成功、abandoned=清掃收案的中斷、open 超過 3h=中斷（清掃前的空窗）、open 新鮮=通話中
   type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number };
   const sessById = new Map<string, Sess>();
   for (const d of [...sessionsSnap.docs, ...openSessionsSnap.docs]) sessById.set(d.id, d.data() as Sess);
   const ABANDON_MS = 3 * 3600_000;
   for (const [id, s] of sessById) {
     if (s.status === 'closed') bump('語音通話', 'ok');
-    else if (now - toMs(s.startedAt) > ABANDON_MS) {
+    else if (s.status === 'abandoned') {
+      bump('語音通話', 'stuck');
+      failures.push({ at: toMs(s.startedAt), feature: '語音通話', userId: s.userId || '', characterId: s.characterId || '', error: `voice-end 未送達（room ${id}，已由清掃收案）`, kind: 'stuck' });
+    } else if (now - toMs(s.startedAt) > ABANDON_MS) {
       bump('語音通話', 'stuck');
       failures.push({ at: toMs(s.startedAt), feature: '語音通話', userId: s.userId || '', characterId: s.characterId || '', error: `session 未收盤已 ${Math.round((now - toMs(s.startedAt)) / 3600_000)} 小時（room ${id}，疑掛斷未送達）`, kind: 'stuck' });
     } else bump('語音通話', 'running');
@@ -226,10 +235,7 @@ export async function GET(req: Request) {
     }
   }
 
-  failures.sort((a, b) => b.at - a.at);
-  const stuckTotal = Object.values(funnel).reduce((s, f) => s + f.stuck, 0);
-
-  // ── 第三方：LLM 從 cost 明細聚合；其餘 Phase 1 只有被動證據或灰燈 ──
+  // ── 第三方：LLM 從 cost 明細聚合（48h 內原始資料；更舊的在下方 rollup 合併補齊）──
   const llm: Record<string, { calls: number; cost: number; lastAt: number }> = {};
   for (const d of costSnap.docs) {
     const c = d.data() as { project?: string; route?: string; cost_usd_est?: number; timestamp?: unknown };
@@ -240,6 +246,50 @@ export async function GET(req: Request) {
     llm[key].cost += c.cost_usd_est || 0;
     llm[key].lastAt = Math.max(llm[key].lastAt, toMs(c.timestamp));
   }
+
+  // ── Phase 2.5：寬時間窗從 rollup 加總 ──
+  // 原始掃描覆蓋 [rawSince, now]；rollup 只取整小時落在 rawSince 之前的（at ≤ rawSince−1h），
+  // 兩段無縫也無重疊。series（sparkline）用窗內全量 rollup——只做顯示，不參與計數。
+  const rollups = rollupsSnap.docs.map(d => d.data() as unknown as OpsRollup);
+  const addN = (f: string, k: 'ok' | 'fail' | 'running' | 'stuck', n: number) => {
+    if (!n) return;
+    funnel[f] = funnel[f] || { ok: 0, fail: 0, running: 0, stuck: 0 };
+    funnel[f][k] += n;
+  };
+  const sumRollups = windowH > rawWindowH
+    ? rollups.filter(r => toMs(r.at) <= rawSince.getTime() - 3600_000)
+    : [];
+  for (const r of sumRollups) {
+    addN('文字對話', 'ok', r.dialogue?.ok || 0);
+    addN('文字對話', 'fail', r.dialogue?.fail || 0);
+    addN('語音通話', 'ok', r.voice?.closed || 0);
+    addN('語音通話', 'stuck', r.voice?.abandoned || 0);
+    for (const [f, v] of Object.entries(r.taskFunnel || {})) {
+      addN(f, 'ok', v.ok); addN(f, 'fail', v.fail); addN(f, 'stuck', v.stuck); addN(f, 'running', v.running);
+    }
+    for (const [p, v] of Object.entries(r.providers || {})) {
+      const agg = provAgg[p] = provAgg[p] || { calls: 0, fails: 0, lastOkAt: 0, lastError: null };
+      agg.calls += v.calls; agg.fails += v.fails;
+      if (v.lastOkAt) agg.lastOkAt = Math.max(agg.lastOkAt, v.lastOkAt);
+    }
+    for (const [k, v] of Object.entries(r.llm || {})) {
+      llm[k] = llm[k] || { calls: 0, cost: 0, lastAt: 0 };
+      llm[k].calls += v.calls; llm[k].cost += v.cost;
+      llm[k].lastAt = Math.max(llm[k].lastAt, toMs(r.at));
+    }
+    for (const f of r.failures || []) failures.push(f);
+  }
+  const series = rollups.map(r => ({
+    h: r.hourKey,
+    at: toMs(r.at),
+    dialogueOk: r.dialogue?.ok || 0,
+    dialogueFail: r.dialogue?.fail || 0,
+    rooms: r.sample?.rooms ?? null,
+    minInstances: r.sample?.minInstances ?? null,
+  }));
+
+  failures.sort((a, b) => b.at - a.at);
+  const stuckTotal = Object.values(funnel).reduce((s, f) => s + f.stuck, 0);
   // Phase 2：bridge/minimax/vertex/fal/media-worker 從事件脊椎取真實呼叫結果
   const pa = (key: string) => provAgg[key] ?? { calls: 0, fails: 0, lastOkAt: 0, lastError: null };
   const providers = [
@@ -283,6 +333,7 @@ export async function GET(req: Request) {
       { cron: 'memory-consolidation', label: 'cron·記憶鞏固', thresholdMin: 26 * 60 },
       { cron: 'memory-maintenance', label: 'cron·記憶維護', thresholdMin: 26 * 60 },
       { cron: 'voice-auto-off', label: 'cron·語音自動關機', thresholdMin: 40 },
+      { cron: 'ops-rollup', label: 'cron·監控快照', thresholdMin: 90 },
     ] as const).map(({ cron, label, thresholdMin }): Light => {
       const c = cronAgg[cron];
       if (!c || (!c.lastOkAt && !c.lastTs)) return { key: cron, name: label, status: 'gray', why: '尚無心跳（剛接線，等下一輪排程）' };
@@ -335,5 +386,8 @@ export async function GET(req: Request) {
     failures: failures.slice(0, 20),
     providers,
     docsWindow: docsSnap.size,
+    // Phase 2.5：時間軸（每小時一點，rollup cron 累積）＋ Cloud Run 計費錶真值
+    series,
+    billing,
   });
 }

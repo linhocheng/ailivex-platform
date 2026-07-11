@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { verifyBearerSecret } from '@/lib/clean-env';
 import { readVoicePowerFlag, setVoicePower, AUTO_OFF_HOURS_DEFAULT } from '@/lib/voice-power';
-import { wrapCron } from '@/lib/ops-event';
+import { wrapCron, sweepAbandonedSessions } from '@/lib/ops-event';
 import { regulateCapacity } from '@/lib/voice-capacity';
 
 export const runtime = 'nodejs';
@@ -22,8 +22,11 @@ async function run(req: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
+  // 電源判斷之前先掃 abandoned session——關機狀態下殭屍 session 一樣要收案
+  const swept = await sweepAbandonedSessions().catch(() => 0);
+
   const flag = await readVoicePowerFlag();
-  if (!flag.on) return NextResponse.json({ ok: true, action: 'none', reason: '已是關閉狀態' });
+  if (!flag.on) return NextResponse.json({ ok: true, action: 'none', reason: '已是關閉狀態', swept });
 
   const hours = flag.autoOffHours ?? AUTO_OFF_HOURS_DEFAULT;
   const idleSinceMs = Math.max(
@@ -40,7 +43,7 @@ async function run(req: Request) {
   if (idleHours < hours) {
     // 還在營業中 → 順路跑水位調節器（降檔觀察 + 活動檔到期回收）
     const regulated = await regulateCapacity().catch(e => `調節器錯誤: ${String(e).slice(0, 120)}`);
-    return NextResponse.json({ ok: true, action: 'none', idleHours: +idleHours.toFixed(2), threshold: hours, regulated });
+    return NextResponse.json({ ok: true, action: 'none', idleHours: +idleHours.toFixed(2), threshold: hours, regulated, swept });
   }
 
   await setVoicePower(false, 'auto-off');

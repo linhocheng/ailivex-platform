@@ -10,11 +10,14 @@ type Light = { key: string; name: string; status: 'green' | 'red' | 'amber' | 'g
 type Funnel = { feature: string; ok?: number; fail?: number; running?: number; stuck?: number; phase2: boolean };
 type Failure = { at: number; feature: string; userId: string; characterId: string; error: string; kind: 'fail' | 'stuck' };
 type Provider = { name: string; use: string; calls: number | null; fails: number | null; lastOkAt: number | null; lastError: string | null; cost: number | null; costNote?: string; phase2: boolean; partial?: boolean };
+type SeriesPoint = { h: string; at: number; dialogueOk: number; dialogueFail: number; rooms: number | null; minInstances: number | null };
+type BillingRow = { service: string; avgInstances: number; instanceHours: number };
 interface Monitor {
   generatedAt: string; windowH: number; lights: Light[];
   gauges: { voice: { current: number; ceiling: number; safeGate: number; perInstance: number; minInstances: number; maxInstances: number; note: string }; queue: { pending: number; stuck: number } };
   online: { voiceCount: number; voiceRooms: { characterId: string; userId: string; participants: number; durationMin: number | null }[]; textActive15m: number; todayActive: number; weekActive: number };
   funnel: Funnel[]; failures: Failure[]; providers: Provider[];
+  series: SeriesPoint[]; billing: BillingRow[] | null;
 }
 
 const DOT: Record<Light['status'], string> = {
@@ -104,6 +107,30 @@ export default function MonitorPage() {
           </div>
         </Section>
 
+        {/* ①.6 計費錶 */}
+        {data.billing !== null && (
+          <Section title="計費錶（Cloud Run）" note="billable_instance_time 真值 — 驗「不燒錢了」看這裡，不看設定畫面">
+            <Table head={['服務', `${data.windowH}h 平均計費台數`, '實例時']}
+              rows={data.billing.map(b => [
+                <span key="s" style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{b.service}</span>,
+                String(b.avgInstances),
+                <b key="h">{b.instanceHours}</b>,
+              ])} />
+          </Section>
+        )}
+
+        {/* ①.7 趨勢 */}
+        <Section title="趨勢" note="每小時一點（rollup 快照）· 快照不是趨勢，這裡才是趨勢">
+          {data.series.length < 2
+            ? <div style={{ fontSize: 13, color: 'var(--muted)', padding: '14px 4px' }}>快照累積中（每小時一點）——資料點滿兩個後這裡會長出曲線。</div>
+            : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px,1fr))', gap: 14 }}>
+                <Spark name="語音房間（每時抽樣）" pts={data.series.map(s => s.rooms)} />
+                <Spark name="常駐台數（變速箱檔位）" pts={data.series.map(s => s.minInstances)} />
+                <Spark name="文字對話量（每時）" pts={data.series.map(s => s.dialogueOk + s.dialogueFail)}
+                  marks={data.series.map(s => s.dialogueFail > 0)} />
+              </div>}
+        </Section>
+
         {/* ② 在線用戶 */}
         <Section title="在線用戶" note="語音＝LiveKit 房間現場（不是鏡子）· 文字＝近 15 分鐘有對話更新">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px,1fr))', gap: 14, marginBottom: 14 }}>
@@ -148,7 +175,12 @@ export default function MonitorPage() {
         <Section title="第三方依賴" note="被動亮燈：不主動打付費 API 探測 · 灰＝Phase 2 接呼叫結果">
           <Table head={['', '供應商', '用途', `${data.windowH}h 呼叫`, '失敗', '最後成功', '最後錯誤', '成本(估)']}
             rows={data.providers.map(p => {
-              const status: Light['status'] = p.phase2 ? 'gray' : (p.fails && p.fails > 0 ? 'red' : (p.calls || p.lastOkAt ? 'green' : 'gray'));
+              // 紅=失敗率 ≥30%（真的在壞）；橘=有零星失敗但大多成功；不因 999 成功 1 失敗就全紅
+              const failRate = p.fails && p.calls ? p.fails / p.calls : (p.fails ? 1 : 0);
+              const status: Light['status'] = p.phase2 ? 'gray'
+                : failRate >= 0.3 ? 'red'
+                : (p.fails && p.fails > 0) ? 'amber'
+                : (p.calls || p.lastOkAt ? 'green' : 'gray');
               return [
                 <span key="d" style={{ width: 9, height: 9, borderRadius: 99, display: 'inline-block', background: DOT[status] }} />,
                 p.name, <span key="u" style={{ color: 'var(--muted)', fontSize: 12.5 }}>{p.use}</span>,
@@ -205,6 +237,28 @@ function Gauge({ name, cur, max, why, unit, noColor, alert }: { name: string; cu
         </>}
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 7 }}>{why}</div>
+    </div>
+  );
+}
+
+function Spark({ name, pts, marks }: { name: string; pts: (number | null)[]; marks?: boolean[] }) {
+  const vals = pts.map(v => v ?? 0);
+  const max = Math.max(1, ...vals);
+  const last = vals[vals.length - 1];
+  const W = 220, H = 44;
+  const x = (i: number) => vals.length > 1 ? (i / (vals.length - 1)) * W : 0;
+  const y = (v: number) => H - (v / max) * (H - 4) - 2;
+  const path = vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  return (
+    <div style={{ padding: '15px 18px', borderRadius: 'var(--radius)', background: 'var(--panel)', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 500 }}>{name}</span>
+        <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>最新 <b style={{ fontSize: 15, color: 'var(--text)' }}>{last}</b> · 峰 {max}</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H, display: 'block' }} preserveAspectRatio="none">
+        <path d={path} fill="none" stroke="var(--accent-2)" strokeWidth={1.8} strokeLinejoin="round" />
+        {marks?.map((m, i) => m ? <circle key={i} cx={x(i)} cy={y(vals[i])} r={2.6} fill="var(--danger)" /> : null)}
+      </svg>
     </div>
   );
 }
