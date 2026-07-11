@@ -42,6 +42,11 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: '需要 { on: true|false }' }, { status: 400 });
     }
     await setVoicePower(body.on, 'admin');
+    // 開機時重置變速箱到待命底檔（desiredMin=1、清活動檔）——power cycle 後不留上次的高檔位
+    if (body.on) {
+      const { resetCapacityOnPowerOn } = await import('@/lib/voice-capacity');
+      await resetCapacityOnPowerOn().catch(() => {});
+    }
     return NextResponse.json({ ok: true, on: body.on });
   } catch (e) {
     return NextResponse.json({ error: String(e).slice(0, 200) }, { status: 500 });

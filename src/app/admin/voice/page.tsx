@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 interface PowerState { version: string; on: boolean; minInstances: number; reconciling: boolean; }
+interface CapacityState {
+  powerOn: boolean; gear: 'off' | 'standby' | 'event';
+  desiredMin: number; cloudRunMin: number | null; cloudRunMax: number | null;
+  eventMode: { min: number; until: string } | null;
+  rooms: number | null; capacity: number; perInstance: number;
+}
 
 export default function AdminVoicePower() {
   const [state, setState] = useState<PowerState | null>(null);
@@ -87,6 +93,72 @@ export default function AdminVoicePower() {
       </div>
 
       {msg && <p style={{ fontSize: 13.5, color: 'var(--accent-2)', marginTop: 14 }}>{msg}</p>}
+
+      {on && <CapacityPanel />}
+    </div>
+  );
+}
+
+/** 三段變速箱面板：檔位/水位顯示 + 活動檔進出。降檔升檔由調節器自動，人只管換檔。 */
+function CapacityPanel() {
+  const [cap, setCap] = useState<CapacityState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [cmsg, setCmsg] = useState('');
+
+  const loadCap = useCallback(async () => {
+    const r = await fetch('/api/admin/voice-capacity').then(r => r.json()).catch(() => null);
+    if (r && !r.error) setCap(r);
+  }, []);
+
+  useEffect(() => {
+    loadCap();
+    const t = setInterval(loadCap, 15_000);
+    return () => clearInterval(t);
+  }, [loadCap]);
+
+  async function act(body: Record<string, unknown>, doneMsg: string) {
+    if (busy) return;
+    setBusy(true); setCmsg('');
+    const r = await fetch('/api/admin/voice-capacity', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(r => r.json()).catch(() => null);
+    setBusy(false);
+    if (!r?.ok) { setCmsg(r?.error || '操作失敗'); return; }
+    setCmsg(doneMsg);
+    setTimeout(() => setCmsg(''), 6000);
+    loadCap();
+  }
+
+  if (!cap) return null;
+  const inEvent = cap.gear === 'event';
+  const eventLeft = cap.eventMode ? Math.max(0, Math.round((Date.parse(cap.eventMode.until) - Date.now()) / 60_000)) : 0;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '20px 24px', background: 'var(--panel)', marginTop: 18 }}>
+      <div style={{ fontSize: 15.5, fontWeight: 600, marginBottom: 4 }}>
+        容量變速箱：{inEvent ? `活動檔（剩 ${eventLeft} 分自動回待命）` : '待命檔（水位自動調節）'}
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 14 }}>
+        目前常駐 <b style={{ color: 'var(--text)' }}>{cap.cloudRunMin ?? '?'}</b> 台（上限 {cap.cloudRunMax} 台）
+        ・通話中 <b style={{ color: 'var(--text)' }}>{cap.rooms ?? '?'}</b> / 容量 {cap.capacity} 路（{cap.perInstance} 路/台，實測值）。
+        待命檔下水位 ≥70% 自動加開、低於 40% 持續一小時自動縮回；活動檔鎖定台數、到期自動降回。
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        {!inEvent && <>
+          <button disabled={busy} onClick={() => act({ action: 'event', min: cap.cloudRunMax ?? 3, hours: 2 }, '已進活動檔，2 小時後自動回待命')}
+            style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 500, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            進活動檔（{cap.cloudRunMax ?? 3} 台 · 2 小時）
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>發表會 / demo 前按，時間到自動回，不會忘關</span>
+        </>}
+        {inEvent && (
+          <button disabled={busy} onClick={() => act({ action: 'standby' }, '已回待命檔 min=1')}
+            style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--panel-2)', color: 'var(--text)', fontSize: 13.5, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            提前退活動檔（回待命）
+          </button>
+        )}
+      </div>
+      {cmsg && <p style={{ fontSize: 13, color: 'var(--accent-2)', marginTop: 12 }}>{cmsg}</p>}
     </div>
   );
 }

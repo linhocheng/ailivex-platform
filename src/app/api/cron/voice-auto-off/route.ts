@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { verifyBearerSecret } from '@/lib/clean-env';
 import { readVoicePowerFlag, setVoicePower, AUTO_OFF_HOURS_DEFAULT } from '@/lib/voice-power';
 import { wrapCron } from '@/lib/ops-event';
+import { regulateCapacity } from '@/lib/voice-capacity';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -37,7 +38,9 @@ async function run(req: Request) {
 
   const idleHours = (Date.now() - idleSinceMs) / 3600_000;
   if (idleHours < hours) {
-    return NextResponse.json({ ok: true, action: 'none', idleHours: +idleHours.toFixed(2), threshold: hours });
+    // 還在營業中 → 順路跑水位調節器（降檔觀察 + 活動檔到期回收）
+    const regulated = await regulateCapacity().catch(e => `調節器錯誤: ${String(e).slice(0, 120)}`);
+    return NextResponse.json({ ok: true, action: 'none', idleHours: +idleHours.toFixed(2), threshold: hours, regulated });
   }
 
   await setVoicePower(false, 'auto-off');

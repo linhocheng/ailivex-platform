@@ -5,6 +5,7 @@
  * 與 ailive 共用 LiveKit project 時靠 agent_name + RoomAgentDispatch 區隔，不靠 prompt。
  * 後端把關：未被指派該角色 → 403（不只靠大廳隱藏）。
  */
+import { after } from 'next/server';
 import { NextResponse } from 'next/server';
 import { AccessToken } from 'livekit-server-sdk';
 import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
@@ -14,6 +15,7 @@ import { COL, agentNameForVersion, VOICE_VERSIONS, DEFAULT_VOICE_VERSION, type C
 import { checkVoiceQuota, QuotaExceededError } from '@/lib/quota';
 import { touchLastCallAt } from '@/lib/voice-power';
 import { openVoiceSession } from '@/lib/ops-event';
+import { maybeScaleUp } from '@/lib/voice-capacity';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,6 +101,9 @@ export async function POST(req: Request) {
   // 實際派工版本（畫面左上角顯示真值——頁面標籤是死的，派工才是真相）
   const resolvedVersion = VOICE_VERSIONS.find(v => v.agentName === agentName)?.id ?? DEFAULT_VOICE_VERSION;
   openVoiceSession(roomName, userId, characterId, resolvedVersion); // 監控 session 開盤（fire-and-forget）
+  // 水位調節器升檔檢查：發 token=有人要打電話（領先指標），水位 ≥70% 先暖下一台。
+  // after() 保證回應後執行完（Vercel void-write 凍結雷），不拖慢 token 發放。
+  after(() => maybeScaleUp());
 
   return NextResponse.json({
     token, url, roomName, identity: userId,
