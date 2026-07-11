@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
-import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability } from '@/lib/collections';
+import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability, type CharacterVoiceProfile } from '@/lib/collections';
 
 const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
 
@@ -24,6 +24,7 @@ export async function GET(_req: Request, { params }: Params) {
     voiceIdMinimax: c.voiceIdMinimax || '',
     voiceSettings: c.voiceSettings || {},
     convSettings: c.convSettings || {},
+    voice: c.voice || {},
     aliases: c.aliases || [],
     capabilities: c.capabilities || [],
     imageStyle: c.imageStyle || '',
@@ -41,6 +42,7 @@ export async function PATCH(req: Request, { params }: Params) {
     name?: string; soul?: string;
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings;
     convSettings?: ConvSettings; aliases?: string[];
+    voice?: CharacterVoiceProfile;
     capabilities?: TaskCapability[];
     imageStyle?: string;
     heygenAvatarId?: string;
@@ -66,6 +68,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (body?.voiceIdMinimax !== undefined) updates.voiceIdMinimax = body.voiceIdMinimax.trim();
   if (body?.voiceSettings !== undefined) updates.voiceSettings = sanitizeVoiceSettings(body.voiceSettings);
   if (body?.convSettings !== undefined) updates.convSettings = sanitizeConvSettings(body.convSettings);
+  if (body?.voice !== undefined) updates.voice = sanitizeVoiceProfile(body.voice);
   if (Array.isArray(body?.aliases)) updates.aliases = body.aliases.map(s => s.trim()).filter(Boolean);
   if (Array.isArray(body?.capabilities)) updates.capabilities = body.capabilities.filter(c => ALL_CAPABILITIES.includes(c));
   if (body?.imageStyle !== undefined) updates.imageStyle = body.imageStyle.trim();
@@ -105,6 +108,17 @@ function sanitizeVoiceSettings(vs?: VoiceSettings): VoiceSettings {
   if (typeof vs.pitch === 'number') out.pitch = Math.max(-12, Math.min(12, vs.pitch));
   if (typeof vs.vol === 'number') out.vol = Math.max(0.1, Math.min(3.0, vs.vol));
   if (typeof vs.emotion === 'string') out.emotion = vs.emotion;
+  return out;
+}
+
+/** voice profile：五欄純文字，trim＋上限 500 字，空欄不落（podcast-worker 讀時空缺=不個人化） */
+function sanitizeVoiceProfile(v?: CharacterVoiceProfile): CharacterVoiceProfile {
+  if (!v) return {};
+  const out: CharacterVoiceProfile = {};
+  for (const k of ['rhythm', 'habits', 'evidenceStyle', 'whenUncertain', 'forbiddenRegister'] as const) {
+    const s = typeof v[k] === 'string' ? v[k]!.trim().slice(0, 500) : '';
+    if (s) out[k] = s;
+  }
   return out;
 }
 

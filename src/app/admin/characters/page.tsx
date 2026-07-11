@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Avatar, Icon, Dot, Field, TextInput, GlowButton } from '@/app/_components/ui';
 
 interface VoiceSettings { speed?: number; pitch?: number; vol?: number; emotion?: string; }
+interface CharVoiceProfile { rhythm?: string; habits?: string; evidenceStyle?: string; whenUncertain?: string; forbiddenRegister?: string; }
 interface ConvSettings { responseSpeed?: number; interruptSensitivity?: number; imThreshold?: number; interruptThreshold?: number; temperature?: number; }
 interface Char {
   id: string; name: string; avatarUrl: string; status: string;
@@ -25,6 +26,7 @@ const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
 type EditState = {
   id: string; name: string; soul: string;
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
+  voice: CharVoiceProfile;
   aliases: string[];
   capabilities: TaskCapability[];
   imageStyle: string;
@@ -370,6 +372,7 @@ export default function AdminCharacters() {
     payload.voiceIdMinimax = editing.voiceId;
     payload.voiceSettings = editing.voiceSettings;
     payload.convSettings = editing.convSettings;
+    payload.voice = editing.voice;
     payload.aliases = editing.aliases.filter(a => a.trim());
     payload.capabilities = editing.capabilities;
     payload.imageStyle = editing.imageStyle;
@@ -434,10 +437,10 @@ export default function AdminCharacters() {
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
                     setEditLoading(true); // 完整資料回來前擋存檔
-                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, voice:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
                     if (r?.id) {
-                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, voice:r.voice||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                       setEditLoading(false);
                     } else {
                       setEditMsg('完整資料載入失敗——請關閉視窗重開，此狀態下不能儲存（避免把欄位洗成空白）');
@@ -830,6 +833,25 @@ export default function AdminCharacters() {
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}
                 placeholder="靈魂（直接吃這個，存下去馬上生效）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />
+            </Field>
+            <Field label="說話的樣子（Podcast 對談用；正向描述他怎麼講話，不是禁止清單。全空 = 不個人化）">
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {([
+                  { key:'rhythm',            label:'節奏',       ph:'例：短。急。句子常常沒講完就換一個。很少講超過三句話不換氣。' },
+                  { key:'habits',            label:'慣性',       ph:'例：常常先問一個問題，然後閉嘴。她允許沉默。' },
+                  { key:'evidenceStyle',     label:'舉證方式',   ph:'例：他不打比方，他舉例子。要嘛給你一個具體的人，要嘛不給。' },
+                  { key:'whenUncertain',     label:'不知道的時候', ph:'例：直接說「我不知道」然後停住。他不填空。' },
+                  { key:'forbiddenRegister', label:'角色專屬禁區', ph:'例：不用能量、頻率、共振這類詞。她是教練，不是靈性導師。' },
+                ] as { key: keyof CharVoiceProfile; label: string; ph: string }[]).map(f => (
+                  <div key={f.key}>
+                    <div style={{ fontSize:12, color:'var(--muted)', marginBottom:3 }}>{f.label}</div>
+                    <textarea style={{ ...inputBase, minHeight:44, resize:'vertical', fontFamily:'inherit', fontSize:13 }}
+                      placeholder={f.ph}
+                      value={editing.voice[f.key] ?? ''}
+                      onChange={e=>setEditing({...editing, voice:{...editing.voice, [f.key]: e.target.value}})} />
+                  </div>
+                ))}
+              </div>
             </Field>
             <Field label="MiniMax Voice ID">
               <TextInput value={editing.voiceId} onChange={e=>setEditing({...editing,voiceId:e.target.value})} placeholder="voice id" />

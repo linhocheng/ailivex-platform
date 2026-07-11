@@ -64,6 +64,18 @@ export interface ConvSettings {
 
 export type TaskCapability = 'image_generation' | 'audio_generation' | 'writing' | 'web_search' | 'script_draft' | 'story_draft' | 'video_generation' | 'podcast_generation';
 
+/**
+ * persona.voice —「他說話的樣子」（Podcast 雙人對談 Voice Layer 用，正向描述不是禁止清單）。
+ * 消費端：cloud-run/podcast-worker 的 SPEAK pass；空缺欄位 = 該面向不個人化。
+ */
+export interface CharacterVoiceProfile {
+  rhythm?: string;            // 句子長短、快慢、會不會講完
+  habits?: string;            // 慣用開場、慣用結尾
+  evidenceStyle?: string;     // 怎麼舉證：例子？數字？人名？
+  whenUncertain?: string;     // 不知道的時候會怎樣
+  forbiddenRegister?: string; // 角色專屬禁區（與全平台 MOVE 規則疊加）
+}
+
 export interface PodcastLine {
   speaker: string;
   characterId: string;
@@ -78,6 +90,7 @@ export interface CharacterDoc {
   voiceSettings?: VoiceSettings;
   convSettings?: ConvSettings;  // 對話手感旋鈕
   aliases?: string[];      // 角色別名，多人房 deterministic target resolver 用
+  voice?: CharacterVoiceProfile; // 說話的樣子（podcast duo Voice Layer；admin 角色頁可編輯）
   capabilities?: TaskCapability[];  // 允許呼叫的工廠能力，缺省 = 空陣列
   imageStyle?: string;     // 圖片生成風格描述（story_draft 生圖 prompt prefix）
   heygenAvatarId?: string;    // HeyGen talking_photo_id（avatar_iv 引擎）
