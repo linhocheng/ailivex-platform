@@ -14,6 +14,7 @@ import {
   MOVES, newRhythmState, buildConstraints, recordLine, stripLeadingTic,
   vetoRepeatedMove, computeStats, detectLeadingTic,
 } from './rhythm.js';
+import { runDuoScript } from './acts.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const WORKER_SECRET = (process.env.WORKER_SECRET ?? '').trim();
@@ -33,11 +34,14 @@ if (!getApps().length) {
 export const db = getFirestore();
 
 // ── Types ──────────────────────────────────────────────────────────────
+import type { VoiceBlock } from './duo-types.js';
+
 export interface Character {
   id: string;
   name: string;
   soul: string;
   soulCore?: string;
+  voice?: VoiceBlock; // persona.voice（Voice Layer；duo 管線用）
 }
 
 interface PodcastLine {
@@ -373,12 +377,13 @@ app.post('/run', async (req, res) => {
     return;
   }
 
-  const { taskId, characterIds, topic, wordCount, focus } = req.body as {
+  const { taskId, characterIds, topic, wordCount, focus, episodeGoal } = req.body as {
     taskId?: string;
     characterIds?: string[];
     topic?: string;
     wordCount?: number;
     focus?: string;
+    episodeGoal?: string;
   };
 
   if (!taskId || !Array.isArray(characterIds) || characterIds.length === 0) {
@@ -410,7 +415,7 @@ app.post('/run', async (req, res) => {
   // 先回 202（Vercel 10s 後 abort 的 AbortSignal 安全著陸）
   res.status(202).json({ status: 'accepted', taskId });
 
-  setImmediate(() => runScriptWork(taskId, characters, topic, wordCount, focus));
+  setImmediate(() => runScriptWork(taskId, characters, topic, wordCount, focus, episodeGoal));
 });
 
 /** 依 id 載入角色（route 與 job 入口共用） */
@@ -419,8 +424,8 @@ export async function loadCharacters(characterIds: string[]): Promise<Character[
   return charSnaps
     .map((s, i) => {
       if (!s.exists) return null;
-      const d = s.data() as { name: string; soul: string; soulCore?: string };
-      const ch: Character = { id: characterIds[i], name: d.name, soul: d.soul, soulCore: d.soulCore };
+      const d = s.data() as { name: string; soul: string; soulCore?: string; voice?: VoiceBlock };
+      const ch: Character = { id: characterIds[i], name: d.name, soul: d.soul, soulCore: d.soulCore, voice: d.voice };
       return ch;
     })
     .filter((c): c is Character => c !== null);
@@ -428,16 +433,49 @@ export async function loadCharacters(characterIds: string[]): Promise<Character[
 
 /** 腳本生成本體（route 背景與 Cloud Run Job 共用）。錯誤寫回 task doc，不往外丟。 */
 export async function runScriptWork(
-  taskId: string, characters: Character[], topic?: string, wordCount?: number, focus?: string,
+  taskId: string, characters: Character[], topic?: string, wordCount?: number, focus?: string, episodeGoal?: string,
 ): Promise<void> {
   const taskRef = db.collection('tasks').doc(taskId);
   try {
-    console.log(`[podcast-worker] start taskId=${taskId} chars=${characters.map(c => c.name).join('×')} words=${wordCount ?? 600}`);
+    console.log(`[podcast-worker] start taskId=${taskId} chars=${characters.map(c => c.name).join('×')} words=${wordCount ?? 600} mode=${characters.length === 2 ? 'duo' : 'legacy'}`);
+
+    // 雙人 → duo 協議管線（規格書 v1）；三人以上 → legacy（多人版之後也聽 Producer）
+    if (characters.length === 2) {
+      const filterPatterns = await loadPatterns(db);
+      const result = await runDuoScript(db, bridgeCall, characters, {
+        episodeGoal, topic, focus,
+        wordCount: wordCount ?? 600,
+        filterPatterns,
+      });
+      // 殺青後角色自審（像不像我）照跑——與收斂協議正交的第三層
+      const script: PodcastLine[] = result.turns.map(t => ({
+        speaker: t.speaker, characterId: t.characterId, text: t.utterance,
+      }));
+      await selfReview(script, characters, filterPatterns);
+      // 自審改動寫回 turns 的 utterance（真相鏈同步，靠索引一一對應）
+      result.turns.forEach((t, i) => { t.utterance = script[i].text; });
+      await taskRef.update({
+        status: 'scripted',
+        podcastScript: script,
+        podcastPhase: 'script_done',
+        podcastMode: 'duo',
+        podcastEpisodeGoal: result.meta.episodeGoal,
+        podcastBeliefStates: result.beliefs,
+        podcastTurns: result.turns.map(t => JSON.parse(JSON.stringify(t))),      // 剝 undefined
+        podcastProducerEvents: result.producerEvents,
+        podcastEpisodeMeta: JSON.parse(JSON.stringify(result.meta)),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      console.log(`[podcast-worker] duo done taskId=${taskId} lines=${script.length} deltas=${result.meta.beliefDeltas.length}`);
+      return;
+    }
+
     const script = await generateScript(characters, topic, wordCount ?? 600, focus);
     await taskRef.update({
       status: 'scripted',
       podcastScript: script,
       podcastPhase: 'script_done',
+      podcastMode: 'legacy',
       updatedAt: FieldValue.serverTimestamp(),
     });
     console.log(`[podcast-worker] done taskId=${taskId} lines=${script.length} chars=${script.reduce((s, l) => s + l.text.length, 0)}`);

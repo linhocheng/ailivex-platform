@@ -28,6 +28,7 @@ export async function POST(req: Request) {
     topic?: string;
     wordCount?: number;
     focus?: string;
+    episodeGoal?: string; // duo 模式（2 角色）：這一集要回答的問題（磨題產物，人確認過）
   };
 
   const characterIds = (body.characterIds ?? []).filter(Boolean);
@@ -68,6 +69,7 @@ export async function POST(req: Request) {
     podcastTopic: body.topic ?? '',
     ...(body.wordCount ? { podcastWordCount: body.wordCount } : {}),
     ...(body.focus ? { podcastFocus: body.focus } : {}),
+    ...(body.episodeGoal?.trim() ? { podcastEpisodeGoal: body.episodeGoal.trim() } : {}),
     createdAt: FieldValue.serverTimestamp(),
   });
 
@@ -99,6 +101,7 @@ export async function POST(req: Request) {
       topic: body.topic,
       wordCount: body.wordCount ?? 600,
       focus: body.focus,
+      episodeGoal: body.episodeGoal?.trim() || undefined,
     }),
     signal: AbortSignal.timeout(10_000),
   }).catch(err => {

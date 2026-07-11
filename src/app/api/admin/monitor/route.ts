@@ -198,11 +198,13 @@ export async function GET(req: Request) {
     failures.push({ at: toMs(e.at), feature: `副作用·${e.sideEffect || '?'}`, userId: e.userId || '', characterId: e.characterId || '', error: e.error || '', kind: 'fail' });
   }
   // 語音 session 漏斗：closed=成功、abandoned=清掃收案的中斷、open 超過 3h=中斷（清掃前的空窗）、open 新鮮=通話中
-  type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number };
+  type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number; firstAudioMs?: number };
   const sessById = new Map<string, Sess>();
   for (const d of [...sessionsSnap.docs, ...openSessionsSnap.docs]) sessById.set(d.id, d.data() as Sess);
   const ABANDON_MS = 3 * 3600_000;
+  const firstAudioSamples: number[] = [];
   for (const [id, s] of sessById) {
+    if (typeof s.firstAudioMs === 'number' && s.firstAudioMs > 0) firstAudioSamples.push(s.firstAudioMs);
     if (s.status === 'closed') bump('語音通話', 'ok');
     else if (s.status === 'abandoned') {
       bump('語音通話', 'stuck');
@@ -212,6 +214,17 @@ export async function GET(req: Request) {
       failures.push({ at: toMs(s.startedAt), feature: '語音通話', userId: s.userId || '', characterId: s.characterId || '', error: `session 未收盤已 ${Math.round((now - toMs(s.startedAt)) / 3600_000)} 小時（room ${id}，疑掛斷未送達）`, kind: 'stuck' });
     } else bump('語音通話', 'running');
   }
+  // 首音延遲（前端 ActiveSpeakersChanged 量的真實體驗）：48h 原始樣本算精確分位數；更長趨勢看 series
+  firstAudioSamples.sort((a, b) => a - b);
+  const pct = (p: number) => firstAudioSamples.length ? firstAudioSamples[Math.min(firstAudioSamples.length - 1, Math.floor(firstAudioSamples.length * p))] : null;
+  const voiceLatency = {
+    count: firstAudioSamples.length,
+    p50: pct(0.5),
+    p95: pct(0.95),
+    max: firstAudioSamples.length ? firstAudioSamples[firstAudioSamples.length - 1] : null,
+    windowNote: `48h 內 ${firstAudioSamples.length} 通有量測`,
+  };
+
   // 第三方呼叫聚合
   const provAgg: Record<string, { calls: number; fails: number; lastOkAt: number; lastError: string | null }> = {};
   for (const e of events) {
@@ -286,6 +299,7 @@ export async function GET(req: Request) {
     dialogueFail: r.dialogue?.fail || 0,
     rooms: r.sample?.rooms ?? null,
     minInstances: r.sample?.minInstances ?? null,
+    firstAudioAvgMs: r.voice?.latencyAvgMs ?? null,
   }));
 
   failures.sort((a, b) => b.at - a.at);
@@ -386,8 +400,9 @@ export async function GET(req: Request) {
     failures: failures.slice(0, 20),
     providers,
     docsWindow: docsSnap.size,
-    // Phase 2.5：時間軸（每小時一點，rollup cron 累積）＋ Cloud Run 計費錶真值
+    // Phase 2.5：時間軸（每小時一點，rollup cron 累積）＋ Cloud Run 計費錶真值 ＋ 首音延遲
     series,
     billing,
+    voiceLatency,
   });
 }

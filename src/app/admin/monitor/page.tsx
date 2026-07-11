@@ -10,7 +10,7 @@ type Light = { key: string; name: string; status: 'green' | 'red' | 'amber' | 'g
 type Funnel = { feature: string; ok?: number; fail?: number; running?: number; stuck?: number; phase2: boolean };
 type Failure = { at: number; feature: string; userId: string; characterId: string; error: string; kind: 'fail' | 'stuck' };
 type Provider = { name: string; use: string; calls: number | null; fails: number | null; lastOkAt: number | null; lastError: string | null; cost: number | null; costNote?: string; phase2: boolean; partial?: boolean };
-type SeriesPoint = { h: string; at: number; dialogueOk: number; dialogueFail: number; rooms: number | null; minInstances: number | null };
+type SeriesPoint = { h: string; at: number; dialogueOk: number; dialogueFail: number; rooms: number | null; minInstances: number | null; firstAudioAvgMs: number | null };
 type BillingRow = { service: string; avgInstances: number; instanceHours: number };
 interface Monitor {
   generatedAt: string; windowH: number; lights: Light[];
@@ -18,6 +18,7 @@ interface Monitor {
   online: { voiceCount: number; voiceRooms: { characterId: string; userId: string; participants: number; durationMin: number | null }[]; textActive15m: number; todayActive: number; weekActive: number };
   funnel: Funnel[]; failures: Failure[]; providers: Provider[];
   series: SeriesPoint[]; billing: BillingRow[] | null;
+  voiceLatency: { count: number; p50: number | null; p95: number | null; max: number | null; windowNote: string };
 }
 
 const DOT: Record<Light['status'], string> = {
@@ -128,16 +129,19 @@ export default function MonitorPage() {
                 <Spark name="常駐台數（變速箱檔位）" pts={data.series.map(s => s.minInstances)} />
                 <Spark name="文字對話量（每時）" pts={data.series.map(s => s.dialogueOk + s.dialogueFail)}
                   marks={data.series.map(s => s.dialogueFail > 0)} />
+                <Spark name="首音延遲平均（ms/每時）" pts={data.series.map(s => s.firstAudioAvgMs)} />
               </div>}
         </Section>
 
         {/* ② 在線用戶 */}
-        <Section title="在線用戶" note="語音＝LiveKit 房間現場（不是鏡子）· 文字＝近 15 分鐘有對話更新">
+        <Section title="在線用戶" note="語音＝LiveKit 房間現場（不是鏡子）· 文字＝近 15 分鐘有對話更新 · 首音＝按撥號到角色真的出聲">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px,1fr))', gap: 14, marginBottom: 14 }}>
             <Stat k="語音通話中" v={data.online.voiceCount} unit="人" hot={data.online.voiceCount > 0} live />
             <Stat k="活躍（15 分內）" v={data.online.textActive15m} unit="人" />
             <Stat k="今日活躍" v={data.online.todayActive} unit="人" />
             <Stat k="本週活躍" v={data.online.weekActive} unit="人" />
+            <Stat k={`首音 p50（${data.voiceLatency.count} 通）`} v={data.voiceLatency.p50 != null ? Math.round(data.voiceLatency.p50 / 100) / 10 : 0} unit={data.voiceLatency.p50 != null ? '秒' : '無樣本'} />
+            <Stat k="首音 p95" v={data.voiceLatency.p95 != null ? Math.round(data.voiceLatency.p95 / 100) / 10 : 0} unit={data.voiceLatency.p95 != null ? '秒' : '無樣本'} hot={(data.voiceLatency.p95 || 0) > 15000} />
           </div>
           {data.online.voiceRooms.length > 0 && (
             <Table head={['通話中用戶', '角色', '已通話', '房內人數']}

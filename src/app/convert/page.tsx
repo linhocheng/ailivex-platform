@@ -398,6 +398,8 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [topic, setTopic]            = useState('');
   const [focus, setFocus]            = useState('');
+  const [episodeGoal, setEpisodeGoal] = useState('');
+  const [sharpening, setSharpening]  = useState(false);
   const [minutes, setMinutes]        = useState(5);
   const [taskId, setTaskId]          = useState('');
   const [nameToId, setNameToId]      = useState<Record<string, string>>({});
@@ -419,7 +421,8 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ characterIds: selectedIds, topic: topic.trim() || undefined,
-        wordCount: minutes * 500, focus: focus.trim() || undefined }),
+        wordCount: minutes * 500, focus: focus.trim() || undefined,
+        episodeGoal: selectedIds.length === 2 ? (episodeGoal.trim() || undefined) : undefined }),
     }).then(r => r.json()).catch(() => null);
 
     if (!init?.taskId) {
@@ -463,6 +466,20 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
       }
     };
     setTimeout(poll, 3000);
+  }
+
+  async function sharpenGoal() {
+    if (sharpening) return;
+    setSharpening(true); setError('');
+    const names = selectedIds.map(id => chars.find(c => c.id === id)?.name).filter(Boolean);
+    const r = await fetch('/api/convert/podcast/sharpen-goal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topic.trim() || undefined, characterNames: names }),
+    }).then(r => r.json()).catch(() => null);
+    setSharpening(false);
+    if (r?.goal) setEpisodeGoal(r.goal);
+    else setError(r?.error ?? '磨題失敗，請重試。');
   }
 
   async function generateAudio() {
@@ -574,6 +591,29 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
               background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
               padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
         </div>
+
+        {/* 磨題（雙人對談模式限定）：題目不會收斂，目標才會 */}
+        {selCount === 2 && (
+          <div>
+            <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 8 }}>
+              這一集要回答的問題
+              <button onClick={sharpenGoal} disabled={sharpening}
+                style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
+                  background: POD_BG, border: `1px solid ${POD_BORDER}`, color: POD_ACCENT }}>
+                {sharpening ? '磨題中…' : '幫我磨題'}
+              </button>
+            </div>
+            <textarea value={episodeGoal} onChange={e => setEpisodeGoal(e.target.value)}
+              placeholder={'「聊說服」是題目，「簡報做得很好的人為什麼說服不了人？」才是目標。\n可自己寫，或按「幫我磨題」從上方主題生成後再修。留空則由系統代磨。'}
+              rows={2}
+              style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
+                background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+              雙人對談走協議模式：角色開錄前填立場狀態，製作人持有這個問題並在對話繞圈時喊停
+            </div>
+          </div>
+        )}
 
         {/* 焦點 */}
         <div>

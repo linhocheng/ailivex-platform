@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
-  Track, ConnectionState, ConnectionQuality,
+  Track, ConnectionState, ConnectionQuality, type Participant,
 } from 'livekit-client';
 
 type CallState = 'idle' | 'connecting' | 'connected' | 'waiting-agent' | 'in-call' | 'finalizing' | 'disconnected' | 'error';
@@ -126,6 +126,9 @@ export default function RealtimeCallPage() {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const callStartRef = useRef<number>(0);
   const voiceEndFiredRef = useRef(false);
+  const connectStartRef = useRef(0);      // 按下撥號的時刻——首音延遲的 t0
+  const connectMsRef = useRef(0);         // room.connect 完成耗時（建線段，供拆解慢在哪）
+  const metricsSentRef = useRef(false);   // 每通只回報一次
   const micAnalyserRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; raf: number } | null>(null);
   const agentAnalyserRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode } | null>(null);
   const micLevelRef = useRef(0);
@@ -259,6 +262,9 @@ export default function RealtimeCallPage() {
     setState('connecting'); setFlowForState('connecting');
     setErrorMsg(''); setHealth(INITIAL_HEALTH); setDiagLogs([]);
     agentIdentityRef.current = '';
+    connectStartRef.current = Date.now();
+    connectMsRef.current = 0;
+    metricsSentRef.current = false;
     log('info', `connect: ${characterId}`);
     try {
       await startMicMonitor();
@@ -341,6 +347,19 @@ export default function RealtimeCallPage() {
         .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
           if (track.kind === Track.Kind.Audio) setHealth(h => ({ ...h, audio: 'absent' }));
         })
+        .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+          // 首音延遲：TrackSubscribed 只代表音軌接上（agent 一進房就發布），
+          // ActiveSpeakersChanged 才是真的出聲。第一次聽到遠端聲音就回報，每通一次。
+          if (metricsSentRef.current || !connectStartRef.current) return;
+          if (!speakers.some(s => !s.isLocal)) return;
+          metricsSentRef.current = true;
+          const firstAudioMs = Date.now() - connectStartRef.current;
+          log('info', `first audio: ${firstAudioMs}ms (connect ${connectMsRef.current}ms)`);
+          void fetch('/api/voice-metrics', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+            body: JSON.stringify({ roomName: roomNameRef.current, firstAudioMs, connectMs: connectMsRef.current }),
+          }).catch(() => { /* 量測不擋通話 */ });
+        })
         .on(RoomEvent.DataReceived, (payload: Uint8Array) => {
           try {
             const msg = JSON.parse(new TextDecoder().decode(payload));
@@ -351,6 +370,7 @@ export default function RealtimeCallPage() {
         });
 
       await room.connect(url, token);
+      connectMsRef.current = Date.now() - connectStartRef.current;
       log('info', 'connected');
       await room.localParticipant.setMicrophoneEnabled(true);
       log('info', 'mic published');

@@ -39,7 +39,7 @@ export interface OpsRollup {
   providers: Record<string, { calls: number; fails: number; lastOkAt: number | null }>;
   llm: Record<string, { calls: number; cost: number }>;  // anthropic / bridge
   taskFunnel: Record<string, { ok: number; fail: number; stuck: number; running: number }>;
-  voice: { started: number; closed: number; abandoned: number };
+  voice: { started: number; closed: number; abandoned: number; latencyCount?: number; latencyAvgMs?: number; latencyMaxMs?: number };
   sample: { rooms: number | null; minInstances: number | null; openSessions: number };
   failures: RollupFailure[];
 }
@@ -129,11 +129,18 @@ export async function computeHourlyRollup(): Promise<{ hourKey: string; dialogue
     } else bump('文件生成', 'stuck');
   }
 
-  const voice = { started: sessionsSnap.size, closed: 0, abandoned: 0 };
+  const voice: OpsRollup['voice'] = { started: sessionsSnap.size, closed: 0, abandoned: 0 };
+  const latencies: number[] = [];
   for (const d of sessionsSnap.docs) {
-    const s = d.data() as { status?: string };
+    const s = d.data() as { status?: string; firstAudioMs?: number };
     if (s.status === 'closed') voice.closed++;
     else if (s.status === 'abandoned') voice.abandoned++;
+    if (typeof s.firstAudioMs === 'number' && s.firstAudioMs > 0) latencies.push(s.firstAudioMs);
+  }
+  if (latencies.length) {
+    voice.latencyCount = latencies.length;
+    voice.latencyAvgMs = Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
+    voice.latencyMaxMs = Math.max(...latencies);
   }
 
   const doc: OpsRollup & { expires_at: Date } = {
