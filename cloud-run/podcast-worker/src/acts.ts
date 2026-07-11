@@ -165,6 +165,13 @@ export async function runDuoScript(
       utterance = raw;
       if (vio.length === 0) { speakVio = []; break; }
       speakVio = vio;
+      // 風格類（MOVE/REGISTER）砂紙只磨一遍：重講過一次後若只剩風格違規，帶 warnings 放行
+      // ——退回壓力會讓角色過度自我審查，話開始像在躲地雷（2026-07-11「修過頭」教訓）
+      const onlyStyle = vio.every(v => v.rule === 'MOVE1' || v.rule === 'MOVE2');
+      if (onlyStyle && attempt >= 1) {
+        console.log(`[duo] turn ${turnId} ${char.name} 風格違規已磨一遍，放行（${vio.map(v => v.rule).join('/')}）`);
+        break;
+      }
       const first = vio[0];
       retry = {
         offendingSpan: first.span ?? raw.slice(0, 40),
