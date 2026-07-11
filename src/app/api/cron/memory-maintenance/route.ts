@@ -22,6 +22,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { verifyBearerSecret } from '@/lib/clean-env';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { emotionalWeightOf, effectiveDays, runGistPass } from '@/lib/forgetting';
+import { wrapCron } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 // 300：gist 化多一次 bridge call（冷 34s），60s 太緊
@@ -33,7 +34,9 @@ const CORE_STALE_DAYS = 90;
 const QUESTION_STALE_DAYS = 60;
 const EMOTION_STALE_DAYS = 90;
 
-export async function GET(req: Request) {
+export const GET = wrapCron('memory-maintenance', run);
+
+async function run(req: Request) {
   if (!verifyBearerSecret(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

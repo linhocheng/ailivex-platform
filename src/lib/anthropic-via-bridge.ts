@@ -6,6 +6,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
+import { recordOpsEvent } from '@/lib/ops-event';
 
 const DEFAULT_BRIDGE_TIMEOUT_MS = 280_000;
 
@@ -21,6 +22,7 @@ export class AnthropicBridge {
       create: async (args) => {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+        const started = Date.now();
         try {
           const r = await fetch(`${url}/v1/messages`, {
             method: 'POST',
@@ -40,7 +42,12 @@ export class AnthropicBridge {
             const body = await r.text().catch(() => '');
             throw new Error(`bridge ${r.status}: ${body.slice(0, 200)}`);
           }
-          return (await r.json()) as Anthropic.Message;
+          const msg = (await r.json()) as Anthropic.Message;
+          recordOpsEvent({ kind: 'provider_call', status: 'ok', provider: 'bridge', latencyMs: Date.now() - started });
+          return msg;
+        } catch (e) {
+          recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'bridge', latencyMs: Date.now() - started, error: e instanceof Error ? e.message : String(e) });
+          throw e;
         } finally {
           clearTimeout(timer);
         }

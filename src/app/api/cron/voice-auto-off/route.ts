@@ -9,11 +9,14 @@
 import { NextResponse } from 'next/server';
 import { verifyBearerSecret } from '@/lib/clean-env';
 import { readVoicePowerFlag, setVoicePower, AUTO_OFF_HOURS_DEFAULT } from '@/lib/voice-power';
+import { wrapCron } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function GET(req: Request) {
+export const GET = wrapCron('voice-auto-off', run);
+
+async function run(req: Request) {
   if (!verifyBearerSecret(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

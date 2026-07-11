@@ -1,5 +1,7 @@
 /**
- * /api/admin/monitor — 監控中台聚合查詢（Phase 1：純讀現成資料，不動任何管道）
+ * /api/admin/monitor — 監控中台聚合查詢
+ * Phase 1：純讀現成資料（tasks/jobs/documents/cost/LiveKit/Cloud Run 探測）
+ * Phase 2：事件脊椎（ops_events + voice_sessions）——文字/語音漏斗、第三方呼叫結果、cron 心跳、副作用吞錯
  *
  * 一次回傳：服務燈號 / 容量水位 / 在線用戶 / 使用漏斗 / 失敗事件 / 第三方依賴。
  * 原則：
@@ -59,6 +61,7 @@ export async function GET(req: Request) {
 
   const [
     tasksSnap, jobsSnap, docsSnap, convsSnap, costSnap,
+    eventsSnap, sessionsSnap, openSessionsSnap,
     powerFlag, docWorker, bridge, roomsResult, runService,
   ] = await Promise.all([
     db.collection(COL.tasks).where('createdAt', '>=', since).get(),
@@ -66,6 +69,12 @@ export async function GET(req: Request) {
     db.collection(COL.documents).where('createdAt', '>=', since).get(),
     db.collection(COL.conversations).where('updatedAt', '>=', new Date(Date.now() - 7 * 86400_000)).get(),
     db.collection('zhu_vitals_cost').where('timestamp', '>=', since).get(),
+    // Phase 2 事件脊椎：dialogue 成敗 / 第三方呼叫 / cron 心跳 / 副作用吞錯
+    // 起點取 min(窗, 48h 前)：cron 心跳固定 48h 回看（24h 窗會誤判每日 cron 斷線），其餘 kind 在聚合時照窗過濾
+    db.collection('ops_events').where('at', '>=', new Date(Math.min(since.getTime(), Date.now() - 48 * 3600_000))).get(),
+    // 語音 session：時間窗內開的（含已關）＋所有還開著的（抓窗外 abandoned）
+    db.collection('voice_sessions').where('startedAt', '>=', since).get(),
+    db.collection('voice_sessions').where('status', '==', 'open').get(),
     readVoicePowerFlag().catch(() => ({ on: true } as { on: boolean; lastCallAt?: string })),
     process.env.CLOUD_RUN_DOC_WORKER_URL
       ? probe(`${process.env.CLOUD_RUN_DOC_WORKER_URL}/health`)
@@ -164,6 +173,59 @@ export async function GET(req: Request) {
       failures.push({ at: toMs(j.createdAt), feature: '文件生成', userId: j.userId || '', characterId: j.characterId || '', error: `無錯誤訊息 — ${j.status} 已 ${Math.round(ageMin)} 分（疑 worker 中斷）`, kind: 'stuck' });
     } else bump('文件生成', 'running');
   }
+  // ── Phase 2：事件脊椎聚合 ──
+  type Ev = { kind?: string; status?: string; provider?: string; cron?: string; sideEffect?: string; userId?: string; characterId?: string; latencyMs?: number; error?: string; at?: unknown };
+  const sinceMs = since.getTime();
+  const allEvents = eventsSnap.docs.map(d => d.data() as Ev);
+  // cron 用全量（48h 回看），其餘 kind 照時間窗
+  const events = allEvents.filter(e => e.kind === 'cron_run' || toMs(e.at) >= sinceMs);
+
+  // 文字對話漏斗（dialogue 事件）
+  for (const e of events) {
+    if (e.kind !== 'dialogue') continue;
+    bump('文字對話', e.status === 'ok' ? 'ok' : 'fail');
+    if (e.status !== 'ok') failures.push({ at: toMs(e.at), feature: '文字對話', userId: e.userId || '', characterId: e.characterId || '', error: e.error || '', kind: 'fail' });
+  }
+  // 副作用吞錯（吞可以，吞之前留的痕）
+  for (const e of events) {
+    if (e.kind !== 'side_effect_error') continue;
+    failures.push({ at: toMs(e.at), feature: `副作用·${e.sideEffect || '?'}`, userId: e.userId || '', characterId: e.characterId || '', error: e.error || '', kind: 'fail' });
+  }
+  // 語音 session 漏斗：closed=成功、open 超過 3h=中斷（無 voice-end，疑當機/斷網）、open 新鮮=通話中
+  type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number };
+  const sessById = new Map<string, Sess>();
+  for (const d of [...sessionsSnap.docs, ...openSessionsSnap.docs]) sessById.set(d.id, d.data() as Sess);
+  const ABANDON_MS = 3 * 3600_000;
+  for (const [id, s] of sessById) {
+    if (s.status === 'closed') bump('語音通話', 'ok');
+    else if (now - toMs(s.startedAt) > ABANDON_MS) {
+      bump('語音通話', 'stuck');
+      failures.push({ at: toMs(s.startedAt), feature: '語音通話', userId: s.userId || '', characterId: s.characterId || '', error: `session 未收盤已 ${Math.round((now - toMs(s.startedAt)) / 3600_000)} 小時（room ${id}，疑掛斷未送達）`, kind: 'stuck' });
+    } else bump('語音通話', 'running');
+  }
+  // 第三方呼叫聚合
+  const provAgg: Record<string, { calls: number; fails: number; lastOkAt: number; lastError: string | null }> = {};
+  for (const e of events) {
+    if (e.kind !== 'provider_call' || !e.provider) continue;
+    const p = provAgg[e.provider] = provAgg[e.provider] || { calls: 0, fails: 0, lastOkAt: 0, lastError: null };
+    p.calls++;
+    if (e.status === 'ok') p.lastOkAt = Math.max(p.lastOkAt, toMs(e.at));
+    else { p.fails++; if (toMs(e.at) >= p.lastOkAt) p.lastError = e.error || null; }
+  }
+  // cron 心跳：每條最後一次 ok 的時間 ＋ 最新一筆的狀態
+  const cronAgg: Record<string, { lastOkAt: number; lastTs: number; lastStatus: string; lastError: string | null }> = {};
+  for (const e of events) {
+    if (e.kind !== 'cron_run' || !e.cron) continue;
+    const c = cronAgg[e.cron] = cronAgg[e.cron] || { lastOkAt: 0, lastTs: 0, lastStatus: '', lastError: null };
+    const ts = toMs(e.at);
+    if (e.status === 'ok') c.lastOkAt = Math.max(c.lastOkAt, ts);
+    if (ts >= c.lastTs) {
+      c.lastTs = ts;
+      c.lastStatus = e.status || '';
+      c.lastError = e.status !== 'ok' ? (e.error || null) : null;
+    }
+  }
+
   failures.sort((a, b) => b.at - a.at);
   const stuckTotal = Object.values(funnel).reduce((s, f) => s + f.stuck, 0);
 
@@ -178,16 +240,18 @@ export async function GET(req: Request) {
     llm[key].cost += c.cost_usd_est || 0;
     llm[key].lastAt = Math.max(llm[key].lastAt, toMs(c.timestamp));
   }
-  const videoFails = failures.filter(f => f.feature === '影片生成' && f.kind === 'fail');
+  // Phase 2：bridge/minimax/vertex/fal/media-worker 從事件脊椎取真實呼叫結果
+  const pa = (key: string) => provAgg[key] ?? { calls: 0, fails: 0, lastOkAt: 0, lastError: null };
   const providers = [
     { name: 'Anthropic 直連', use: '語音 turn-path', calls: llm.anthropic?.calls ?? 0, fails: null, lastOkAt: llm.anthropic?.lastAt ?? null, lastError: null, cost: llm.anthropic?.cost ?? null, phase2: false },
-    { name: 'Bridge（Max）', use: '文字/文件/記憶', calls: llm.bridge?.calls ?? 0, fails: null, lastOkAt: llm.bridge?.lastAt ?? null, lastError: null, cost: 0, costNote: '月費內', phase2: false },
+    { name: 'Bridge（Max）', use: '文字/文件/記憶', calls: pa('bridge').calls || (llm.bridge?.calls ?? 0), fails: pa('bridge').fails, lastOkAt: pa('bridge').lastOkAt || (llm.bridge?.lastAt ?? null) || null, lastError: pa('bridge').lastError, cost: 0, costNote: '月費內', phase2: false },
     { name: 'LiveKit Cloud', use: 'WebRTC 房間', calls: null, fails: roomsResult?.ok ? 0 : 1, lastOkAt: roomsResult?.ok ? now : null, lastError: roomsResult && !roomsResult.ok ? roomsResult.err : null, cost: null, costNote: '方案內', phase2: false },
-    { name: 'FAL（Kling）', use: '影片生成', calls: null, fails: videoFails.length, lastOkAt: null, lastError: videoFails[0]?.error ?? null, cost: null, phase2: false, partial: true },
-    { name: 'MiniMax TTS', use: '語音合成/podcast', calls: null, fails: null, lastOkAt: null, lastError: null, cost: null, phase2: true },
-    { name: 'Soniox STT', use: '語音辨識', calls: null, fails: null, lastOkAt: null, lastError: null, cost: null, phase2: true },
-    { name: 'Vertex Embeddings', use: '記憶/知識檢索', calls: null, fails: null, lastOkAt: null, lastError: null, cost: null, phase2: true },
-    { name: 'media-worker', use: '圖/音派發', calls: null, fails: null, lastOkAt: null, lastError: null, cost: null, phase2: true },
+    { name: 'FAL（Kling）', use: '影片生成', calls: pa('fal').calls, fails: pa('fal').fails, lastOkAt: pa('fal').lastOkAt || null, lastError: pa('fal').lastError, cost: null, phase2: false },
+    { name: 'MiniMax TTS（web）', use: '語音測試/podcast', calls: pa('minimax-tts').calls, fails: pa('minimax-tts').fails, lastOkAt: pa('minimax-tts').lastOkAt || null, lastError: pa('minimax-tts').lastError, cost: null, phase2: false },
+    { name: 'Vertex Embeddings', use: '記憶/知識檢索', calls: pa('vertex-embeddings').calls, fails: pa('vertex-embeddings').fails, lastOkAt: pa('vertex-embeddings').lastOkAt || null, lastError: pa('vertex-embeddings').lastError, cost: null, phase2: false },
+    { name: 'media-worker', use: '圖/音派發', calls: pa('media-worker').calls, fails: pa('media-worker').fails, lastOkAt: pa('media-worker').lastOkAt || null, lastError: pa('media-worker').lastError, cost: null, phase2: false },
+    // agent 內的 MiniMax/Soniox 呼叫在 Python 側，儀表化屬 Phase 3（本階段不碰 v18）
+    { name: 'Soniox STT（agent）', use: '語音辨識', calls: null, fails: null, lastOkAt: null, lastError: null, cost: null, phase2: true },
   ];
 
   // ── 燈號 ──
@@ -214,7 +278,20 @@ export async function GET(req: Request) {
     stuckTotal > 0
       ? { key: 'pipeline', name: '任務管線', status: 'amber', why: `${stuckTotal} 件卡死（running/pending 超時）` }
       : { key: 'pipeline', name: '任務管線', status: 'green', why: '無卡死任務' },
-    { key: 'cron', name: 'cron 心跳 ×3', status: 'gray', why: 'Phase 2 接心跳 doc' },
+    // cron 燈：以「最後成功心跳距今」判色（memory 每日 → 26h 門檻；auto-off 每 30 分 → 40 分門檻）
+    ...([
+      { cron: 'memory-consolidation', label: 'cron·記憶鞏固', thresholdMin: 26 * 60 },
+      { cron: 'memory-maintenance', label: 'cron·記憶維護', thresholdMin: 26 * 60 },
+      { cron: 'voice-auto-off', label: 'cron·語音自動關機', thresholdMin: 40 },
+    ] as const).map(({ cron, label, thresholdMin }): Light => {
+      const c = cronAgg[cron];
+      if (!c || (!c.lastOkAt && !c.lastTs)) return { key: cron, name: label, status: 'gray', why: '尚無心跳（剛接線，等下一輪排程）' };
+      if (c.lastStatus !== 'ok') return { key: cron, name: label, status: 'red', why: `最新一輪失敗：${(c.lastError || '').slice(0, 80)}` };
+      const ageMin = Math.round((now - c.lastOkAt) / 60_000);
+      return ageMin > thresholdMin
+        ? { key: cron, name: label, status: 'red', why: `逾期 — 上次成功 ${ageMin} 分鐘前（門檻 ${thresholdMin} 分）` }
+        : { key: cron, name: label, status: 'green', why: `上次成功 ${ageMin} 分鐘前` };
+    }),
   ];
 
   // ── 水位 ──
@@ -247,11 +324,14 @@ export async function GET(req: Request) {
       todayActive: activeUserIdsToday.size,
       weekActive: activeUserIdsWeek.size,
     },
-    funnel: [
-      { feature: '文字對話', phase2: true },
-      { feature: '語音通話', phase2: true },
-      ...Object.entries(funnel).map(([feature, f]) => ({ feature, ...f, phase2: false })),
-    ],
+    // Phase 2：文字對話（dialogue 事件）與語音通話（voice_sessions）已接真管道
+    funnel: Object.entries(funnel)
+      .sort(([a], [b]) => {
+        const ORDER = ['文字對話', '語音通話', '文件生成'];
+        const ia = ORDER.indexOf(a), ib = ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      })
+      .map(([feature, f]) => ({ feature, ...f, phase2: false })),
     failures: failures.slice(0, 20),
     providers,
     docsWindow: docsSnap.size,

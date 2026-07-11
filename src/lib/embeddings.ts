@@ -3,6 +3,7 @@
  * 把文字變成向量，讓記憶可以用意思搜尋，不是碰關鍵字。
  */
 import { GoogleAuth } from 'google-auth-library';
+import { recordOpsEvent } from '@/lib/ops-event';
 
 const EMBEDDING_MODEL = 'text-embedding-004';
 const DIMENSION = 768;
@@ -57,6 +58,18 @@ export async function generateKnowledgeEmbedding(
 }
 
 async function embedWith(model: string, text: string, taskType?: string): Promise<number[]> {
+  const started = Date.now();
+  try {
+    const values = await embedWithInner(model, text, taskType);
+    recordOpsEvent({ kind: 'provider_call', status: 'ok', provider: 'vertex-embeddings', latencyMs: Date.now() - started });
+    return values;
+  } catch (e) {
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'vertex-embeddings', latencyMs: Date.now() - started, error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function embedWithInner(model: string, text: string, taskType?: string): Promise<number[]> {
   const auth = getAuth();
   const tokenResult = await auth.getAccessToken();
   const accessToken = typeof tokenResult === 'string' ? tokenResult : (tokenResult as unknown as { token?: string })?.token || '';

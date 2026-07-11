@@ -27,6 +27,7 @@ import { dispatchTask } from '@/lib/task-dispatcher';
 import { upsertRelationship } from '@/lib/relationship';
 import { trackCost } from '@/lib/cost-tracker';
 import { readUrlsForContext } from '@/lib/url-reader';
+import { recordOpsEvent } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -106,6 +107,7 @@ export async function POST(req: Request) {
   ];
 
   const client = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '', { bridgeTimeoutMs: 110_000 });
+  const llmStarted = Date.now();
   const res = await client.messages.create({
     model: MODEL,
     max_tokens: 2000,
@@ -113,6 +115,10 @@ export async function POST(req: Request) {
     messages,
   }).catch(async e => {
     await refundTextQuota(db, user.uid); // LLM 失敗不吃額度
+    recordOpsEvent({
+      kind: 'dialogue', status: 'fail', userId: user.uid, characterId,
+      latencyMs: Date.now() - llmStarted, error: e instanceof Error ? e.message : String(e),
+    });
     throw e;
   });
 
@@ -179,17 +185,22 @@ export async function POST(req: Request) {
     { role: 'assistant' as const, content: reply },
   ];
   after(async () => {
+    // 每個副作用獨立 catch：吞可以，吞之前留痕；一個失敗不連坐其他（原 Promise.all 一 reject 全滅）
+    const swallow = (sideEffect: string) => (e: unknown) => {
+      console.error(`[dialogue] ${sideEffect} failed:`, e instanceof Error ? e.message : String(e));
+      recordOpsEvent({ kind: 'side_effect_error', status: 'fail', sideEffect, userId: user.uid, characterId, error: e instanceof Error ? e.message : String(e) });
+    };
     const extractClient = getAnthropicClient(process.env.ANTHROPIC_API_KEY || '');
     await Promise.all([
-      extractAndSaveMemories(db, user.uid, characterId, charName, recentMessages, extractClient),
-      writeDiaryEntry(db, user.uid, characterId, charName, soul, user.name, recentMessages, extractClient, 'text'),
-      upsertRelationship(db, user.uid, characterId),
+      extractAndSaveMemories(db, user.uid, characterId, charName, recentMessages, extractClient).catch(swallow('memory_extract')),
+      writeDiaryEntry(db, user.uid, characterId, charName, soul, user.name, recentMessages, extractClient, 'text').catch(swallow('diary')),
+      upsertRelationship(db, user.uid, characterId).catch(swallow('relationship')),
     ]);
-    await Promise.all(pendingJobIds.map(id => dispatchDocumentJob(id)));
+    await Promise.all(pendingJobIds.map(id => dispatchDocumentJob(id).catch(swallow('doc_dispatch'))));
     // dispatchTask 在 after() 裡執行，確保 lambda 存活到 HTTP 請求送出
     for (const d of pendingDispatches) {
       await dispatchTask(user.uid, characterId, d.type, d.intent, d.params)
-        .catch(e => console.error('[dialogue] dispatch failed:', e instanceof Error ? e.message : String(e)));
+        .catch(swallow('task_dispatch'));
     }
   });
 
@@ -199,6 +210,8 @@ export async function POST(req: Request) {
     res.usage?.input_tokens ?? 0, res.usage?.output_tokens ?? 0,
     'dialogue', user.uid,
   );
+  // 監控事件：這一回合成功（延遲=LLM 往返）
+  recordOpsEvent({ kind: 'dialogue', status: 'ok', userId: user.uid, characterId, latencyMs: Date.now() - llmStarted });
 
   return NextResponse.json({ reply, documents: createdDocs, textRemaining });
 }

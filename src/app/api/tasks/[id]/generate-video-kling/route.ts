@@ -12,6 +12,7 @@ import { COL, type TaskDoc, type CharacterDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { consumeMediaQuota, refundMediaQuota, QuotaExceededError } from '@/lib/quota';
+import { recordOpsEvent } from '@/lib/ops-event';
 import { imageSize } from 'image-size';
 
 export const runtime = 'nodejs';
@@ -133,6 +134,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // 送 fal.ai Kling Avatar v2
   const webhook = callbackUrl(videoRef.id);
+  const falStarted = Date.now();
   const falResp = await fetch(
     `https://queue.fal.run/fal-ai/kling-video/ai-avatar/v2/standard?fal_webhook=${encodeURIComponent(webhook)}`,
     {
@@ -152,10 +154,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (!falResp.ok) {
     const err = await falResp.text().catch(() => falResp.status.toString());
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'fal', userId: user.uid, latencyMs: Date.now() - falStarted, error: `fal.ai ${falResp.status}: ${err.slice(0, 200)}` });
     await videoRef.update({ status: 'failed', error: `fal.ai ${falResp.status}: ${err}` });
     await refundMediaQuota(db, user.uid, 1);  // 派工同步失敗（無 job → callback 不會來）→ 退回
     return NextResponse.json({ error: 'fal_dispatch_failed' }, { status: 502 });
   }
+  recordOpsEvent({ kind: 'provider_call', status: 'ok', provider: 'fal', userId: user.uid, latencyMs: Date.now() - falStarted });
 
   const falData = await falResp.json() as { request_id: string };
   await videoRef.update({ status: 'running', falRequestId: falData.request_id, motionPrompt });

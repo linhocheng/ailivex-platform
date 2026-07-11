@@ -119,6 +119,7 @@ export default function RealtimeCallPage() {
   const [webSearch, setWebSearch] = useState(false);
 
   const identityRef = useRef('');
+  const roomNameRef = useRef('');  // voice-end beacon 帶回，監控 session 收盤用
   const agentIdentityRef = useRef('');  // v16: for RPC destinationIdentity
   const roomRef = useRef<Room | null>(null);
   const finalizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,6 +291,7 @@ export default function RealtimeCallPage() {
       const { token, url, roomName, identity, characterName: cName, avatarUrl, webSearch: ws, voiceVersion: vv } = await tokenRes.json();
       if (vv) setAgentVersion(vv);
       identityRef.current = identity;
+      roomNameRef.current = roomName || '';
       setHealth(h => ({ ...h, token: 'ok' }));
       if (cName) setCharacterName(cName);
       if (avatarUrl) setCharacterImage(avatarUrl);
@@ -397,7 +399,7 @@ export default function RealtimeCallPage() {
     voiceEndFiredRef.current = true;
     const identity = identityRef.current;
     navigator.sendBeacon('/api/voice-end', new Blob(
-      [JSON.stringify({ characterId, conversationId: `ailivex-voice-${characterId}-${identity}` })],
+      [JSON.stringify({ characterId, conversationId: `ailivex-voice-${characterId}-${identity}`, roomName: roomNameRef.current })],
       { type: 'application/json' }
     ));
   }, [characterId]);

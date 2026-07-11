@@ -15,12 +15,15 @@ import { getAnthropicClient } from '@/lib/anthropic-via-bridge';
 import { runConsolidation } from '@/lib/consolidation';
 import { consolidateDiaries } from '@/lib/diary';
 import { verifyBearerSecret } from '@/lib/clean-env';
+import { wrapCron } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 // 300：多配對 × 每對一次 bridge call（實測冷 34s/暖 7.5s），60s 裝不下
 export const maxDuration = 300;
 
-export async function GET(req: Request) {
+export const GET = wrapCron('memory-consolidation', run);
+
+async function run(req: Request) {
   if (!verifyBearerSecret(req.headers.get('authorization'), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }

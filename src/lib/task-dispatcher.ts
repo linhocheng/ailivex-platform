@@ -12,6 +12,28 @@ import { getFirestore } from '@/lib/firebase-admin';
 import { COL, type TaskCapability, type TaskDoc } from '@/lib/collections';
 import { cleanSecret, cleanUrl } from '@/lib/clean-env';
 import { consumeMediaQuota, QuotaExceededError } from '@/lib/quota';
+import { recordOpsEvent } from '@/lib/ops-event';
+
+/** media-worker 呼叫結果留痕（收斂點：image/audio 兩個 enqueue 共用） */
+async function trackedMediaWorkerCall(body: string): Promise<{ jobId: string }> {
+  if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) throw new Error('MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX not set');
+  const started = Date.now();
+  const resp = await fetch(`${MEDIA_WORKER_URL}/v1/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': MEDIA_WORKER_KEY },
+    body,
+  }).catch(e => {
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'media-worker', latencyMs: Date.now() - started, error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  });
+  if (!resp.ok) {
+    const err = `media-worker ${resp.status}: ${await resp.text()}`;
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'media-worker', latencyMs: Date.now() - started, error: err });
+    throw new Error(err);
+  }
+  recordOpsEvent({ kind: 'provider_call', status: 'ok', provider: 'media-worker', latencyMs: Date.now() - started });
+  return await resp.json() as { jobId: string };
+}
 
 // 直接產出付費媒體單位的能力（扣媒體額度）。story_draft/script_draft 是文字草稿不扣，
 // 其後的實際生圖/生音在 generate-storyboard/generate-audio 各自扣，避免雙重計數。
@@ -118,31 +140,18 @@ const DISPATCH_MESSAGES: Record<TaskCapability, string> = {
 // ── Worker 呼叫實作 ──────────────────────────────────────────────────
 
 async function enqueueImageJob(taskId: string, params: Record<string, unknown>): Promise<void> {
-  if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) throw new Error('MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX not set');
-
-  const resp = await fetch(`${MEDIA_WORKER_URL}/v1/jobs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': MEDIA_WORKER_KEY,
+  const data = await trackedMediaWorkerCall(JSON.stringify({
+    mediaType: 'image',
+    idempotencyKey: taskId,
+    webhookUrl: callbackUrl(),
+    webhookSecret: WEBHOOK_SECRET,
+    input: {
+      prompt: (params.prompt as string) ?? (params.intent as string) ?? '',
+      size: (params.size as string) ?? '1024x1024',
+      outputFormat: 'png',
     },
-    body: JSON.stringify({
-      mediaType: 'image',
-      idempotencyKey: taskId,
-      webhookUrl: callbackUrl(),
-      webhookSecret: WEBHOOK_SECRET,
-      input: {
-        prompt: (params.prompt as string) ?? (params.intent as string) ?? '',
-        size: (params.size as string) ?? '1024x1024',
-        outputFormat: 'png',
-      },
-      metadata: { taskId },
-    }),
-  });
-
-  if (!resp.ok) throw new Error(`media-worker ${resp.status}: ${await resp.text()}`);
-
-  const data = await resp.json() as { jobId: string };
+    metadata: { taskId },
+  }));
   await getFirestore().collection(COL.tasks).doc(taskId).update({
     status: 'running',
     resultRef: `mw_jobs/${data.jobId}`,
@@ -150,34 +159,21 @@ async function enqueueImageJob(taskId: string, params: Record<string, unknown>):
 }
 
 async function enqueueAudioJob(taskId: string, params: Record<string, unknown>): Promise<void> {
-  if (!MEDIA_WORKER_URL || !MEDIA_WORKER_KEY) throw new Error('MEDIA_WORKER_URL or MEDIA_WORKER_KEY_AILIVEX not set');
-
-  const resp = await fetch(`${MEDIA_WORKER_URL}/v1/jobs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': MEDIA_WORKER_KEY,
+  const data = await trackedMediaWorkerCall(JSON.stringify({
+    mediaType: 'audio',
+    idempotencyKey: taskId,
+    webhookUrl: callbackUrl(),
+    webhookSecret: WEBHOOK_SECRET,
+    input: {
+      text: (params.text as string) ?? '',
+      voiceId: (params.voiceId as string) ?? '',
+      speed: (params.speed as number) ?? 1.0,
+      vol: (params.vol as number) ?? 1.0,
+      pitch: (params.pitch as number) ?? 0,
+      emotion: (params.emotion as string) ?? 'neutral',
     },
-    body: JSON.stringify({
-      mediaType: 'audio',
-      idempotencyKey: taskId,
-      webhookUrl: callbackUrl(),
-      webhookSecret: WEBHOOK_SECRET,
-      input: {
-        text: (params.text as string) ?? '',
-        voiceId: (params.voiceId as string) ?? '',
-        speed: (params.speed as number) ?? 1.0,
-        vol: (params.vol as number) ?? 1.0,
-        pitch: (params.pitch as number) ?? 0,
-        emotion: (params.emotion as string) ?? 'neutral',
-      },
-      metadata: { taskId },
-    }),
-  });
-
-  if (!resp.ok) throw new Error(`media-worker ${resp.status}: ${await resp.text()}`);
-
-  const data = await resp.json() as { jobId: string };
+    metadata: { taskId },
+  }));
   await getFirestore().collection(COL.tasks).doc(taskId).update({
     status: 'running',
     resultRef: `mw_jobs/${data.jobId}`,

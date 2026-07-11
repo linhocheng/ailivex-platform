@@ -13,6 +13,7 @@ import { getCurrentUser } from '@/lib/session';
 import { COL, agentNameForVersion, VOICE_VERSIONS, DEFAULT_VOICE_VERSION, type CharacterDoc, type AccessDoc } from '@/lib/collections';
 import { checkVoiceQuota, QuotaExceededError } from '@/lib/quota';
 import { touchLastCallAt } from '@/lib/voice-power';
+import { openVoiceSession } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -97,6 +98,7 @@ export async function POST(req: Request) {
   touchLastCallAt(); // auto-off cron 以此判定「還有人在用」
   // 實際派工版本（畫面左上角顯示真值——頁面標籤是死的，派工才是真相）
   const resolvedVersion = VOICE_VERSIONS.find(v => v.agentName === agentName)?.id ?? DEFAULT_VOICE_VERSION;
+  openVoiceSession(roomName, userId, characterId, resolvedVersion); // 監控 session 開盤（fire-and-forget）
 
   return NextResponse.json({
     token, url, roomName, identity: userId,

@@ -5,6 +5,7 @@
  */
 import { NextResponse } from 'next/server';
 import { normalizeTTSText } from '@/lib/tts-normalize';
+import { recordOpsEvent } from '@/lib/ops-event';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -70,6 +71,7 @@ export async function POST(req: Request) {
 
   const s = body?.settings || {};
   const url = `https://api.minimax.io/v1/t2a_v2?GroupId=${encodeURIComponent(groupId)}`;
+  const ttsStarted = Date.now();
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -96,15 +98,18 @@ export async function POST(req: Request) {
 
   if (!res.ok || !res.body) {
     const err = await res.text().catch(() => '');
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'minimax-tts', latencyMs: Date.now() - ttsStarted, error: `MiniMax ${res.status}: ${err.slice(0, 200)}` });
     return NextResponse.json({ error: `MiniMax ${res.status}: ${err.slice(0, 200)}` }, { status: 500 });
   }
 
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('event-stream')) {
     const text2 = await res.text().catch(() => '');
+    recordOpsEvent({ kind: 'provider_call', status: 'fail', provider: 'minimax-tts', latencyMs: Date.now() - ttsStarted, error: `非 SSE: ${text2.slice(0, 200)}` });
     return NextResponse.json({ error: `非 SSE: ${text2.slice(0, 200)}` }, { status: 500 });
   }
 
+  recordOpsEvent({ kind: 'provider_call', status: 'ok', provider: 'minimax-tts', latencyMs: Date.now() - ttsStarted });
   return new NextResponse(sseToMp3Stream(res.body), {
     headers: {
       'Content-Type': 'audio/mpeg',
