@@ -68,4 +68,50 @@ const rows = [
   ['BREAK_4TH_WALL 觸發', `${b4w.length} 次`, '抽象對撞時才該有'],
 ];
 rows.forEach(([k, v, std_]) => console.log(`${k}\n  ${v}${std_ ? `　（目標：${std_}）` : ''}`));
+
+// ── 名字遮蔽測試（2026-07-13 原生認知規格第 4 章）──────────────────────
+// 對半折：每人前半台詞當已標名參照，後半遮名洗牌給裁判認人。
+// 猜中率＝角色分化度（隨機基線 50%）。任何其他角色也說得出的話，裁判就會猜錯。
+try {
+  const secret = (env.match(/^BRIDGE_SECRET=(.+)$/m)?.[1] ?? '').replace(/^["']|["']$/g, '').trim();
+  if (!secret) throw new Error('no BRIDGE_SECRET');
+  const names = [...new Set(turns.map(t => t.speaker))];
+  if (names.length !== 2) throw new Error(`需要恰好兩位角色，得到 ${names.length}`);
+  const [nameA, nameB] = names;
+  const mask = s => s.replaceAll(nameA, '○○').replaceAll(nameB, '○○');
+  const byChar = n => turns.filter(t => t.speaker === n);
+  const half = arr => [arr.slice(0, Math.ceil(arr.length / 2)), arr.slice(Math.ceil(arr.length / 2))];
+  const [refA, quizA] = half(byChar(nameA));
+  const [refB, quizB] = half(byChar(nameB));
+  if (!quizA.length || !quizB.length) throw new Error('台詞太少不夠對折');
+  // 確定性洗牌（不用 Math.random，重跑同結果）：按台詞 md5 排序
+  const { createHash } = await import('crypto');
+  const quiz = [...quizA.map(t => ({ t, ans: 'A' })), ...quizB.map(t => ({ t, ans: 'B' }))]
+    .sort((x, y) => createHash('md5').update(x.t.utterance).digest('hex')
+      .localeCompare(createHash('md5').update(y.t.utterance).digest('hex')));
+  const refBlock = (label, ref) => ref.map(t => `[${label}] ${mask(t.utterance)}`).join('\n');
+  const quizBlock = quiz.map((q, i) => `${i + 1}. ${mask(q.t.utterance)}`).join('\n');
+  const res = await fetch('https://bridge-direct.soul-polaroid.work/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': secret },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6', max_tokens: 600,
+      system: '你是語言鑑識員。根據兩位說話者已標名的台詞樣本，判斷未標名的台詞各是誰說的。只憑語感、用詞來源、思考方式、在意的代價判斷。輸出純 JSON 陣列，不加說明：[{"i":1,"guess":"A"},...]',
+      messages: [{ role: 'user', content: `說話者 A 的樣本：\n${refBlock('A', refA)}\n\n說話者 B 的樣本：\n${refBlock('B', refB)}\n\n未標名台詞（判斷每句是 A 還是 B）：\n${quizBlock}` }],
+    }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) throw new Error(`bridge ${res.status}`);
+  const raw = (await res.json()).content?.[0]?.text ?? '';
+  const arr = JSON.parse(raw.replace(/^[\s\S]*?(\[)/, '$1').replace(/(\])[\s\S]*$/, '$1'));
+  const verdicts = quiz.map((q, i) => {
+    const g = arr.find(a => a.i === i + 1)?.guess;
+    return { turnId: q.t.turnId, ok: g === q.ans };
+  });
+  const okCount = verdicts.filter(v => v.ok).length;
+  const missed = verdicts.filter(v => !v.ok).map(v => v.turnId);
+  console.log(`名字遮蔽測試（裁判認人，基線 50%）\n  ${okCount}/${verdicts.length}（${Math.round(okCount / verdicts.length * 100)}%）${missed.length ? `｜認錯：第 ${missed.join(',')} 輪` : ''}　（目標：≥80%——低於它表示兩人聲音在趨同）`);
+} catch (e) {
+  console.log(`名字遮蔽測試\n  略過（${e.message}）`);
+}
 process.exit(0);
