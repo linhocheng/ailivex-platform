@@ -132,9 +132,21 @@ interface Verdict {
 
 const MAX_RETAKES = 3;
 
-/** 句子切分（渲染與套用共用同一把刀，保證編號對得上） */
+/** 句子切分（渲染與套用共用同一把刀，保證編號對得上）。
+ *  閉合符號（」』）⋯）回黏前段——否則 TRIM 剪掉後段會留下孤兒引號。 */
 export function splitSegments(text: string): string[] {
-  return text.split(/(?<=[。！？!?…\n])/).filter(s => s.length > 0);
+  const raw = text.split(/(?<=[。！？!?…\n])/).filter(s => s.length > 0);
+  const segs: string[] = [];
+  for (const s of raw) {
+    const m = s.match(/^([」』）)"'”\]]+)([\s\S]*)$/);
+    if (m && segs.length) {
+      segs[segs.length - 1] += m[1];
+      if (m[2].length > 0) segs.push(m[2]);
+    } else {
+      segs.push(s);
+    }
+  }
+  return segs;
 }
 
 /** 依編號刪句（剪接權的結構性實作：程式刪，製作人只給編號） */
