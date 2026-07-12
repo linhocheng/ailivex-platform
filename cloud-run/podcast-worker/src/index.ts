@@ -64,12 +64,28 @@ function historyToText(history: PodcastLine[], limit: number): string {
   return history.slice(-limit).map(l => `[${l.speaker}]: ${l.text}`).join('\n');
 }
 
-async function bridgeCall(model: string, system: string, user: string, maxTokens: number): Promise<string> {
-  const res = await fetch(BRIDGE_ENDPOINT, {
+// 長呼叫（>95s）必須繞開 Cloudflare 的 100s 斷頭鍘（524）：走 BRIDGE_DIRECT_URL 直連。
+// BRIDGE_URL 本身已是直連（host 含 bridge-direct）時視同直連；兩者皆無才夾超時——
+// 等一個注定 524 的回應是浪費。
+const BRIDGE_DIRECT_BASE = (process.env.BRIDGE_DIRECT_URL ?? '').replace(/\/v1\/messages\/?$/, '').replace(/\/$/, '')
+  || (BRIDGE_BASE.includes('bridge-direct') ? BRIDGE_BASE : '');
+const CF_GUILLOTINE_MS = 95_000;
+
+async function bridgeCall(model: string, system: string, user: string, maxTokens: number, timeoutMs = 90_000): Promise<string> {
+  let endpoint = BRIDGE_ENDPOINT;
+  if (timeoutMs > CF_GUILLOTINE_MS) {
+    if (BRIDGE_DIRECT_BASE) {
+      endpoint = `${BRIDGE_DIRECT_BASE}/v1/messages`;
+    } else {
+      console.warn(`[bridge] 長呼叫（${timeoutMs}ms）但 BRIDGE_DIRECT_URL 未設，超時夾至 ${CF_GUILLOTINE_MS}ms（CF 524 防浪費）`);
+      timeoutMs = CF_GUILLOTINE_MS;
+    }
+  }
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': BRIDGE_SECRET },
     body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`bridge ${res.status}`);
   const d = await res.json() as { content?: Array<{ text: string }> };
@@ -377,13 +393,16 @@ app.post('/run', async (req, res) => {
     return;
   }
 
-  const { taskId, characterIds, topic, wordCount, focus, episodeGoal } = req.body as {
+  const { taskId, characterIds, topic, wordCount, focus, episodeGoal, audiencePersona, audienceMisconception, characterBriefs } = req.body as {
     taskId?: string;
     characterIds?: string[];
     topic?: string;
     wordCount?: number;
     focus?: string;
     episodeGoal?: string;
+    audiencePersona?: string;
+    audienceMisconception?: string;
+    characterBriefs?: Record<string, string>;
   };
 
   if (!taskId || !Array.isArray(characterIds) || characterIds.length === 0) {
@@ -415,7 +434,8 @@ app.post('/run', async (req, res) => {
   // 先回 202（Vercel 10s 後 abort 的 AbortSignal 安全著陸）
   res.status(202).json({ status: 'accepted', taskId });
 
-  setImmediate(() => runScriptWork(taskId, characters, topic, wordCount, focus, episodeGoal));
+  setImmediate(() => runScriptWork(taskId, characters, topic, wordCount, focus, episodeGoal,
+    { persona: audiencePersona, misconception: audienceMisconception }, characterBriefs));
 });
 
 /** 依 id 載入角色（route 與 job 入口共用） */
@@ -434,6 +454,8 @@ export async function loadCharacters(characterIds: string[]): Promise<Character[
 /** 腳本生成本體（route 背景與 Cloud Run Job 共用）。錯誤寫回 task doc，不往外丟。 */
 export async function runScriptWork(
   taskId: string, characters: Character[], topic?: string, wordCount?: number, focus?: string, episodeGoal?: string,
+  audience?: { persona?: string; misconception?: string },
+  characterBriefs?: Record<string, string>,
 ): Promise<void> {
   const taskRef = db.collection('tasks').doc(taskId);
   try {
@@ -443,16 +465,18 @@ export async function runScriptWork(
     if (characters.length === 2) {
       const filterPatterns = await loadPatterns(db);
       const result = await runDuoScript(db, bridgeCall, characters, {
-        episodeGoal, topic, focus,
+        taskId, episodeGoal, topic, focus, audience,
+        briefs: characterBriefs,
         wordCount: wordCount ?? 600,
         filterPatterns,
       });
-      // 殺青後角色自審（像不像我）照跑——與收斂協議正交的第三層
+      // 收斂已由無形製作人的收斂台完成（儀器掃描→裁決→角色重講）；
+      // 舊 selfReview（角色自審）退役——重講的人就是角色本人，「像不像我」被 retake 迴圈天然吸收
       const script: PodcastLine[] = result.turns.map(t => ({
-        speaker: t.speaker, characterId: t.characterId, text: t.utterance,
+        speaker: t.speaker, characterId: t.characterId,
+        // 確定性修復（收斂點）：模型偶發輸出字面 \n → 還原成真換行（程式修，不 re-ask）
+        text: t.utterance.replace(/\\n/g, '\n'),
       }));
-      await selfReview(script, characters, filterPatterns);
-      // 自審改動寫回 turns 的 utterance（真相鏈同步，靠索引一一對應）
       result.turns.forEach((t, i) => { t.utterance = script[i].text; });
       await taskRef.update({
         status: 'scripted',
@@ -460,6 +484,13 @@ export async function runScriptWork(
         podcastPhase: 'script_done',
         podcastMode: 'duo',
         podcastEpisodeGoal: result.meta.episodeGoal,
+        podcastAudiencePersona: result.audience.persona,
+        podcastAudienceMisconception: result.audience.misconception,
+        ...(result.seriesContext ? { podcastSeriesContext: result.seriesContext } : {}),
+        ...(result.tensionMap ? { podcastTensionMap: result.tensionMap } : {}),
+        ...(result.collisionQuestions ? { podcastCollisionQuestions: result.collisionQuestions } : {}),
+        ...(result.producerEpilogue ? { podcastProducerEpilogue: result.producerEpilogue } : {}),
+        ...(result.convergence ? { podcastConvergence: result.convergence } : {}),
         podcastBeliefStates: result.beliefs,
         podcastTurns: result.turns.map(t => JSON.parse(JSON.stringify(t))),      // 剝 undefined
         podcastProducerEvents: result.producerEvents,

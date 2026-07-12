@@ -13,10 +13,20 @@ import {
 } from './duo-types.js';
 import { MOVE1_SEED_RE } from './validators.js';
 
-function producerSystem(episodeGoal: string): string {
+export function producerSystem(episodeGoal: string, soul?: string | null, focus?: string): string {
+  const focusLine = focus?.trim()
+    ? `\n節目擁有者開錄前交代的焦點（這一集必須談到；收工前你要確認它真的被談到了）：「${focus.trim()}」`
+    : '';
+  if (soul) {
+    return `${soul}
+
+——以上是你的存在。你現在在玻璃後面，這一集要回答：「${episodeGoal}」${focusLine}
+
+現場開口規則：你的話不進成品，但兩位來賓聽得到。短、硬、具體，三句以內。不替任何一方說話，不用讚美打斷節奏。`;
+  }
   return `你是這集對話的製作人／導演。你不辯論、你不表演深度、你不說金句。你是這場對話裡唯一持有目標的人。
 
-這一集要回答：「${episodeGoal}」
+這一集要回答：「${episodeGoal}」${focusLine}
 
 那兩個人的本能是贏，你的任務是讓他們交出作品。他們會往下挖，越挖越深、越挖越抽象，然後在一個沒有底的洞裡耗盡。你的工作是在洞變成墳墓之前把他們拉上來。
 
@@ -57,30 +67,36 @@ export function detectTrigger(state: TriggerState, turns: DuoTurn[]): ProducerAc
   return null;
 }
 
-/** 每 3 輪：Sonnet 掃繞圈／無限後退／答案已出現（最常發生也最可惜的一種） */
+/** 每 3 輪：Sonnet 掃繞圈／無限後退／答案已出現／抽象陷阱＋金礦時刻（標記不干涉） */
 export async function llmTriggerScan(
   bridgeCall: BridgeCall,
   episodeGoal: string,
   turns: DuoTurn[],
-): Promise<{ action: 'CUT' | 'LAND'; hint: string } | null> {
-  const tail = turns.slice(-6).map(t => `[${t.speaker}]: ${t.utterance}`).join('\n');
+): Promise<{ action: 'CUT' | 'LAND' | 'BREAK_4TH_WALL' | null; hint: string; gold?: { turnId: number; why: string } } | null> {
+  const tail = turns.slice(-6).map(t => `[${t.turnId}｜${t.speaker}]: ${t.utterance}`).join('\n');
   try {
     const raw = await bridgeCall(
       DUO_MODEL,
-      `這一集對話要回答：「${episodeGoal}」。你檢查最近的對話有沒有三種病：
+      `這一集對話要回答：「${episodeGoal}」。你檢查最近的對話有沒有四種病＋一種礦：
 1. loop：同一組概念在繞圈（第三次出現同樣的對立軸）
 2. regress：無限後退——話題一層層往下挖（說服→行動→三個月後→那是不是真的），這條線沒有底
 3. answerEmerged：有人已經講出了這一集問題的答案，但他們衝過去繼續挖了——答案出現時你要比他們先認出來
-只輸出純JSON：{"loop":false,"regress":false,"answerEmerged":false,"answer":""}（answer 填被講出的那句答案，沒有就空字串）`,
+4. abstractTrap：連續的高維概念對撞——原則對原則、定義對定義、比喻對比喻，一路沒有具體的人、事、數字落地。他們講得很嗨，但台下的人已經跟丟了
+⭐ gold：金礦時刻——有人說了一句連他自己都停頓了的話、或一段真實的投降（「我不知道」「我沒有底氣」）。金礦不是介入信號，是標記給後製的（不在靈魂最深處的時刻插話）
+只輸出純JSON：{"loop":false,"regress":false,"answerEmerged":false,"answer":"","abstractTrap":false,"gold":null 或 {"turnId":數字,"why":"≤15字"}}`,
       tail,
-      120,
+      180,
     );
-    const p = extractJson<{ loop?: boolean; regress?: boolean; answerEmerged?: boolean; answer?: string }>(raw);
+    const p = extractJson<{ loop?: boolean; regress?: boolean; answerEmerged?: boolean; answer?: string; abstractTrap?: boolean; gold?: { turnId?: number; why?: string } | null }>(raw);
     if (!p) return null;
-    if (p.answerEmerged && p.answer?.trim()) return { action: 'LAND', hint: `答案已經出現：「${p.answer.trim()}」` };
-    if (p.loop) return { action: 'CUT', hint: '同一組概念已經繞到第三圈' };
-    if (p.regress) return { action: 'CUT', hint: '話題在無限後退，一層層往下挖，這條線沒有底，在第二層就要喊停' };
-    return null;
+    const gold = typeof p.gold?.turnId === 'number' && p.gold.why?.trim()
+      ? { turnId: p.gold.turnId, why: p.gold.why.trim() }
+      : undefined;
+    if (p.answerEmerged && p.answer?.trim()) return { action: 'LAND', hint: `答案已經出現：「${p.answer.trim()}」`, gold };
+    if (p.loop) return { action: 'CUT', hint: '同一組概念已經繞到第三圈', gold };
+    if (p.regress) return { action: 'CUT', hint: '話題在無限後退，一層層往下挖，這條線沒有底，在第二層就要喊停', gold };
+    if (p.abstractTrap) return { action: 'BREAK_4TH_WALL', hint: '他們在高維概念上對撞，台下的人已經跟丟了', gold };
+    return gold ? { action: null, hint: '', gold } : null;
   } catch {
     return null;
   }
@@ -95,6 +111,8 @@ const ACTION_GUIDE: Record<ProducerAction, string> = {
   PRESS: '逼問軟肋。點名一直在攻擊卻沒暴露過自己的那一方，把他自己寫的 WEAKEST_POINT 摔到他面前：「你不能繞過去。回答它。」',
   LAND: '收。指出答案已經出現，問雙方要不要停在這裡；不同意的人給一句話版本。',
   ACT_OPEN: '開場指令。宣告這一幕的任務和戰場。',
+  BREAK_4TH_WALL: '打破第四道牆。要他們停止對彼此講，轉頭對台下的聽眾說話：「別對我講了，對台下的人講。你們剛剛講的，哪一句能打破他帶來的誤解？用他聽得懂的話講給他。」',
+  REFOCUS: '點名回應。有人開始「說給觀眾聽」而不是「說給對方聽」——重新點名對方回應：叫出另一方的名字，要他接剛剛那句話。對話的張力在兩人之間，不在講台上。',
 };
 
 export async function produceUtterance(
@@ -103,13 +121,16 @@ export async function produceUtterance(
   action: ProducerAction,
   context: string,
   turns: DuoTurn[],
+  soul?: string | null,
+  ammo?: string, // 前製設計的碰撞問題彈藥庫（需要時抽用）
+  focus?: string,
 ): Promise<string> {
   const tail = turns.slice(-5).map(t => `[${t.speaker}]: ${t.utterance}`).join('\n') || '（還沒開始）';
   try {
     const raw = await bridgeCall(
       DUO_MODEL,
-      producerSystem(episodeGoal),
-      `最近的對話：\n${tail}\n\n你現在要做的動作：${action} — ${ACTION_GUIDE[action]}\n${context ? `背景：${context}\n` : ''}\n直接說你要說的話（不加名字標記、不加說明），三句以內，短、硬、具體。`,
+      producerSystem(episodeGoal, soul, focus),
+      `最近的對話：\n${tail}\n\n你現在要做的動作：${action} — ${ACTION_GUIDE[action]}\n${context ? `背景：${context}\n` : ''}${ammo ? `你前製設計的碰撞問題（彈藥庫，這個動作用得上就抽一題、用你的話問；用不上就不用）：\n${ammo}\n` : ''}\n直接說你要說的話（不加名字標記、不加說明），三句以內，短、硬、具體。`,
       200,
     );
     return raw.trim().replace(/^\[.*?\][:：]\s*/, '');
@@ -126,12 +147,14 @@ export async function distillDisagreement(
   turns: DuoTurn[],
   chars: DuoChar[],
   beliefs: Map<string, BeliefState>,
+  soul?: string | null,
+  focus?: string,
 ): Promise<string> {
   const transcript = turns.map(t => `[${t.speaker}]: ${t.utterance}`).join('\n');
   const claims = chars.map(c => `${c.name}：${beliefs.get(c.id)?.coreClaim ?? ''}`).join('\n');
   const raw = await bridgeCall(
     DUO_MODEL,
-    producerSystem(episodeGoal),
+    producerSystem(episodeGoal, soul, focus),
     `雙方核心主張：\n${claims}\n\n第一幕逐字稿：\n${transcript}\n\n把他們的分歧壓縮成一句話（≤40字），格式「他們的分歧是：______」。只輸出這一句。`,
     100,
   );
@@ -166,9 +189,11 @@ export async function generateEpisodeMeta(
   disagreementStatement: string,
   turns: DuoTurn[],
   deltas: BeliefDeltaRecord[],
+  soul?: string | null,
+  focus?: string,
 ): Promise<Omit<EpisodeMeta, 'episodeGoal' | 'disagreementStatement' | 'beliefDeltas'>> {
   const transcript = turns.map(t => `[${t.speaker}]: ${t.utterance}`).join('\n');
-  const system = producerSystem(episodeGoal) + `
+  const system = producerSystem(episodeGoal, soul, focus) + `
 
 現在全場結束，你要交出這一集的交付物。誠實保留的分歧比假共識值錢——聽眾要的正是兩個專業的人究竟在哪裡真的分開了。takeaway 要是聽眾帶得走的，動詞開頭。`;
   const user = `分歧宣言：${disagreementStatement}

@@ -23,6 +23,13 @@ export interface DuoChar {
   voice?: VoiceBlock;
 }
 
+/** 聽眾鏡像（相分）— 對話存在的理由：台下有人在聽，他今晚需要帶走什麼。
+ *  沒有這個，角色只為協議說話；有了它，角色為一個具體的人說話。 */
+export interface AudienceMirror {
+  persona: string;        // 今晚誰坐在台下，一句話（例：常被客戶拒絕、內向的年輕業務）
+  misconception: string;  // 他帶著什麼誤解進來（例：以為說服別人一定要口若懸河）
+}
+
 /** L2 靈魂層附加欄位 — 給對方靶心，讓「說服」真的可能發生 */
 export interface BeliefState {
   coreClaim: string;        // 核心主張，≤25 字
@@ -55,6 +62,7 @@ export interface DuoTurn {
   concession?: { before: string; after: string } | null;
   beliefDelta?: string | null;   // 本輪立場位移；無變動為 null
   intent?: string;               // 這一輪要達成什麼（動詞開頭）
+  audienceResonance?: string | null; // THINK 第 7 步：這句話能幫台下的人打破哪個恐懼或傲慢（沒有就 null，不硬掰）
   // 對外欄位
   utterance: string;
   evidenceRefs: string[];
@@ -63,9 +71,24 @@ export interface DuoTurn {
   endsWithQuestion: boolean;
   // 驗證殘留（重生成用盡後仍未過的規則，誠實留痕）
   warnings?: string[];
+  // 無形製作人層
+  gold?: string;              // ⭐ 金礦時刻：為什麼（收斂台不可剪）
+  originalUtterance?: string; // 收斂台動過的輪次留原文（真相鏈可稽核）
 }
 
-export type ProducerAction = 'CUT' | 'GROUND' | 'AUDIT' | 'PRESS' | 'LAND' | 'ACT_OPEN';
+export type ProducerAction = 'CUT' | 'GROUND' | 'AUDIT' | 'PRESS' | 'LAND' | 'ACT_OPEN' | 'BREAK_4TH_WALL' | 'REFOCUS';
+
+/** 無形製作人前製產物：張力地圖（三區）＋碰撞問題（五問法） */
+export interface TensionMap {
+  surpriseResonance: string;  // 🟢 驚喜共鳴區：意外同意但理由完全不同
+  headOnCollision: string;    // 🔴 正面碰撞區：世界觀根本矛盾
+  languageGap: string;        // 🟡 語言差異帶：同一件事、不同語言
+}
+
+export interface CollisionQuestion {
+  q: string;
+  intent: string; // 共同起點｜第一道張力｜正面碰撞｜意外扭轉｜整合收尾
+}
 
 export interface ProducerEvent {
   afterTurnId: number;     // 插在哪一輪之後（-1 = 開場前）
@@ -90,7 +113,7 @@ export interface EpisodeMeta {
   takeaways: string[];             // 3 個，聽眾帶得走
 }
 
-export type BridgeCall = (model: string, system: string, user: string, maxTokens: number) => Promise<string>;
+export type BridgeCall = (model: string, system: string, user: string, maxTokens: number, timeoutMs?: number) => Promise<string>;
 
 /** 全線 Sonnet（bridge 月費是平的，判斷品質拉滿；Adam 拍板 2026-07-11） */
 export const DUO_MODEL = 'claude-sonnet-4-6';

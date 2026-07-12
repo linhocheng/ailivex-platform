@@ -30,6 +30,8 @@ async function main(): Promise<void> {
     podcastScript?: AudioLine[];
     podcastCharacterIds?: string[]; podcastTopic?: string; podcastWordCount?: number; podcastFocus?: string;
     podcastEpisodeGoal?: string;
+    podcastAudiencePersona?: string; podcastAudienceMisconception?: string;
+    podcastCharacterBriefs?: Record<string, string>;
   };
 
   console.log(`[podcast-job] start action=${JOB_ACTION} taskId=${TASK_ID}`);
@@ -49,7 +51,9 @@ async function main(): Promise<void> {
       await taskRef.update({ status: 'failed', error: '找不到角色' });
       return;
     }
-    await runScriptWork(TASK_ID, characters, task.podcastTopic, task.podcastWordCount, task.podcastFocus, task.podcastEpisodeGoal);
+    await runScriptWork(TASK_ID, characters, task.podcastTopic, task.podcastWordCount, task.podcastFocus, task.podcastEpisodeGoal,
+      { persona: task.podcastAudiencePersona, misconception: task.podcastAudienceMisconception },
+      task.podcastCharacterBriefs);
 
   } else {
     const lines = task.podcastScript ?? [];

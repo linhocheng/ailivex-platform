@@ -61,13 +61,16 @@ export async function generateBelief(
   char: DuoChar,
   episodeGoal: string,
   corpus: CorpusEntry[],
+  brief?: string,        // 製作人開錄前的私下交代（只有這個角色聽到）
+  seriesShared?: string, // 節目記憶：之前集數的共識/保留分歧
+  seriesOwn?: string,    // 節目記憶：這個角色自己的位移史（不退回的錨）
 ): Promise<BeliefState> {
   const system = `你是${char.name}。以下是你完整的角色意識、價值觀、思考方式：
 
 ${(char.soulCore || char.soul).slice(0, 2000)}
 
 你即將參加一場雙人對話，這一集要回答：「${episodeGoal}」
-
+${brief?.trim() ? `\n## 製作人開錄前私下跟你交代（只有你聽到，對方不知道）\n「${brief.trim()}」\n把這句話放進你的立場——但用你自己的方式消化它，不要照著唸。\n` : ''}${seriesShared ? `\n## 你們之前錄過的集數（節目有記憶，老聽眾記得你們說過什麼）\n${seriesShared}\n這一集：已經談攏的不要重講，從沒談攏的地方、或全新的角度往前走。\n` : ''}${seriesOwn ? `\n${seriesOwn}\n` : ''}
 在開錄前，你必須誠實填寫你的立場狀態。這不是修辭練習——WEAKEST_POINT 是你真實的軟肋，對方有權攻打它，你不得閃躲。兩個 100% 確信的人只能對撞，不能對話。
 
 你的素材庫標題：${corpus.length ? [...new Set(corpus.map(e => e.title))].join('、') : '（空）'}

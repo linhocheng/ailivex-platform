@@ -48,15 +48,24 @@ const echoOpen = turns.filter((t, i) => {
 const abstain = turns.filter(t => t.utterance.length < 20 || /我不知道|這個我沒想過|我不確定/.test(t.utterance));
 const concrete = turns.reduce((s, t) => s + (t.utterance.match(CONCRETE) ?? []).length, 0);
 
+// 聽眾指標（2026-07-12 關係矩陣版）：對話是否為台下那個人存在
+const resonanceTurns = turns.filter(t => t.audienceResonance);
+const audienceAddress = turns.filter(t => /台下|聽眾|(在|正在)聽的(人|你)|螢幕(前|外)的|如果你(也|現在|常)|聽到這裡的你/.test(t.utterance));
+const b4w = (d.podcastProducerEvents ?? []).filter(e => e.action === 'BREAK_4TH_WALL');
+
 console.log(`\n═══ Voice Layer 驗收 task=${taskId}｜${turns.length} 輪 ═══`);
+if (d.podcastAudiencePersona) console.log(`聽眾：${d.podcastAudiencePersona}｜誤解：${d.podcastAudienceMisconception ?? '—'}`);
 const rows = [
   ['複述+表態開頭輪次', `${echoOpen.length}/${turns.length}（第 ${echoOpen.map(t => t.turnId).join(',') || '—'} 輪）`, '≤1'],
   ['MOVE-1 命中', `${move1Hits.length}｜${move1Hits.join('、') || '—'}`, '0'],
-  ['MOVE-2 命中', `${move2Hits.length}｜${move2Hits.join('、') || '—'}`, '≤1'],
+  ['隱喻用量（已解禁，看失控與否）', `${move2Hits.length}｜${move2Hits.join('、') || '—'}`, '有人味但非每輪'],
   ['每輪字數', `${lens.join(', ')}`, ''],
   ['字數變異數（std）', `${Math.round(std)}（mean ${Math.round(mean)}）`, '高＝真人'],
   ['棄權/我不知道', `${abstain.length} 次`, '≥1'],
   ['具體細節密度', `${concrete} 處`, '≥6'],
+  ['共鳴輪次（THINK 第7步非null）', `${resonanceTurns.length}/${turns.length}`, '有，但不該全滿——不硬掰'],
+  ['對台下直說', `${audienceAddress.length} 次（第 ${audienceAddress.map(t => t.turnId).join(',') || '—'} 輪）`, '≥1'],
+  ['BREAK_4TH_WALL 觸發', `${b4w.length} 次`, '抽象對撞時才該有'],
 ];
 rows.forEach(([k, v, std_]) => console.log(`${k}\n  ${v}${std_ ? `　（目標：${std_}）` : ''}`));
 process.exit(0);

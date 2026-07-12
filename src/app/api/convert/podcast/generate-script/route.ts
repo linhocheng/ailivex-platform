@@ -18,6 +18,17 @@ export const maxDuration = 30;
 const PODCAST_WORKER_URL = cleanUrl(process.env.PODCAST_WORKER_URL ?? '');
 const WORKER_SECRET = cleanSecret(process.env.WORKER_SECRET);
 
+/** 只收選中角色的交代、去空白、限長；全空回 null（Firestore 不寫空 map） */
+function cleanBriefs(briefs: Record<string, string> | undefined, characterIds: string[]): Record<string, string> | null {
+  if (!briefs) return null;
+  const out: Record<string, string> = {};
+  for (const cid of characterIds) {
+    const v = briefs[cid]?.trim();
+    if (v) out[cid] = v.slice(0, 300);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // ── Route Handler ─────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -29,6 +40,9 @@ export async function POST(req: Request) {
     wordCount?: number;
     focus?: string;
     episodeGoal?: string; // duo 模式（2 角色）：這一集要回答的問題（磨題產物，人確認過）
+    audiencePersona?: string;       // duo 模式：今晚台下坐著誰（聽眾鏡像，人可修）
+    audienceMisconception?: string; // duo 模式：他帶著什麼誤解進來
+    characterBriefs?: Record<string, string>; // duo 模式：characterId → 製作人開錄前的私下交代
   };
 
   const characterIds = (body.characterIds ?? []).filter(Boolean);
@@ -70,6 +84,9 @@ export async function POST(req: Request) {
     ...(body.wordCount ? { podcastWordCount: body.wordCount } : {}),
     ...(body.focus ? { podcastFocus: body.focus } : {}),
     ...(body.episodeGoal?.trim() ? { podcastEpisodeGoal: body.episodeGoal.trim() } : {}),
+    ...(body.audiencePersona?.trim() ? { podcastAudiencePersona: body.audiencePersona.trim() } : {}),
+    ...(body.audienceMisconception?.trim() ? { podcastAudienceMisconception: body.audienceMisconception.trim() } : {}),
+    ...(cleanBriefs(body.characterBriefs, characterIds) ? { podcastCharacterBriefs: cleanBriefs(body.characterBriefs, characterIds) } : {}),
     createdAt: FieldValue.serverTimestamp(),
   });
 
@@ -102,6 +119,9 @@ export async function POST(req: Request) {
       wordCount: body.wordCount ?? 600,
       focus: body.focus,
       episodeGoal: body.episodeGoal?.trim() || undefined,
+      audiencePersona: body.audiencePersona?.trim() || undefined,
+      audienceMisconception: body.audienceMisconception?.trim() || undefined,
+      characterBriefs: cleanBriefs(body.characterBriefs, characterIds) ?? undefined,
     }),
     signal: AbortSignal.timeout(10_000),
   }).catch(err => {

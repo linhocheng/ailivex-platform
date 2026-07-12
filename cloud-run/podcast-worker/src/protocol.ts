@@ -11,7 +11,7 @@
  */
 import {
   type DuoChar, type BeliefState, type CorpusEntry, type Stance,
-  type BridgeCall, DUO_MODEL, extractJson,
+  type AudienceMirror, type BridgeCall, DUO_MODEL, extractJson,
 } from './duo-types.js';
 import type { Violation } from './validators.js';
 import { corpusMenu } from './belief.js';
@@ -30,6 +30,7 @@ export interface Thought {
   intent: string;                                  // 這一輪要達成什麼，動詞開頭
   evidenceRefs: string[];                          // 素材庫條目 id
   beliefDelta: string | null;
+  audienceResonance: string | null;                // 第 7 步：能幫台下的人打破什麼（沒有就 null）
 }
 
 const STANCES: Stance[] = ['ACCEPT', 'PARTIAL', 'REJECT'];
@@ -48,6 +49,9 @@ export async function thinkTurn(
   corpus: CorpusEntry[],
   opponentName: string,
   episodeGoal: string,
+  audience: AudienceMirror,
+  brief: string | undefined,
+  focus: string | undefined,
   history: HistoryLine[],
   actContext: string,
   violations: Violation[],
@@ -55,7 +59,7 @@ export async function thinkTurn(
   const system = `你是${char.name}。以下是你完整的角色意識、價值觀、思考方式：
 
 ${char.soulCore || char.soul}
-
+${brief?.trim() ? `\n## 製作人開錄前私下跟你交代（只有你聽到）\n「${brief.trim()}」\n` : ''}
 ## 你的立場狀態（整場維護）
 CORE_CLAIM（核心主張）：${belief.coreClaim}
 WEAKEST_POINT（你最沒把握的一點，對方有權攻打，你不得閃躲）：${belief.weakestPoint}
@@ -63,6 +67,10 @@ WHAT_WOULD_CHANGE_ME（什麼會讓你改變想法）：${belief.whatWouldChange
 OUT_OF_SCOPE（你不談的，碰到就承認不知道）：${belief.outOfScope}
 
 你在和${opponentName}錄一集雙人對話，這一集要回答：「${episodeGoal}」
+${focus?.trim() ? `節目擁有者交代這一集的焦點（對話要談到它）：「${focus.trim()}」\n` : ''}
+## 台下坐著誰（這場對話為他存在）
+聽眾：${audience.persona}
+他今晚帶著的誤解：${audience.misconception}
 
 ## 你的素材庫（你擁有的全部真實案例；庫裡沒有的真實案例不存在，不可虛構）
 ${corpusMenu(corpus)}`;
@@ -84,25 +92,26 @@ ${actContext}
 3. COST — 如果你打算反駁（REJECT），你必須先付錢：我原本主張__，因為對方剛說的，我把它修正成__。付不出這筆錢你這一輪就不准反駁——只剩兩條路：(a) 問一個你真的不知道答案的問題 (b) 往前推進，不回頭。
 4. INTENT — 這一輪你講出來的話要達成什麼？一句話，動詞開頭。
 5. EVIDENCE — 這一輪要用素材庫哪些條目？填條目 id，沒有就空陣列。
-6. BELIEF_DELTA — 你的核心主張或軟肋有沒有被剛剛的話動到？有就寫一句話，沒有填 null。對方碰到你的 WHAT_WOULD_CHANGE_ME 時你必須誠實移動——這不是投降，是這場對話成功了。${fixBlock}
+6. BELIEF_DELTA — 你的核心主張或軟肋有沒有被剛剛的話動到？有就寫一句話，沒有填 null。對方碰到你的 WHAT_WOULD_CHANGE_ME 時你必須誠實移動——這不是投降，是這場對話成功了。
+7. RESONANCE — 你這一輪準備說的話，能幫台下那個人打破哪個恐懼或傲慢？一句話。沒有就填 null，不要硬掰——不是每一句話都要救人。${fixBlock}
 
 只輸出 JSON，不要說話：
-{"heard":"...","stance":"ACCEPT|PARTIAL|REJECT","partialDetail":"...","cost":{"before":"...","after":"..."}或null,"intent":"...","evidenceRefs":[],"beliefDelta":"...或null"}`;
+{"heard":"...","stance":"ACCEPT|PARTIAL|REJECT","partialDetail":"...","cost":{"before":"...","after":"..."}或null,"intent":"...","evidenceRefs":[],"beliefDelta":"...或null","audienceResonance":"...或null"}`;
 
-  const raw = await bridgeCall(DUO_MODEL, system, user, 500);
+  const raw = await bridgeCall(DUO_MODEL, system, user, 550);
   const p = extractJson<{
     heard?: string; stance?: string; partialDetail?: string;
     cost?: { before?: string; after?: string } | null;
     intent?: string; evidenceRefs?: string[]; beliefDelta?: string | null;
+    audienceResonance?: string | null;
   }>(raw);
   if (!p || !p.intent?.trim()) return null;
 
   const cost = p.cost?.before?.trim() && p.cost?.after?.trim()
     ? { before: p.cost.before.trim(), after: p.cost.after.trim() }
     : null;
-  const beliefDelta = typeof p.beliefDelta === 'string' && p.beliefDelta.trim() && p.beliefDelta.trim() !== 'null'
-    ? p.beliefDelta.trim()
-    : null;
+  const cleanNullable = (v: unknown) =>
+    typeof v === 'string' && v.trim() && v.trim() !== 'null' ? v.trim() : null;
 
   return {
     heard: (p.heard ?? '').trim(),
@@ -111,7 +120,8 @@ ${actContext}
     cost,
     intent: p.intent.trim(),
     evidenceRefs: Array.isArray(p.evidenceRefs) ? p.evidenceRefs.filter(r => typeof r === 'string' && r.trim()) : [],
-    beliefDelta,
+    beliefDelta: cleanNullable(p.beliefDelta),
+    audienceResonance: cleanNullable(p.audienceResonance),
   };
 }
 
@@ -129,10 +139,12 @@ export async function speakTurn(
   opponentName: string,
   episodeGoal: string,
   topic: string | undefined,
+  belief: BeliefState,           // 白話餵入（不帶欄位名）：你的完整與你的脆弱
+  audience: AudienceMirror,      // 台下那個人——這場對話存在的理由
   history: HistoryLine[],
   actContext: string,
   thought: Thought,
-  evidence: CorpusEntry[],       // thought.evidenceRefs 解析後的實體（給細節，治 MOVE-2）
+  evidence: CorpusEntry[],       // thought.evidenceRefs 解析後的實體
   retry: SpeakRetry | null,
 ): Promise<string> {
   const v = char.voice;
@@ -147,11 +159,19 @@ export async function speakTurn(
 
 ${char.soulCore || char.soul}
 ${voiceBlock ? `\n## 你說話的樣子\n${voiceBlock}\n` : ''}
-你和${opponentName}在錄一集對話節目。${topic?.trim() ? `主題：${topic.trim()}。` : ''}這一集要回答：「${episodeGoal}」`;
+## 你為什麼在這裡
+你和${opponentName}在錄一集對話節目。${topic?.trim() ? `主題：${topic.trim()}。` : ''}這一集要回答：「${episodeGoal}」
+台下坐著的是：${audience.persona}。他今晚帶著一個誤解走進來——「${audience.misconception}」。
+這場對話不是要贏過${opponentName}。是要讓台下那個人離開的時候，帶走他真的用得上的東西。
+
+## 你的完整與你的脆弱
+你堅信：${belief.coreClaim}。
+你也知道自己最沒把握的是：${belief.weakestPoint}。不用藏。被打中的時候，誠實地動——讓步不是認輸，是這場對話成功了。`;
 
   const conclusions = [
     thought.intent,
     thought.cost ? `你已經把你的立場修正成：${thought.cost.after}` : '',
+    thought.audienceResonance ? `你隱約覺得，這番話能幫到台下那個人：${thought.audienceResonance}` : '',
     evidence.length
       ? `你手上的真實素材（要用就用裡面的具體內容，人名、數字、當下發生的事）：\n${evidence.map(e => `- ${e.title}｜${e.sectionRef}｜${e.excerpt}`).join('\n')}`
       : '',
@@ -177,27 +197,27 @@ ${conclusions}
 ## 現在：開口
 ⚠️ 你剛才的那些思考，已經發生了。不要報告它。讓它顯示在你接下來說的話裡。
 
-### 禁止（這是動作層級的規則，涵蓋所有你想得到和想不到的說法）
-
-MOVE-1｜不准報告你的對話動作
-任何描述「我此刻在這場對話裡做什麼」的句子，一律禁止。包括但遠不只：複述對方再表態、宣告你同意或不同意、宣告你要反駁、宣告你要追問、宣告你們的分歧是什麼、宣告這是重點、宣告今天要帶走什麼、宣告你要換一個角度。
-真人做，不報。直接從「聽到之後」開始講——把對方的話當成你自己的起點，不打招呼。
-人讓步的方式是改變方向，不是宣布轉彎。有時候讓步的樣子是：沉默、換題、語氣變軟、或突然舉一個對自己不利的例子。讓步不一定要說出口。
-
-MOVE-2｜不准用比喻描述內在狀態
-講一個人的心理、情緒、認知狀態時，禁止把它比喻成火、爆炸、流體、管線、容器、空間、能量、頻率、機械、層次。
-改為描述那個人當下可觀察的行為：他眼睛看哪裡、手在幹嘛、講到第幾頁、重複了什麼、停了幾秒、聲音怎麼變。
-你想打比方，通常是因為你不知道細節。那就用手上素材的細節，或者承認你沒有。
-
 ### 你的權利（重要，不要放棄）
 - 你可以說「這個我沒想過」，然後停住
 - 你可以說「對」，然後不補充
 - 你可以問一個問題，然後閉嘴等
-- 你可以講一半，改口，重講
-- 你不需要每一輪都貢獻新東西。真人不會。${retryBlock}
+- 你可以講到一半，收回，重新說
+- 你可以直接轉頭對台下的人說話——當你覺得剛剛那句話正是他今晚需要聽到的
+- 你可以暴露自己狼狽、失手、手抖的時刻。聽的人因為看見你的脆弱而靠近
+- 你不需要每一輪都貢獻新東西。真人不會。
+
+### 只有兩條禁忌
+- 不准 AI 公關腔（「這是一個很好的問題」「正如你所說」這類話一出口，人就走了）
+- 不准為了贏而辯。被說服的時候，就讓它發生
+
+### 一條提醒（動作層級）
+真人做，不報。不要宣告你此刻在對話裡做什麼（宣布同意或反駁、宣告分歧、宣告今天帶走什麼）——直接從「聽到之後」開始講。讓步的樣子可以是沉默、換題、語氣變軟，不必宣布轉彎。${retryBlock}
 
 只輸出你說出口的話。不加名字標記、不加任何說明。`;
 
   const raw = await bridgeCall(DUO_MODEL, system, user, 400);
-  return raw.trim().replace(/^\[.*?\][:：]\s*/, '').replace(/^["「『]|["」』]$/g, '');
+  const t = raw.trim().replace(/^\[.*?\][:：]\s*/, '');
+  // 只剝「整句被引號包住」的外框；句中引用（「翻譯」這個字…）不能動，否則引號失衡
+  const wrapped = t.match(/^["「『]([^「」『』]*)["」』]$/s);
+  return wrapped ? wrapped[1].trim() : t;
 }

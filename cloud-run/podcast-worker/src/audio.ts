@@ -15,6 +15,11 @@ const VALID_INTERJECTION = new Set(['emm', 'breath', 'sighs', 'chuckle', 'inhale
 
 function sanitizeTags(text: string): string {
   return text
+    .replace(/\\n/g, ' ') // 字面 \n 保底（腳本收斂點已修，消費端再守一次）
+    .replace(/^[ \t]*[-—─]{2,}[ \t]*$/gm, '<#1.0#>') // 台詞裡的節拍分隔線（---）→ 停頓，不能唸出來
+    // 全形括號舞台指示不能進 TTS：停頓家族 → MiniMax 停頓標記；其餘（轉向台下、沉默幾秒等）→ 拿掉不唸
+    .replace(/（[^）]{0,20}(停頓|停一下|停很久|沉默|停)[^）]{0,20}）/g, '<#1.0#>')
+    .replace(/（[^）]{0,30}）/g, '')
     .replace(/\(([^)]+)\)/g, (m, inner) =>
       VALID_INTERJECTION.has(inner.trim()) ? m : '')
     .replace(/<([^>]+)>/g, (m, inner) =>
@@ -185,6 +190,15 @@ export async function generateAudio(
       voiceId: c.voiceIdMinimax ?? '', voiceSettings: c.voiceSettings };
   }
 
+  // 多段落台詞壓平成單行（換行＝節奏 → 停頓標記）。
+  // 不壓平的話，標記往返的行編號正則只抓得到第一行——多段落的其餘段落會無聲蒸發。
+  // 順序：先把分隔線行（---）轉停頓（壓平後行錨點就沒了），再壓換行。
+  const flatten = (t: string) => t
+    .replace(/^[ \t]*[-—─]{2,}[ \t]*$/gm, '<#1.0#>')
+    .replace(/\s*\n+\s*/g, ' <#0.5#> ')
+    .replace(/(?:<#[\d.]+#>\s*){2,}/g, '<#1.0#> ') // 相鄰停頓去重（分隔線＋換行會疊出兩顆）
+    .trim();
+
   // 角色自貼情緒標記（每角色只看自己的台詞）
   const charLineGroups = new Map<string, { indices: number[]; texts: string[] }>();
   for (let i = 0; i < script.length; i++) {
@@ -192,10 +206,10 @@ export async function generateAudio(
     if (!charLineGroups.has(characterId)) charLineGroups.set(characterId, { indices: [], texts: [] });
     const group = charLineGroups.get(characterId)!;
     group.indices.push(i);
-    group.texts.push(script[i].text);
+    group.texts.push(flatten(script[i].text));
   }
 
-  const taggedTexts: string[] = script.map(l => l.text);
+  const taggedTexts: string[] = script.map(l => flatten(l.text));
   for (const [charId, { indices, texts }] of charLineGroups) {
     const char = charMap[charId];
     if (!char) continue;

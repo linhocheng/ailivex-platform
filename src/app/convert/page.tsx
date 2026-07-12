@@ -384,11 +384,19 @@ function scriptToText(lines: PodcastLine[]): string {
   return lines.map(l => `[${l.speaker}]: ${l.text}`).join('\n');
 }
 function parseScript(text: string, nameToId: Record<string, string>): PodcastLine[] {
-  return text.split('\n')
-    .map(l => l.match(/^\[([^\]]+)\][:：]\s*(.+)/))
-    .filter(Boolean)
-    .map(m => ({ speaker: m![1].trim(), characterId: nameToId[m![1].trim()] ?? '', text: m![2].trim() }))
-    .filter(l => l.characterId);
+  // 無損往返：沒有 [名字]: 前綴的行是上一輪的續段（duo 台詞多段落），
+  // 接回上一輪，不能丟——丟了音檔就只剩每輪第一段
+  const out: PodcastLine[] = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(/^\[([^\]]+)\][:：]\s*(.*)/);
+    if (m && nameToId[m[1].trim()]) {
+      const speaker = m[1].trim();
+      out.push({ speaker, characterId: nameToId[speaker], text: m[2].trim() });
+      continue;
+    }
+    if (out.length) out[out.length - 1].text += '\n' + line;
+  }
+  return out.map(l => ({ ...l, text: l.text.replace(/\n{3,}/g, '\n\n').trim() })).filter(l => l.text);
 }
 
 function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?: () => void }) {
@@ -399,6 +407,9 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
   const [topic, setTopic]            = useState('');
   const [focus, setFocus]            = useState('');
   const [episodeGoal, setEpisodeGoal] = useState('');
+  const [audiencePersona, setAudiencePersona] = useState('');
+  const [audienceMisconception, setAudienceMisconception] = useState('');
+  const [charBriefs, setCharBriefs]  = useState<Record<string, string>>({});
   const [sharpening, setSharpening]  = useState(false);
   const [minutes, setMinutes]        = useState(5);
   const [taskId, setTaskId]          = useState('');
@@ -422,7 +433,10 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ characterIds: selectedIds, topic: topic.trim() || undefined,
         wordCount: minutes * 500, focus: focus.trim() || undefined,
-        episodeGoal: selectedIds.length === 2 ? (episodeGoal.trim() || undefined) : undefined }),
+        episodeGoal: selectedIds.length === 2 ? (episodeGoal.trim() || undefined) : undefined,
+        audiencePersona: selectedIds.length === 2 ? (audiencePersona.trim() || undefined) : undefined,
+        audienceMisconception: selectedIds.length === 2 ? (audienceMisconception.trim() || undefined) : undefined,
+        characterBriefs: selectedIds.length === 2 ? charBriefs : undefined }),
     }).then(r => r.json()).catch(() => null);
 
     if (!init?.taskId) {
@@ -478,8 +492,11 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
       body: JSON.stringify({ topic: topic.trim() || undefined, characterNames: names }),
     }).then(r => r.json()).catch(() => null);
     setSharpening(false);
-    if (r?.goal) setEpisodeGoal(r.goal);
-    else setError(r?.error ?? '磨題失敗，請重試。');
+    if (r?.goal) {
+      setEpisodeGoal(r.goal);
+      if (r.audiencePersona) setAudiencePersona(r.audiencePersona);
+      if (r.audienceMisconception) setAudienceMisconception(r.audienceMisconception);
+    } else setError(r?.error ?? '磨題失敗，請重試。');
   }
 
   async function generateAudio() {
@@ -609,8 +626,50 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
               style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
                 background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
                 padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+            {/* 聽眾鏡像：對話為一個具體的人存在，不是為協議存在 */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>今晚台下坐著誰</div>
+                <textarea value={audiencePersona} onChange={e => setAudiencePersona(e.target.value)}
+                  placeholder="例：常被客戶拒絕、內向的年輕業務。留空由系統代想。"
+                  rows={2}
+                  style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
+                    background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
+                    padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>他帶著什麼誤解進來</div>
+                <textarea value={audienceMisconception} onChange={e => setAudienceMisconception(e.target.value)}
+                  placeholder="例：以為說服別人一定要口若懸河。"
+                  rows={2}
+                  style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
+                    background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
+                    padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </div>
+            </div>
+            {/* 開錄前的私下交代：真實製作人分別跟兩位主持人講的那一句話 */}
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>開錄前私下交代（選填，只有該角色聽到）</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {selectedIds.map(cid => {
+                  const c = chars.find(x => x.id === cid);
+                  return (
+                    <div key={cid} style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 4 }}>給 {c?.name ?? cid} 的一句話</div>
+                      <textarea value={charBriefs[cid] ?? ''}
+                        onChange={e => setCharBriefs(prev => ({ ...prev, [cid]: e.target.value }))}
+                        placeholder="例：這集你是被挑戰的一方，你的方法論會被打，別急著防守。"
+                        rows={2}
+                        style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
+                          background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
+                          padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
-              雙人對談走協議模式：角色開錄前填立場狀態，製作人持有這個問題並在對話繞圈時喊停
+              雙人對談走協議模式：角色開錄前填立場狀態，全場對著台下那個人說話；製作人持有這個問題，對話繞圈或飄太抽象時喊停。同一對角色錄過的集數，共識與立場位移會自動帶進下一集（節目有記憶）
             </div>
           </div>
         )}
