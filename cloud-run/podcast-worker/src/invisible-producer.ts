@@ -51,7 +51,7 @@ export async function designTensionMap(
   bridgeCall: BridgeCall,
   soul: string,
   episodeGoal: string,
-  audience: AudienceMirror,
+  audience: AudienceMirror | null,
   chars: DuoChar[],
   beliefs: Map<string, BeliefState>,
   focus?: string,
@@ -69,7 +69,7 @@ export async function designTensionMap(
   const system = `${soul}
 
 ——以上是你的存在。現在執行你的前製協定。這一集要回答：「${episodeGoal}」
-台下坐著：${audience.persona}，他帶著誤解「${audience.misconception}」走進來。${focus?.trim() ? `\n節目擁有者交代的焦點（五問裡至少一題要通向它）：「${focus.trim()}」` : ''}`;
+${audience ? `這集做給「${audience.persona}」這種人聽（他常帶著誤解「${audience.misconception}」）——受眾是羅盤不是在場者，問題不要設計成對他喊話。` : '這是一集開放議題，沒有指定受眾。'}${focus?.trim() ? `\n節目擁有者交代的焦點（五問裡至少一題要通向它）：「${focus.trim()}」` : ''}`;
 
   const user = `兩位來賓的靈魂解構材料：
 
@@ -176,7 +176,7 @@ export async function convergeScript(
   bridgeCall: BridgeCall,
   producerSoul: string,
   episodeGoal: string,
-  audience: AudienceMirror,
+  audience: AudienceMirror | null,
   turns: DuoTurn[],
   chars: DuoChar[],
   beliefs: Map<string, BeliefState>,
@@ -206,7 +206,7 @@ ${segs}`;
   const system = `${producerSoul}
 
 ——以上是你的存在。現在執行你的後製翻譯協定。這一集要回答：「${episodeGoal}」
-台下坐著：${audience.persona}。${focus?.trim() ? `節目擁有者交代的焦點：「${focus.trim()}」——確認最終稿真的談到了它；沒談到的話，在 RETAKE 的 note 裡把它要回來。` : ''}
+${audience ? `這集做給「${audience.persona}」這種人聽（羅盤，不在現場）。` : '這是一集開放議題。'}${focus?.trim() ? `節目擁有者交代的焦點：「${focus.trim()}」——確認最終稿真的談到了它；沒談到的話，在 RETAKE 的 note 裡把它要回來。` : ''}
 
 你面前是剛殺青的逐字稿。你的工作：讓它呼吸——保留金礦，刪除冗余，保持兩人聲音區別。
 
@@ -302,7 +302,7 @@ ${transcript}
       DUO_MODEL,
       `${producerSoul}
 
-——以上是你的存在。節目殺青了。這一集要回答：「${episodeGoal}」，台下坐著：${audience.persona}。`,
+——以上是你的存在。節目殺青了。這一集要回答：「${episodeGoal}」${audience ? `，做給「${audience.persona}」這種人聽` : ''}。`,
       `最終稿：
 
 ${finalTranscript}

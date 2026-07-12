@@ -72,7 +72,7 @@ export async function llmTriggerScan(
   bridgeCall: BridgeCall,
   episodeGoal: string,
   turns: DuoTurn[],
-): Promise<{ action: 'CUT' | 'LAND' | 'BREAK_4TH_WALL' | null; hint: string; gold?: { turnId: number; why: string } } | null> {
+): Promise<{ action: 'CUT' | 'LAND' | 'GROUND' | null; hint: string; gold?: { turnId: number; why: string } } | null> {
   const tail = turns.slice(-6).map(t => `[${t.turnId}｜${t.speaker}]: ${t.utterance}`).join('\n');
   try {
     const raw = await bridgeCall(
@@ -95,7 +95,7 @@ export async function llmTriggerScan(
     if (p.answerEmerged && p.answer?.trim()) return { action: 'LAND', hint: `答案已經出現：「${p.answer.trim()}」`, gold };
     if (p.loop) return { action: 'CUT', hint: '同一組概念已經繞到第三圈', gold };
     if (p.regress) return { action: 'CUT', hint: '話題在無限後退，一層層往下挖，這條線沒有底，在第二層就要喊停', gold };
-    if (p.abstractTrap) return { action: 'BREAK_4TH_WALL', hint: '他們在高維概念上對撞，台下的人已經跟丟了', gold };
+    if (p.abstractTrap) return { action: 'GROUND', hint: '他們在高維概念上對撞，聽的人已經跟丟了——拆回具體的人、事、數字', gold };
     return gold ? { action: null, hint: '', gold } : null;
   } catch {
     return null;
@@ -111,8 +111,7 @@ const ACTION_GUIDE: Record<ProducerAction, string> = {
   PRESS: '逼問軟肋。點名一直在攻擊卻沒暴露過自己的那一方，把他自己寫的 WEAKEST_POINT 摔到他面前：「你不能繞過去。回答它。」',
   LAND: '收。指出答案已經出現，問雙方要不要停在這裡；不同意的人給一句話版本。',
   ACT_OPEN: '開場指令。宣告這一幕的任務和戰場。',
-  BREAK_4TH_WALL: '打破第四道牆。要他們停止對彼此講，轉頭對台下的聽眾說話：「別對我講了，對台下的人講。你們剛剛講的，哪一句能打破他帶來的誤解？用他聽得懂的話講給他。」',
-  REFOCUS: '點名回應。有人開始「說給觀眾聽」而不是「說給對方聽」——重新點名對方回應：叫出另一方的名字，要他接剛剛那句話。對話的張力在兩人之間，不在講台上。',
+  REFOCUS: '點名回應。有人開始「說給觀眾聽」而不是「說給對方聽」——但這個節目沒有現場觀眾。重新點名對方回應：叫出另一方的名字，要他接剛剛那句話。對話的張力在兩人之間，不在講台上。',
 };
 
 export async function produceUtterance(

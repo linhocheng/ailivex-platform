@@ -48,7 +48,7 @@ export interface DuoResult {
   turns: DuoTurn[];
   producerEvents: ProducerEvent[];
   beliefs: Record<string, BeliefState>;
-  audience: AudienceMirror;
+  audience: AudienceMirror | null;
   seriesContext?: string; // 本集實際餵入的節目記憶（真相鏈可稽核）
   tensionMap?: TensionMap;              // 無形製作人前製：張力地圖
   collisionQuestions?: CollisionQuestion[]; // 無形製作人前製：五問
@@ -70,27 +70,9 @@ async function sharpenGoal(bridgeCall: BridgeCall, topic: string | undefined, ch
   return goal;
 }
 
-/** 聽眾鏡像沒進來（舊入口／人沒填）時的 job 內 fallback。
- *  生成失敗降級為通用聽眾——聽眾是動力源不是閘門，缺它不該讓整集死。 */
-async function generateAudience(bridgeCall: BridgeCall, episodeGoal: string): Promise<AudienceMirror> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const raw = await bridgeCall(
-        DUO_MODEL,
-        `一集雙人對話節目要回答：「${episodeGoal}」。想像今晚最需要這一集的那個聽眾——不是「大眾」，是一個具體的人。輸出純JSON：{"persona":"他是誰，一句話，帶處境（例：常被客戶拒絕、內向的年輕業務）","misconception":"他帶著什麼誤解走進來（例：以為說服別人一定要口若懸河）"}`,
-        '請描述這個聽眾。',
-        200,
-      );
-      const p = extractJson<{ persona?: string; misconception?: string }>(raw);
-      if (p?.persona?.trim() && p?.misconception?.trim()) {
-        return { persona: p.persona.trim().slice(0, 100), misconception: p.misconception.trim().slice(0, 100) };
-      }
-    } catch { /* 重試 */ }
-    console.warn(`[duo] audience 第 ${attempt + 1} 次生成不合格，重生成`);
-  }
-  console.warn('[duo] audience 生成失敗，降級為通用聽眾');
-  return { persona: `對「${episodeGoal.slice(0, 30)}」有切身困擾、想聽到能用的做法的人`, misconception: '以為這個問題有一個標準答案' };
-}
+/* 受眾輪廓（編輯羅盤）：由人在 UI 填，留空＝純開放議題、不帶羅盤跑。
+ * 舊版會在缺席時自動生成一個「今晚坐在台下的人」——已拿掉：強加想像中的
+ * 在場者會讓所有開放議題被壓成救人題（Adam 拍板 2026-07-12）。 */
 
 export async function runDuoScript(
   db: Firestore,
@@ -114,10 +96,10 @@ export async function runDuoScript(
   const episodeGoal = opts.episodeGoal?.trim() || await sharpenGoal(bridgeCall, opts.topic, characters);
   console.log(`[duo] EPISODE_GOAL: ${episodeGoal}`);
 
-  const audience: AudienceMirror = (opts.audience?.persona?.trim() && opts.audience?.misconception?.trim())
+  const audience: AudienceMirror | null = (opts.audience?.persona?.trim() && opts.audience?.misconception?.trim())
     ? { persona: opts.audience.persona.trim(), misconception: opts.audience.misconception.trim() }
-    : await generateAudience(bridgeCall, episodeGoal);
-  console.log(`[duo] AUDIENCE: ${audience.persona}｜誤解: ${audience.misconception}`);
+    : null;
+  console.log(audience ? `[duo] 受眾羅盤: ${audience.persona}｜誤解: ${audience.misconception}` : '[duo] 純開放議題（未指定受眾，不帶羅盤）');
 
   const [corpusA, corpusB, series, producerSoul] = await Promise.all([
     loadCorpus(db, a.id), loadCorpus(db, b.id),
@@ -350,8 +332,8 @@ export async function runDuoScript(
         }
       }
       if (scan?.action) {
-        const ctx = scan.action === 'BREAK_4TH_WALL'
-          ? `${scan.hint}。台下坐著的是：${audience.persona}，他帶著誤解「${audience.misconception}」進來——要他們對著這個人講`
+        const ctx = scan.action === 'GROUND' && audience
+          ? `${scan.hint}。拆成「${audience.persona}」那種人用得上的具體，不點名任何想像中的人`
           : scan.hint;
         await pushProducer(scan.action, ctx);
       }

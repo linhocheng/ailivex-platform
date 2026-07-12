@@ -49,7 +49,7 @@ export async function thinkTurn(
   corpus: CorpusEntry[],
   opponentName: string,
   episodeGoal: string,
-  audience: AudienceMirror,
+  audience: AudienceMirror | null,
   brief: string | undefined,
   focus: string | undefined,
   history: HistoryLine[],
@@ -68,11 +68,11 @@ OUT_OF_SCOPE（你不談的，碰到就承認不知道）：${belief.outOfScope}
 
 你在和${opponentName}錄一集雙人對話，這一集要回答：「${episodeGoal}」
 ${focus?.trim() ? `節目擁有者交代這一集的焦點（對話要談到它）：「${focus.trim()}」\n` : ''}
-## 台下坐著誰（這場對話為他存在）
-聽眾：${audience.persona}
-他今晚帶著的誤解：${audience.misconception}
+${audience ? `## 這集做給誰聽（編輯羅盤——放在心裡衡量，不對他喊話，他不在現場）
+受眾輪廓：${audience.persona}
+他常帶著的誤解：${audience.misconception}
 
-## 你的素材庫（你擁有的全部真實案例；庫裡沒有的真實案例不存在，不可虛構）
+` : ''}## 你的素材庫（你擁有的全部真實案例；庫裡沒有的真實案例不存在，不可虛構）
 ${corpusMenu(corpus)}`;
 
   const fixBlock = violations.length
@@ -92,11 +92,11 @@ ${actContext}
 3. COST — 如果你打算反駁（REJECT），你必須先付錢：我原本主張__，因為對方剛說的，我把它修正成__。付不出這筆錢你這一輪就不准反駁——只剩兩條路：(a) 問一個你真的不知道答案的問題 (b) 往前推進，不回頭。
 4. INTENT — 這一輪你講出來的話要達成什麼？一句話，動詞開頭。
 5. EVIDENCE — 這一輪要用素材庫哪些條目？填條目 id，沒有就空陣列。
-6. BELIEF_DELTA — 你的核心主張或軟肋有沒有被剛剛的話動到？有就寫一句話，沒有填 null。對方碰到你的 WHAT_WOULD_CHANGE_ME 時你必須誠實移動——這不是投降，是這場對話成功了。
-7. RESONANCE — 你這一輪準備說的話，能幫台下那個人打破哪個恐懼或傲慢？一句話。沒有就填 null，不要硬掰——不是每一句話都要救人。${fixBlock}
+6. BELIEF_DELTA — 你的核心主張或軟肋有沒有被剛剛的話動到？有就寫一句話，沒有填 null。對方碰到你的 WHAT_WOULD_CHANGE_ME 時你必須誠實移動——這不是投降，是這場對話成功了。${audience ? `
+7. RESONANCE — 你這一輪準備說的話，對「${audience.persona}」那種人有什麼用？一句話。沒有就填 null，不要硬掰——不是每一句話都要有用。` : ''}${fixBlock}
 
 只輸出 JSON，不要說話：
-{"heard":"...","stance":"ACCEPT|PARTIAL|REJECT","partialDetail":"...","cost":{"before":"...","after":"..."}或null,"intent":"...","evidenceRefs":[],"beliefDelta":"...或null","audienceResonance":"...或null"}`;
+{"heard":"...","stance":"ACCEPT|PARTIAL|REJECT","partialDetail":"...","cost":{"before":"...","after":"..."}或null,"intent":"...","evidenceRefs":[],"beliefDelta":"...或null"${audience ? ',"audienceResonance":"...或null"' : ''}}`;
 
   const raw = await bridgeCall(DUO_MODEL, system, user, 550);
   const p = extractJson<{
@@ -140,7 +140,7 @@ export async function speakTurn(
   episodeGoal: string,
   topic: string | undefined,
   belief: BeliefState,           // 白話餵入（不帶欄位名）：你的完整與你的脆弱
-  audience: AudienceMirror,      // 台下那個人——這場對話存在的理由
+  audience: AudienceMirror | null, // 編輯羅盤（不在現場，不對他喊話）；null＝純開放議題
   history: HistoryLine[],
   actContext: string,
   thought: Thought,
@@ -161,8 +161,8 @@ ${char.soulCore || char.soul}
 ${voiceBlock ? `\n## 你說話的樣子\n${voiceBlock}\n` : ''}
 ## 你為什麼在這裡
 你和${opponentName}在錄一集對話節目。${topic?.trim() ? `主題：${topic.trim()}。` : ''}這一集要回答：「${episodeGoal}」
-台下坐著的是：${audience.persona}。他今晚帶著一個誤解走進來——「${audience.misconception}」。
-這場對話不是要贏過${opponentName}。是要讓台下那個人離開的時候，帶走他真的用得上的東西。
+${audience ? `這集是做給「${audience.persona}」這種人聽的——他們常帶著誤解：「${audience.misconception}」。讓他們聽完用得上。但他們不在現場：你是在跟${opponentName}對話，不是對任何人廣播。
+` : ''}這場對話不是要贏過${opponentName}。是把這個問題真的談出東西來。
 
 ## 你的完整與你的脆弱
 你堅信：${belief.coreClaim}。
@@ -171,7 +171,7 @@ ${voiceBlock ? `\n## 你說話的樣子\n${voiceBlock}\n` : ''}
   const conclusions = [
     thought.intent,
     thought.cost ? `你已經把你的立場修正成：${thought.cost.after}` : '',
-    thought.audienceResonance ? `你隱約覺得，這番話能幫到台下那個人：${thought.audienceResonance}` : '',
+    thought.audienceResonance ? `你隱約覺得，這番話對聽的人有用的地方：${thought.audienceResonance}` : '',
     evidence.length
       ? `你手上的真實素材（要用就用裡面的具體內容，人名、數字、當下發生的事）：\n${evidence.map(e => `- ${e.title}｜${e.sectionRef}｜${e.excerpt}`).join('\n')}`
       : '',
@@ -202,7 +202,6 @@ ${conclusions}
 - 你可以說「對」，然後不補充
 - 你可以問一個問題，然後閉嘴等
 - 你可以講到一半，收回，重新說
-- 你可以直接轉頭對台下的人說話——當你覺得剛剛那句話正是他今晚需要聽到的
 - 你可以暴露自己狼狽、失手、手抖的時刻。聽的人因為看見你的脆弱而靠近
 - 你不需要每一輪都貢獻新東西。真人不會。
 

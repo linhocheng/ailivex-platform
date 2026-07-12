@@ -23,11 +23,12 @@ export interface DuoChar {
   voice?: VoiceBlock;
 }
 
-/** 聽眾鏡像（相分）— 對話存在的理由：台下有人在聽，他今晚需要帶走什麼。
- *  沒有這個，角色只為協議說話；有了它，角色為一個具體的人說話。 */
+/** 受眾輪廓（編輯羅盤）— 這集做給誰聽。在思考層存在、在說話層消失：
+ *  角色想著他衡量「這句話有沒有用」，但永不對他喊話——他不在現場。
+ *  選填；缺席＝純開放議題（2026-07-12 從「台下坐著的人」降級，拿掉劇場留下方向感）。 */
 export interface AudienceMirror {
-  persona: string;        // 今晚誰坐在台下，一句話（例：常被客戶拒絕、內向的年輕業務）
-  misconception: string;  // 他帶著什麼誤解進來（例：以為說服別人一定要口若懸河）
+  persona: string;        // 受眾輪廓，一句話（例：常被客戶拒絕、內向的年輕業務）
+  misconception: string;  // 他常帶著的誤解（例：以為說服別人一定要口若懸河）
 }
 
 /** L2 靈魂層附加欄位 — 給對方靶心，讓「說服」真的可能發生 */
@@ -76,7 +77,7 @@ export interface DuoTurn {
   originalUtterance?: string; // 收斂台動過的輪次留原文（真相鏈可稽核）
 }
 
-export type ProducerAction = 'CUT' | 'GROUND' | 'AUDIT' | 'PRESS' | 'LAND' | 'ACT_OPEN' | 'BREAK_4TH_WALL' | 'REFOCUS';
+export type ProducerAction = 'CUT' | 'GROUND' | 'AUDIT' | 'PRESS' | 'LAND' | 'ACT_OPEN' | 'REFOCUS';
 
 /** 無形製作人前製產物：張力地圖（三區）＋碰撞問題（五問法） */
 export interface TensionMap {

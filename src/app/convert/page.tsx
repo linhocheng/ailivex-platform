@@ -626,19 +626,19 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
               style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
                 background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
                 padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
-            {/* 聽眾鏡像：對話為一個具體的人存在，不是為協議存在 */}
+            {/* 受眾輪廓（編輯羅盤）：在思考層存在、在說話層消失——角色不對他喊話 */}
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>今晚台下坐著誰</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>這集做給誰聽（選填）</div>
                 <textarea value={audiencePersona} onChange={e => setAudiencePersona(e.target.value)}
-                  placeholder="例：常被客戶拒絕、內向的年輕業務。留空由系統代想。"
+                  placeholder="受眾輪廓，例：常被客戶拒絕、內向的年輕業務。留空＝純開放議題。"
                   rows={2}
                   style={{ width: '100%', resize: 'vertical', fontSize: 13.5, lineHeight: 1.75,
                     background: 'rgba(60,52,40,0.04)', border: '1px solid var(--border)', borderRadius: 8,
                     padding: '10px 13px', color: 'var(--text)', fontFamily: 'inherit', boxSizing: 'border-box' }} />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>他帶著什麼誤解進來</div>
+                <div style={{ fontSize: 12.5, color: 'var(--muted)', marginBottom: 7 }}>他常見的誤解（選填）</div>
                 <textarea value={audienceMisconception} onChange={e => setAudienceMisconception(e.target.value)}
                   placeholder="例：以為說服別人一定要口若懸河。"
                   rows={2}
@@ -669,7 +669,7 @@ function PodcastPanel({ chars, onScripted }: { chars: ConvertChar[]; onScripted?
               </div>
             </div>
             <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
-              雙人對談走協議模式：角色開錄前填立場狀態，全場對著台下那個人說話；製作人持有這個問題，對話繞圈或飄太抽象時喊停。同一對角色錄過的集數，共識與立場位移會自動帶進下一集（節目有記憶）
+              雙人對談走協議模式：角色開錄前填立場狀態，兩人只跟彼此對話；受眾是編輯羅盤（衡量「這句話有沒有用」，不進台詞）；製作人持有這個問題，對話繞圈或飄太抽象時喊停。同一對角色錄過的集數，共識與立場位移會自動帶進下一集（節目有記憶）
             </div>
           </div>
         )}

@@ -484,8 +484,10 @@ export async function runScriptWork(
         podcastPhase: 'script_done',
         podcastMode: 'duo',
         podcastEpisodeGoal: result.meta.episodeGoal,
-        podcastAudiencePersona: result.audience.persona,
-        podcastAudienceMisconception: result.audience.misconception,
+        ...(result.audience ? {
+          podcastAudiencePersona: result.audience.persona,
+          podcastAudienceMisconception: result.audience.misconception,
+        } : {}),
         ...(result.seriesContext ? { podcastSeriesContext: result.seriesContext } : {}),
         ...(result.tensionMap ? { podcastTensionMap: result.tensionMap } : {}),
         ...(result.collisionQuestions ? { podcastCollisionQuestions: result.collisionQuestions } : {}),

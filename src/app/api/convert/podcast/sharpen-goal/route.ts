@@ -38,8 +38,8 @@ export async function POST(req: Request) {
       max_tokens: 400,
       system: `把一個聊天題目磨成一集雙人對話的三件東西：
 1. goal — 這一集「必須回答的問題」。題目不會收斂，目標才會：「聊說服」是題目；「一個簡報做得很好、邏輯清晰、數據紮實的人，為什麼說服不了人？」才是目標。好的目標有張力——兩個專業的人會在上面真的分開。一句話，問號結尾。
-2. audiencePersona — 今晚最需要這一集的那個聽眾。不是「大眾」，是一個具體的人，帶處境（例：常被客戶拒絕、內向的年輕業務）。一句話。
-3. audienceMisconception — 他帶著什麼誤解走進來（例：以為說服別人一定要口若懸河）。一句話。
+2. audiencePersona — 這集做給誰聽（受眾輪廓）。不是「大眾」，是一種具體的人，帶處境（例：常被客戶拒絕、內向的年輕業務）。一句話。這是編輯羅盤，不是在場觀眾。
+3. audienceMisconception — 這種人常帶著什麼誤解（例：以為說服別人一定要口若懸河）。一句話。
 ${names.length === 2 ? `對話者：${names.join('、')}。` : ''}只輸出純JSON，不加任何說明：{"goal":"...？","audiencePersona":"...","audienceMisconception":"..."}`,
       messages: [{ role: 'user', content: `題目：${topic || '（未指定，從兩位對話者的專業交集出一題有張力的）'}` }],
     });
