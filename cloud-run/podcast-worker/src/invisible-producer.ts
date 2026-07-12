@@ -18,7 +18,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import {
   type BridgeCall, type DuoChar, type DuoTurn, type BeliefState, type CorpusEntry,
   type AudienceMirror, type TensionMap, type CollisionQuestion,
-  DUO_MODEL, extractJson,
+  DUO_MODEL, extractJson, stripModelTokens,
 } from './duo-types.js';
 import { speakTurn, type HistoryLine, type Thought } from './protocol.js';
 import { scanText } from './text-filter.js';
@@ -310,7 +310,8 @@ ${finalTranscript}
 寫你的後記——「這場對話真正說了什麼」。一篇只有玻璃後面的你能寫的東西：不重複他們的話、不總結 takeaway、寫你在玻璃後面看見而他們自己沒看見的。150 字以內，不加標題。`,
       400,
       120_000,
-    )).trim();
+    ));
+    epilogue = stripModelTokens(epilogue);
   } catch { /* 後記缺了不擋交付 */ }
 
   return { trims, retakes, filterHits, epilogue };

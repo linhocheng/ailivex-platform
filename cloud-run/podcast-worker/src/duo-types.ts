@@ -119,6 +119,13 @@ export type BridgeCall = (model: string, system: string, user: string, maxTokens
 /** 全線 Sonnet（bridge 月費是平的，判斷品質拉滿；Adam 拍板 2026-07-11） */
 export const DUO_MODEL = 'claude-sonnet-4-6';
 
+/** 模型 token 衛生（確定性，釘在生成出口）：EOS／特殊標記的字面洩漏一律剝除。
+ *  訓練資料裡滿是其他模型的對話格式，模型想表達「我講完了」時偶爾把 </s> 當文字吐出來
+ *  （2026-07-12 實例：dgBspE 第 4 輪結尾）。不吃 MiniMax 停頓標記 <#0.5#>。 */
+export function stripModelTokens(text: string): string {
+  return text.replace(/<\/?s>|<\|[^|<>]{0,30}\|>|<\/?(?:assistant|human|system|bot)>/gi, '').trim();
+}
+
 /** 確定性 JSON 抽取：剝 code fence → 取最外層大括號 → parse。壞了回 null（呼叫端重生成，不 re-ask 模型修） */
 export function extractJson<T>(raw: string): T | null {
   const s = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();

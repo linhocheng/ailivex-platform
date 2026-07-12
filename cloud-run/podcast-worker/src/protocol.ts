@@ -11,7 +11,7 @@
  */
 import {
   type DuoChar, type BeliefState, type CorpusEntry, type Stance,
-  type AudienceMirror, type BridgeCall, DUO_MODEL, extractJson,
+  type AudienceMirror, type BridgeCall, DUO_MODEL, extractJson, stripModelTokens,
 } from './duo-types.js';
 import type { Violation } from './validators.js';
 import { corpusMenu } from './belief.js';
@@ -215,7 +215,7 @@ ${conclusions}
 只輸出你說出口的話。不加名字標記、不加任何說明。`;
 
   const raw = await bridgeCall(DUO_MODEL, system, user, 400);
-  const t = raw.trim().replace(/^\[.*?\][:：]\s*/, '');
+  const t = stripModelTokens(raw).replace(/^\[.*?\][:：]\s*/, '');
   // 只剝「整句被引號包住」的外框；句中引用（「翻譯」這個字…）不能動，否則引號失衡
   const wrapped = t.match(/^["「『]([^「」『』]*)["」』]$/s);
   return wrapped ? wrapped[1].trim() : t;

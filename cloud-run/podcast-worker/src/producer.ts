@@ -9,7 +9,7 @@
 import {
   type DuoTurn, type ProducerEvent, type ProducerAction, type EpisodeMeta,
   type BeliefDeltaRecord, type BridgeCall, type DuoChar, type BeliefState,
-  DUO_MODEL, extractJson,
+  DUO_MODEL, extractJson, stripModelTokens,
 } from './duo-types.js';
 import { MOVE1_SEED_RE } from './validators.js';
 
@@ -132,7 +132,7 @@ export async function produceUtterance(
       `最近的對話：\n${tail}\n\n你現在要做的動作：${action} — ${ACTION_GUIDE[action]}\n${context ? `背景：${context}\n` : ''}${ammo ? `你前製設計的碰撞問題（彈藥庫，這個動作用得上就抽一題、用你的話問；用不上就不用）：\n${ammo}\n` : ''}\n直接說你要說的話（不加名字標記、不加說明），三句以內，短、硬、具體。`,
       200,
     );
-    return raw.trim().replace(/^\[.*?\][:：]\s*/, '');
+    return stripModelTokens(raw).replace(/^\[.*?\][:：]\s*/, '');
   } catch {
     return ''; // Producer 掛了不擋角色說話；交付物驗收會抓到缺口
   }
@@ -157,7 +157,7 @@ export async function distillDisagreement(
     `雙方核心主張：\n${claims}\n\n第一幕逐字稿：\n${transcript}\n\n把他們的分歧壓縮成一句話（≤40字），格式「他們的分歧是：______」。只輸出這一句。`,
     100,
   );
-  return raw.trim().replace(/^他們的分歧是[:：]?\s*/, '');
+  return stripModelTokens(raw).replace(/^他們的分歧是[:：]?\s*/, '');
 }
 
 /** 角色是否同意這句分歧宣言（輕確認，一人一問） */

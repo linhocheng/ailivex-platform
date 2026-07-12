@@ -15,6 +15,7 @@ const VALID_INTERJECTION = new Set(['emm', 'breath', 'sighs', 'chuckle', 'inhale
 
 function sanitizeTags(text: string): string {
   return text
+    .replace(/<\/?s>|<\|[^|<>]{0,30}\|>/gi, '') // EOS token 洩漏保底（生成出口已剝，消費端再守一次）
     .replace(/\\n/g, ' ') // 字面 \n 保底（腳本收斂點已修，消費端再守一次）
     .replace(/^[ \t]*[-—─]{2,}[ \t]*$/gm, '<#1.0#>') // 台詞裡的節拍分隔線（---）→ 停頓，不能唸出來
     // 全形括號舞台指示不能進 TTS：停頓家族 → MiniMax 停頓標記；其餘（轉向台下、沉默幾秒等）→ 拿掉不唸
