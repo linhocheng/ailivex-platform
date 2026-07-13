@@ -23,6 +23,7 @@ export const COL = {
   knowledgeDocs: 'knowledge_docs',
   knowledgeChunks: 'knowledge_chunks',
   methodologies: 'methodologies',
+  recordings: 'recordings',
 } as const;
 
 export type UserRole = 'user' | 'admin';
@@ -100,8 +101,28 @@ export interface CharacterDoc {
   // 由 admin knowledge/methodologies routes 確定性維護（增刪時 increment/遞減），不靠 LLM。
   knowledgeChunkCount?: number;   // 該角色 active 知識塊總數
   methodologyCount?: number;      // 該角色 active 方法論總數
+  recordingEnabled?: boolean;     // 對話錄音（LiveKit Egress 混流 → GCS；私人使用，缺省 = 關）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
+// ── 對話錄音（LiveKit Egress）──
+// docId = roomName（每通唯一）。token route 建房掛 auto egress 時同步開帳；
+// egress_ended webhook 或 admin 列表 reconcile 收帳。
+export type RecordingStatus = 'recording' | 'done' | 'failed';
+
+export interface RecordingDoc {
+  roomName: string;
+  characterId: string;
+  characterName: string;
+  userId: string;
+  filepath: string;        // GCS object path（建房時即確定）
+  status: RecordingStatus;
+  egressId?: string;       // webhook/reconcile 回填
+  durationSec?: number;
+  sizeBytes?: number;
+  createdAt: FirebaseFirestore.Timestamp | Date;
+  endedAt?: FirebaseFirestore.Timestamp | Date;
 }
 
 export interface AccessDoc {

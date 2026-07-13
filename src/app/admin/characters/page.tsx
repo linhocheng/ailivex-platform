@@ -29,6 +29,7 @@ type EditState = {
   voice: CharVoiceProfile;
   aliases: string[];
   capabilities: TaskCapability[];
+  recordingEnabled: boolean;
   imageStyle: string;
   heygenAvatarId: string;
   heygenAvatarUrl: string;
@@ -375,6 +376,7 @@ export default function AdminCharacters() {
     payload.voice = editing.voice;
     payload.aliases = editing.aliases.filter(a => a.trim());
     payload.capabilities = editing.capabilities;
+    payload.recordingEnabled = editing.recordingEnabled;
     payload.imageStyle = editing.imageStyle;
     payload.heygenAvatarId = editing.heygenAvatarId;
     if (editing.avatar?.b64) { payload.avatarBase64 = editing.avatar.b64; payload.avatarContentType = editing.avatar.type; }
@@ -437,10 +439,10 @@ export default function AdminCharacters() {
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
                     setEditLoading(true); // 完整資料回來前擋存檔
-                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, voice:{}, aliases:[], capabilities:[], imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, voice:{}, aliases:[], capabilities:[], recordingEnabled:false, imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
                     if (r?.id) {
-                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, voice:r.voice||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, voice:r.voice||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], recordingEnabled:r.recordingEnabled===true, imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                       setEditLoading(false);
                     } else {
                       setEditMsg('完整資料載入失敗——請關閉視窗重開，此狀態下不能儲存（避免把欄位洗成空白）');
@@ -813,6 +815,14 @@ export default function AdminCharacters() {
                   </label>
                 ))}
               </div>
+            </Field>
+            <Field label="對話錄音（私人使用）">
+              <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:13, cursor:'pointer', padding:'6px 0' }}>
+                <input type="checkbox"
+                  checked={editing.recordingEnabled}
+                  onChange={e => setEditing({...editing, recordingEnabled: e.target.checked})} />
+                開啟後，此角色的即時語音通話全程錄音（混流存 GCS，後台「對話錄音」頁可播）
+              </label>
             </Field>
             {editing.capabilities.includes('story_draft') && (
               <Field label="圖片風格（story_draft 用）">

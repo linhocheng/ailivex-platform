@@ -7,8 +7,9 @@
  */
 import { after } from 'next/server';
 import { NextResponse } from 'next/server';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
+import { buildRoomEgress, recordingFilepath, livekitHttpUrl } from '@/lib/recording';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
 import { COL, agentNameForVersion, VOICE_VERSIONS, DEFAULT_VOICE_VERSION, type CharacterDoc, type AccessDoc } from '@/lib/collections';
@@ -79,6 +80,28 @@ export async function POST(req: Request) {
   const ts = Date.now();
   const convId = `ailivex-voice-${characterId}-${userId}`;
   const roomName = `ailivex-${characterId}-${userId}-${ts}`;
+
+  // 對話錄音（角色級開關）：顯式建房掛 auto egress —— 房間一有人錄音就開、
+  // 人走光自動停；agent/容量/未開錄音的角色完全不受影響。
+  // fail-closed：訪談用途下沒錄到的通話等於白打，建房失敗就不發 token，當場報錯。
+  if (char.recordingEnabled) {
+    const egress = buildRoomEgress(characterId, roomName);
+    if (!egress) {
+      return NextResponse.json({ error: 'recording_unconfigured', message: '錄音未設定（EGRESS_GCS_CREDENTIALS）' }, { status: 503 });
+    }
+    try {
+      const rsc = new RoomServiceClient(livekitHttpUrl(), apiKey, apiSecret);
+      await rsc.createRoom({ name: roomName, egress });
+      await db.collection(COL.recordings).doc(roomName).set({
+        roomName, characterId, characterName: char.name || '', userId,
+        filepath: recordingFilepath(characterId, roomName),
+        status: 'recording', createdAt: new Date(),
+      });
+    } catch (e) {
+      console.error('[livekit/token] 錄音建房失敗:', e instanceof Error ? e.message : e);
+      return NextResponse.json({ error: 'recording_setup_failed', message: '錄音啟動失敗，本通未建立' }, { status: 503 });
+    }
+  }
 
   const metadata = JSON.stringify({
     characterId,

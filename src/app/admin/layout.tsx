@@ -15,6 +15,7 @@ const ADMIN_NAV = [
   { href: '/admin/knowledge',  label: '知識與方法', icon: 'doc'   },
   { href: '/admin/podcasts',   label: 'Podcast 素材', icon: 'audio' },
   { href: '/admin/voice',      label: '即時語音', icon: 'phone' },
+  { href: '/admin/recordings', label: '對話錄音', icon: 'audio' },
   { href: '/admin/global-prompts', label: '全局 Prompt', icon: 'display' },
 ];
 

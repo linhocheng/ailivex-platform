@@ -27,6 +27,7 @@ export async function GET(_req: Request, { params }: Params) {
     voice: c.voice || {},
     aliases: c.aliases || [],
     capabilities: c.capabilities || [],
+    recordingEnabled: c.recordingEnabled === true,
     imageStyle: c.imageStyle || '',
     heygenAvatarId: c.heygenAvatarId || '',
     heygenAvatarUrl: c.heygenAvatarUrl || '',
@@ -44,6 +45,7 @@ export async function PATCH(req: Request, { params }: Params) {
     convSettings?: ConvSettings; aliases?: string[];
     voice?: CharacterVoiceProfile;
     capabilities?: TaskCapability[];
+    recordingEnabled?: boolean;
     imageStyle?: string;
     heygenAvatarId?: string;
     avatarBase64?: string; avatarContentType?: string;
@@ -71,6 +73,7 @@ export async function PATCH(req: Request, { params }: Params) {
   if (body?.voice !== undefined) updates.voice = sanitizeVoiceProfile(body.voice);
   if (Array.isArray(body?.aliases)) updates.aliases = body.aliases.map(s => s.trim()).filter(Boolean);
   if (Array.isArray(body?.capabilities)) updates.capabilities = body.capabilities.filter(c => ALL_CAPABILITIES.includes(c));
+  if (typeof body?.recordingEnabled === 'boolean') updates.recordingEnabled = body.recordingEnabled;
   if (body?.imageStyle !== undefined) updates.imageStyle = body.imageStyle.trim();
   if (body?.heygenAvatarId !== undefined) updates.heygenAvatarId = body.heygenAvatarId.trim();
 
