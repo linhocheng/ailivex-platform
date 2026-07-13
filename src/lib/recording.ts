@@ -43,17 +43,27 @@ export function buildRoomEgress(characterId: string, roomName: string): RoomEgre
   });
 }
 
-/** EgressInfo → recordings doc 的收帳欄位（duration/size 是 bigint 奈秒/位元組） */
+/**
+ * EgressInfo → recordings doc 的收帳欄位（duration/size 是 bigint 奈秒/位元組）。
+ * webhook 的 payload 帶 fileResults；listEgress 對已完成的 egress 回空陣列（實測），
+ * 所以 reconcile 路徑用頂層 startedAt/endedAt 相減兜底，時長不寫 0。
+ */
 export function egressResultFields(info: {
   egressId: string; status: EgressStatus;
+  startedAt?: bigint; endedAt?: bigint;
   fileResults?: { duration?: bigint; size?: bigint }[];
 }): Partial<RecordingDoc> {
   const file = info.fileResults?.[0];
   const done = info.status === EgressStatus.EGRESS_COMPLETE;
+  const durationSec = file?.duration
+    ? Math.round(Number(file.duration) / 1e9)
+    : (info.startedAt && info.endedAt && info.endedAt > info.startedAt)
+      ? Math.round(Number(info.endedAt - info.startedAt) / 1e9)
+      : 0;
   return {
     egressId: info.egressId,
     status: done ? 'done' : 'failed',
-    durationSec: file?.duration ? Math.round(Number(file.duration) / 1e9) : 0,
+    durationSec,
     sizeBytes: file?.size ? Number(file.size) : 0,
     endedAt: new Date(),
   };
