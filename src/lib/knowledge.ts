@@ -75,7 +75,7 @@ export function chunkText(text: string): string[] {
 // 撈文言原文排到 #15）。大意與 query 同語域後目標塊升 #1（實測 0.797 vs 0.759）。
 // 分工守天條：LLM 只寫大意（生成）；批次、驗證、fallback、嵌入全程式。
 
-const GIST_MODEL = 'claude-haiku-4-5-20251001';
+const GIST_MODEL = 'claude-sonnet-4-6';
 const GIST_BATCH = 8;
 
 type LLMClient = {
