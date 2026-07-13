@@ -81,9 +81,21 @@ export async function POST(req: Request) {
   const convId = `ailivex-voice-${characterId}-${userId}`;
   const roomName = `ailivex-${characterId}-${userId}-${ts}`;
 
+  const metadata = JSON.stringify({
+    characterId,
+    userId,
+    convId,
+    characterName: char.name || '',
+    voiceId: char.voiceIdMinimax || '',
+    // 用量管制：agent 進房讀這個做通話中計量與到點斷線（null = 不限）
+    voiceSecondsRemaining,
+  });
+
   // 對話錄音（角色級開關）：顯式建房掛 auto egress —— 房間一有人錄音就開、
   // 人走光自動停；agent/容量/未開錄音的角色完全不受影響。
   // fail-closed：訪談用途下沒錄到的通話等於白打，建房失敗就不發 token，當場報錯。
+  // ⚠️ 派工必須跟著建房走：token 上的 RoomConfiguration 只在「join 時自動建房」才生效，
+  //    房間既存時會被忽略——預建房不帶 agents = agent 永遠不進房（2026-07-13 實測踩雷）。
   if (char.recordingEnabled) {
     const egress = buildRoomEgress(characterId, roomName);
     if (!egress) {
@@ -91,7 +103,10 @@ export async function POST(req: Request) {
     }
     try {
       const rsc = new RoomServiceClient(livekitHttpUrl(), apiKey, apiSecret);
-      await rsc.createRoom({ name: roomName, egress });
+      await rsc.createRoom({
+        name: roomName, egress,
+        agents: [new RoomAgentDispatch({ agentName, metadata })],
+      });
       await db.collection(COL.recordings).doc(roomName).set({
         roomName, characterId, characterName: char.name || '', userId,
         filepath: recordingFilepath(characterId, roomName),
@@ -102,16 +117,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'recording_setup_failed', message: '錄音啟動失敗，本通未建立' }, { status: 503 });
     }
   }
-
-  const metadata = JSON.stringify({
-    characterId,
-    userId,
-    convId,
-    characterName: char.name || '',
-    voiceId: char.voiceIdMinimax || '',
-    // 用量管制：agent 進房讀這個做通話中計量與到點斷線（null = 不限）
-    voiceSecondsRemaining,
-  });
 
   const at = new AccessToken(apiKey, apiSecret, { identity: userId, name: user.name, metadata });
   at.addGrant({ room: roomName, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
