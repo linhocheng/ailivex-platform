@@ -123,6 +123,9 @@ export interface RecordingDoc {
   sizeBytes?: number;
   createdAt: FirebaseFirestore.Timestamp | Date;
   endedAt?: FirebaseFirestore.Timestamp | Date;
+  // 濃縮版（去空白）：ffmpeg silenceremove 另存，原始檔不動
+  condensedFilepath?: string;
+  condensedSizeBytes?: number;
 }
 
 export interface AccessDoc {

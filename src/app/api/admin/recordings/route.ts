@@ -24,15 +24,19 @@ export async function GET() {
   const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
   const bucket = bucketName ? getFirebaseAdmin().storage().bucket(bucketName) : null;
 
+  const expires = Date.now() + 4 * 60 * 60 * 1000;
   const rows = await Promise.all(snap.docs.map(async d => {
     const r = d.data() as RecordingDoc;
     let url = '';
+    let condensedUrl = '';
     if (r.status === 'done' && bucket) {
       try {
-        const [signed] = await bucket.file(r.filepath).getSignedUrl({
-          action: 'read', expires: Date.now() + 4 * 60 * 60 * 1000,
-        });
+        const [signed] = await bucket.file(r.filepath).getSignedUrl({ action: 'read', expires });
         url = signed;
+        if (r.condensedFilepath) {
+          const [signedC] = await bucket.file(r.condensedFilepath).getSignedUrl({ action: 'read', expires });
+          condensedUrl = signedC;
+        }
       } catch { /* 簽失敗就不給連結，列表照出 */ }
     }
     const createdAt = r.createdAt instanceof Date ? r.createdAt : r.createdAt.toDate();
@@ -41,6 +45,7 @@ export async function GET() {
       userId: r.userId, status: r.status,
       durationSec: r.durationSec ?? null, sizeBytes: r.sizeBytes ?? null,
       createdAt: createdAt.toISOString(), url,
+      condensedUrl, condensedSizeBytes: r.condensedSizeBytes ?? null,
     };
   }));
 
@@ -59,9 +64,12 @@ export async function DELETE(req: Request) {
 
   const bucketName = process.env.FIREBASE_STORAGE_BUCKET;
   if (bucketName && r.filepath) {
-    // 檔可能不存在（failed 的通話）——ignoreNotFound 冪等
-    await getFirebaseAdmin().storage().bucket(bucketName)
-      .file(r.filepath).delete({ ignoreNotFound: true });
+    // 檔可能不存在（failed 的通話）——ignoreNotFound 冪等；濃縮版一併清
+    const bucket = getFirebaseAdmin().storage().bucket(bucketName);
+    await bucket.file(r.filepath).delete({ ignoreNotFound: true });
+    if (r.condensedFilepath) {
+      await bucket.file(r.condensedFilepath).delete({ ignoreNotFound: true });
+    }
   }
   await ref.delete();
   return NextResponse.json({ ok: true });

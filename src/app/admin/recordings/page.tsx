@@ -7,6 +7,7 @@ interface RecordingRow {
   status: 'recording' | 'done' | 'failed';
   durationSec: number | null; sizeBytes: number | null;
   createdAt: string; url: string;
+  condensedUrl: string; condensedSizeBytes: number | null;
 }
 
 const STATUS_LABEL: Record<RecordingRow['status'], { text: string; color: string }> = {
@@ -31,6 +32,7 @@ export default function AdminRecordings() {
   const [msg, setMsg] = useState('');
   const [deleting, setDeleting] = useState('');
   const [confirmRoom, setConfirmRoom] = useState('');
+  const [condensing, setCondensing] = useState('');
 
   const load = useCallback(async () => {
     const r = await fetch('/api/admin/recordings').then(r => r.json()).catch(() => null);
@@ -47,6 +49,15 @@ export default function AdminRecordings() {
     setDeleting(''); setConfirmRoom('');
     if (r?.ok) load();
     else setMsg(r?.error || '刪除失敗');
+  }
+
+  async function condense(room: string) {
+    setCondensing(room); setMsg('');
+    const r = await fetch(`/api/admin/recordings/condense?room=${encodeURIComponent(room)}`, { method: 'POST' })
+      .then(r => r.json()).catch(() => null);
+    setCondensing('');
+    if (r?.ok) load();
+    else setMsg(r?.error || '濃縮失敗');
   }
 
   return (
@@ -90,6 +101,13 @@ export default function AdminRecordings() {
                     <audio controls preload="none" src={r.url} style={{ height:34, flex:'1 1 280px', minWidth:220 }} />
                     <a href={r.url} download={`${r.roomName}.mp4`}
                       style={{ fontSize:12.5, color:'var(--accent)', textDecoration:'none' }}>下載</a>
+                    {!r.condensedUrl && (
+                      <button onClick={() => condense(r.roomName)} disabled={condensing === r.roomName}
+                        style={{ padding:'4px 10px', borderRadius:6, border:'1px solid var(--border)',
+                          background:'transparent', color:'var(--muted)', fontSize:12, cursor:'pointer' }}>
+                        {condensing === r.roomName ? '濃縮中…' : '產生濃縮版'}
+                      </button>
+                    )}
                     {confirmRoom === r.roomName ? (
                       <span style={{ display:'flex', gap:8, alignItems:'center' }}>
                         <button onClick={() => remove(r.roomName)} disabled={deleting === r.roomName}
@@ -106,6 +124,15 @@ export default function AdminRecordings() {
                         style={{ padding:'4px 10px', borderRadius:6, border:'1px solid var(--border)',
                           background:'transparent', color:'var(--muted)', fontSize:12, cursor:'pointer' }}>刪除</button>
                     )}
+                  </div>
+                )}
+                {r.status === 'done' && r.condensedUrl && (
+                  <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                    <span style={{ fontSize:12, color:'var(--muted)', flexShrink:0 }}>濃縮版（去空白）</span>
+                    <audio controls preload="none" src={r.condensedUrl} style={{ height:34, flex:'1 1 240px', minWidth:200 }} />
+                    <a href={r.condensedUrl} download={`${r.roomName}.condensed.mp4`}
+                      style={{ fontSize:12.5, color:'var(--accent)', textDecoration:'none' }}>下載</a>
+                    <span style={{ fontSize:12, color:'var(--muted)' }}>{fmtSize(r.condensedSizeBytes)}</span>
                   </div>
                 )}
                 {r.status === 'failed' && (

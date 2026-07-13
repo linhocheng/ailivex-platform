@@ -26,6 +26,19 @@ export function recordingFilepath(characterId: string, roomName: string): string
   return `recordings/${characterId}/${roomName}.mp4`;
 }
 
+export function condensedFilepath(filepath: string): string {
+  return filepath.replace(/\.mp4$/, '.condensed.mp4');
+}
+
+/**
+ * 去空白濾鏡（確定性程式，不經 LLM）。
+ * -40dB 保守檔：實測 3:40 真對話 → 1:58，寧可少砍不切氣音尾字；
+ * 連續靜音 >1.5s 才砍、留 0.4s 喘息感；start_periods=1 順手修掉開頭空白。
+ */
+export const SILENCE_REMOVE_FILTER =
+  'silenceremove=start_periods=1:start_threshold=-40dB:' +
+  'stop_periods=-1:stop_duration=1.5:stop_threshold=-40dB:stop_silence=0.4';
+
 /** 建房用的 auto egress 設定；env 未備齊回 null（呼叫端 fail-closed） */
 export function buildRoomEgress(characterId: string, roomName: string): RoomEgress | null {
   const credentials = process.env.EGRESS_GCS_CREDENTIALS;

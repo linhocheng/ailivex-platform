@@ -8,7 +8,12 @@ const nextConfig: NextConfig = {
     'google-auth-library',
     'google-gax',
     'gcp-metadata',
+    'ffmpeg-static',
   ],
+  // ffmpeg 二進位不是 require 得到的 JS，file tracing 追不到，明點才會進 lambda
+  outputFileTracingIncludes: {
+    '/api/admin/recordings/condense': ['./node_modules/ffmpeg-static/ffmpeg'],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: '20mb',

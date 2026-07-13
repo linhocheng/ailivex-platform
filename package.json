@@ -14,6 +14,7 @@
     "@livekit/components-react": "^2.9.9",
     "@livekit/protocol": "^1.39.3",
     "@sparticuz/chromium": "^149.0.0",
+    "ffmpeg-static": "^5.3.0",
     "firebase-admin": "^13.7.0",
     "google-auth-library": "^10.6.1",
     "livekit-client": "^2.18.6",
