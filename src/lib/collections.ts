@@ -24,6 +24,7 @@ export const COL = {
   knowledgeChunks: 'knowledge_chunks',
   methodologies: 'methodologies',
   recordings: 'recordings',
+  memoryHealthRuns: 'memory_health_runs',
 } as const;
 
 export type UserRole = 'user' | 'admin';
@@ -127,6 +128,39 @@ export interface RecordingDoc {
   // 濃縮版（去空白）：ffmpeg silenceremove 另存，原始檔不動
   condensedFilepath?: string;
   condensedSizeBytes?: number;
+}
+
+// ── 記憶健康巡檢（觀察者）──────────────────────────────────────────────────
+export type MemoryHealthStatus = 'ok' | 'warn' | 'fail';
+export type MemoryHealthSeverity = 'fail' | 'warn' | 'info';
+
+export interface MemoryHealthFinding {
+  severity: MemoryHealthSeverity;
+  kind: string;          // orphan / missing-field / backlog / consolidation-stuck / embedding-drift …
+  detail: string;        // 人話描述
+  count?: number;
+  ids?: string[];        // 涉及的 doc id（最多留 20 個，夠追查就好）
+}
+
+export interface MemoryHealthRunDoc {
+  triggeredAt: FirebaseFirestore.Timestamp | Date;
+  trigger: 'cron' | 'manual';
+  status: MemoryHealthStatus;   // 有 fail 級發現 = fail；有 warn = warn；否則 ok
+  durationMs: number;
+  summary: {
+    total: number;
+    byTier: Record<string, number>;
+    byStatus: Record<string, number>;
+    byType: Record<string, number>;
+    pairs: number;               // (userId × characterId) 配對數
+    impressions: number;
+    orphans: number;
+    probe: { sampled: number; drifted: number; avgSelfCos: number | null };
+  };
+  findings: MemoryHealthFinding[];
+  // 管線 canary 現況快照（env 真相，後台才看得到誰吃哪套管線）
+  pipelines: { impressions: string; gist: string; diary: string };
+  observerComment: string | null;  // 記憶觀察者（LLM）讀確定性結果寫的診斷評語；失敗不影響巡檢
 }
 
 export interface AccessDoc {

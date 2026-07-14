@@ -346,6 +346,7 @@ export async function GET(req: Request) {
     ...([
       { cron: 'memory-consolidation', label: 'cron·記憶鞏固', thresholdMin: 26 * 60 },
       { cron: 'memory-maintenance', label: 'cron·記憶維護', thresholdMin: 26 * 60 },
+      { cron: 'memory-health', label: 'cron·記憶健檢', thresholdMin: 26 * 60 },
       { cron: 'voice-auto-off', label: 'cron·語音自動關機', thresholdMin: 40 },
       { cron: 'ops-rollup', label: 'cron·監控快照', thresholdMin: 90 },
     ] as const).map(({ cron, label, thresholdMin }): Light => {
