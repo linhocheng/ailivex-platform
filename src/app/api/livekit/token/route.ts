@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'voice_power_off', message: '語音引擎已關閉' }, { status: 403 });
   }
 
-  // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（v14）。
+  // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（現值見 collections.ts，別在這裡寫死版本號）。
   // 一般用戶需有 access doc；admin 免 access doc 直接進。
   let voiceVersion: string | undefined;
   let voiceSecondsRemaining: number | null = null;  // null = 不限

@@ -3,8 +3,10 @@
 Guidance for AI coding agents working in this repo. Written in English; domain terms are kept in the
 team's Traditional Chinese (判斷腦, floor-gate, 回音過濾, 名冊, 一吋蛋糕) — match that vocabulary.
 
-> ⚠️ **`README.md` is stale.** It documents voice versions v1–v4 and calls v2 "現役". Reality: the
-> live agent is **v14**. Trust the **code and `git log`**, not the README, for current state.
+> ⚠️ **`README.md` is stale.** Trust the **code and `git log`**, not the README, for current state.
+> The authoritative voice-version lineage lives in `src/lib/collections.ts` (`DEFAULT_VOICE_VERSION`
+> + the comment block above it) — this file's table is a convenience copy and can lag behind
+> (it once said v14 while production was v18).
 
 ---
 
@@ -61,7 +63,7 @@ hangup  ──POST /api/voice-end──▶ relationship upsert
 ```
 src/app/            Next.js App Router
   api/              all backend routes (dialogue, livekit/token, tts, voice-end, doc-process, admin/*, …)
-  realtime*/        voice-call pages: realtime (base), realtime-v2 … realtime-v14  (NOTE: no v7; v2–v13 are archived, traffic goes to v14)
+  realtime/         voice-call page — SINGLE entry `/realtime/[characterId]` (versioned shell pages all removed 2026-07-10; version is decided server-side by `access.voiceVersion` → token route)
   chat/ lobby/ documents/ login/ admin/*
 src/lib/            logic core (see cheat-sheet below)
 agent/              ⭐ LIVE Python voice agents — versioned (main_vN.py, realtime_agent_vN.py, cloudbuild-vN.yaml)
@@ -84,32 +86,22 @@ This is the most important thing to understand before touching voice code.
 - **All versions share one Docker image** (`asia-east1-docker.pkg.dev/$PROJECT_ID/ailivex/ailivex-realtime-agent`).
   They differ only by the start command `python -m agent.main_vN start` and the service name.
 - **To add a version**: copy `main_v{N-1}.py` + `realtime_agent_v{N-1}.py` → `..._vN`, set
-  `agent_name="ailivex-realtime-vN"`, add `cloudbuild-vN.yaml`, add a `/realtime-vN/` page, and add
-  the `vN` branch in `src/app/api/livekit/token/route.ts`, **and the `<Link>` to `/realtime-vN/` in the
-  version panel of `src/app/chat/[characterId]/page.tsx`** (else the page is unreachable except by typing the URL).
-  In `cloudbuild-vN.yaml` the service name `ailivex-realtime-agent-vN` appears **twice** (the `run deploy` step
-  AND the revision-cleanup bash step) — update both; the shared image path is version-less, don't rename it.
+  `agent_name="ailivex-realtime-vN"`, add `cloudbuild-vN.yaml`, and register the version in
+  `VOICE_VERSIONS` in `src/lib/collections.ts` (the single entry page `/realtime/[characterId]`
+  resolves the version server-side via `access.voiceVersion` → token route; there are NO per-version
+  pages anymore). In `cloudbuild-vN.yaml` the service name `ailivex-realtime-agent-vN` appears
+  **twice** (the `run deploy` step AND the revision-cleanup bash step) — update both; the shared
+  image path is version-less, don't rename it.
 
-**Current production = v14.** Lineage (`src/lib/collections.ts` — `DEFAULT_VOICE_VERSION`):
-
-| ver | agent_name | adds |
-|---|---|---|
-| base | `ailivex-realtime` | 1:1 voice |
-| v2 | `ailivex-realtime-v2` | memory-coherent "2.0" (lastSession snapshot, time awareness) |
-| v3 | `…-v3` | proactive speech (一吋蛋糕 / 3a) |
-| v4 | `…-v4` | single-device group chat (Soniox diarization) |
-| v5 | `…-v5` | yield-on-handoff (go silent when floor handed to a 3rd party) |
-| v6 | `…-v6` | dual-brain: 判斷腦 Haiku (judge) / 開口腦 Sonnet (speak) |
-| v8 | `…-v8` | floor control (grab mic when addressed / yield on handoff) |
-| v9 | `…-v9` | LLM floor-gate (Haiku decides speaking rights) |
-| v10 | `…-v10` | multi-party hardening: 回音過濾 (echo filter) / 講者名冊 (speaker roster) / 3a 收斂 |
-| v11 | `…-v11` | voiceprint speaker ID (experimental, not in default traffic) |
-| v12 | `…-v12` | 讀網址（通話中讀取 URL 摘要）|
-| v13 | `…-v13` | task dispatch via voice (image / audio) |
-| **v14** ★ | `…-v14` | script_draft + story_draft dispatch (LIVE — DEFAULT_VOICE_VERSION) |
-
-> **No v7** — versions jump v6 → v8. The base agent is unversioned (`agent/main.py`,
-> `agent/realtime_agent.py`).
+**Current production = v18** (`DEFAULT_VOICE_VERSION`); v17 is the cold-standby (scaled to 0 —
+scale up min=1 BEFORE routing traffic back, a 0-instance LiveKit agent is deaf). The full lineage
+(base → v18, no v7) lives in the comment block above `VOICE_VERSIONS` in `src/lib/collections.ts` —
+that registry is the single source of truth; retired versions are removed from it. Highlights:
+v6 dual-brain (判斷腦 Haiku / 開口腦 Sonnet) · v10 multi-party hardening (回音過濾/講者名冊) ·
+v13-v14 task dispatch (image/audio/script_draft/story_draft) · v15 memory parity + in-call recall ·
+v16 latency (VAD prewarm/TTS first-chunk flush) · v17 記憶全景圖 voice path (remote memory blocks +
+hang-up diary; 3a proactive speech retired in v17.4) · v18 interrupt volume gate (only louder speech
+pauses the agent — backchannel 應和 no longer causes dead air).
 
 ---
 
@@ -169,7 +161,7 @@ Collections (all bound to `(userId, characterId)` unless noted):
 (`tool:remember`) + create doc jobs → `appendMessages` → `after()` (post-response): extract memories
 + upsert relationship + dispatch doc jobs → `trackCost`.
 
-**Voice** (`agent/realtime_agent_v14.py`): the turn-path Sonnet 4.6 uses the **direct
+**Voice** (`agent/realtime_agent_v18.py`): the turn-path Sonnet 4.6 uses the **direct
 `ANTHROPIC_API_KEY`** (bridge can't stream and lacks tool_use). The **off-path** calls — 判斷腦
 (`_run_inner_judgment`, Haiku), 3a proactive speech, and shutdown memory/lastSession extraction — are
 **bridge-preferred with direct fallback**. Tools are native `@function_tool` (`remember`,
@@ -227,7 +219,7 @@ node scripts/reset-admin-pw.mjs [password]
 
 ## Environment & secrets
 
-Secrets live in **GCP Secret Manager** and are injected at deploy (see `agent/cloudbuild-v14.yaml`).
+Secrets live in **GCP Secret Manager** and are injected at deploy (see `agent/cloudbuild-v18.yaml`).
 **Never commit `.env*`.** Keys referenced across the codebase:
 
 - Firebase/GCP: `FIREBASE_SERVICE_ACCOUNT_JSON`, `FIREBASE_STORAGE_BUCKET`, `FIREBASE_PROJECT_ID`
