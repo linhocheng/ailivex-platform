@@ -6,14 +6,15 @@ export const runtime = 'nodejs';
 
 type Params = { params: Promise<{ id: string }> };
 
-// PATCH — 改 tier 或 importance
+// PATCH — 改 tier / status / importance
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
-  const body = await req.json().catch(() => null) as { tier?: string; importance?: number } | null;
+  const body = await req.json().catch(() => null) as { tier?: string; status?: string; importance?: number } | null;
   if (!id) return NextResponse.json({ error: 'id 必填' }, { status: 400 });
 
   const updates: Record<string, unknown> = {};
   if (body?.tier && ['fresh', 'core', 'archive'].includes(body.tier)) updates.tier = body.tier;
+  if (body?.status && ['active', 'stale', 'resolved'].includes(body.status)) updates.status = body.status;
   if (typeof body?.importance === 'number') updates.importance = Math.max(1, Math.min(10, body.importance));
   if (Object.keys(updates).length === 0) return NextResponse.json({ error: '無可更新欄位' }, { status: 400 });
 

@@ -21,6 +21,7 @@ export interface DispatchCall {
 export interface ParsedTools {
   visible: string;
   remembers: string[];
+  expressions: string[];  // [[EXPRESSION]] 表達層條目（僅 admin 對話會寫入，閘門在 dialogue route）
   documents: Array<{ title: string; brief: string }>;
   dispatches: DispatchCall[];
   // 方法論狀態機信號（角色只發信號，狀態推進在 methodology.ts 程式做）
@@ -30,6 +31,7 @@ export interface ParsedTools {
 }
 
 const REMEMBER_RE = /\[\[REMEMBER\]\]([\s\S]*?)\[\[\/REMEMBER\]\]/g;
+const EXPRESSION_RE = /\[\[EXPRESSION\]\]([\s\S]*?)\[\[\/EXPRESSION\]\]/g;
 const DOCUMENT_RE = /\[\[DOCUMENT(?:\s+title="([^"]*)")?\]\]([\s\S]*?)\[\[\/DOCUMENT\]\]/g;
 const DISPATCH_RE = /\[\[DISPATCH(?:\s+([^[\]]*))?\]\][\s\S]*?\[\[\/DISPATCH\]\]/g;
 const METHOD_START_RE = /\[\[METHOD_START\s+id=(?:"([^"]*)"|'([^']*)')\s*\]\]/g;
@@ -49,6 +51,7 @@ const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generat
 
 export function parseToolTags(raw: string): ParsedTools {
   const remembers: string[] = [];
+  const expressions: string[] = [];
   const documents: Array<{ title: string; brief: string }> = [];
   const dispatches: DispatchCall[] = [];
 
@@ -58,6 +61,12 @@ export function parseToolTags(raw: string): ParsedTools {
   while ((m = REMEMBER_RE.exec(raw)) !== null) {
     const c = m[1].trim();
     if (c) remembers.push(c);
+  }
+
+  EXPRESSION_RE.lastIndex = 0;
+  while ((m = EXPRESSION_RE.exec(raw)) !== null) {
+    const c = m[1].trim();
+    if (c) expressions.push(c);
   }
 
   DOCUMENT_RE.lastIndex = 0;
@@ -97,6 +106,7 @@ export function parseToolTags(raw: string): ParsedTools {
 
   const visible = raw
     .replace(REMEMBER_RE, '')
+    .replace(EXPRESSION_RE, '')
     .replace(DOCUMENT_RE, '')
     .replace(DISPATCH_RE, '')
     .replace(METHOD_START_RE, '')
@@ -105,7 +115,7 @@ export function parseToolTags(raw: string): ParsedTools {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-  return { visible, remembers, documents, dispatches, methodStart, methodNext, methodExit };
+  return { visible, remembers, expressions, documents, dispatches, methodStart, methodNext, methodExit };
 }
 
 export const TOOL_INSTRUCTIONS = `

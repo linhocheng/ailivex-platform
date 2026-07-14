@@ -25,6 +25,7 @@ const ALL_CAPABILITIES: { value: TaskCapability; label: string }[] = [
 
 type EditState = {
   id: string; name: string; soul: string;
+  expression: string[];
   voiceId: string; voiceSettings: VoiceSettings; convSettings: ConvSettings;
   voice: CharVoiceProfile;
   aliases: string[];
@@ -374,6 +375,7 @@ export default function AdminCharacters() {
     payload.voiceSettings = editing.voiceSettings;
     payload.convSettings = editing.convSettings;
     payload.voice = editing.voice;
+    payload.expression = editing.expression.filter(s => s.trim());
     payload.aliases = editing.aliases.filter(a => a.trim());
     payload.capabilities = editing.capabilities;
     payload.recordingEnabled = editing.recordingEnabled;
@@ -439,10 +441,10 @@ export default function AdminCharacters() {
                   <button onClick={async () => {
                     setEditMsg(''); setEditAuditionText('你好，我是這個角色的聲音，請多指教。');
                     setEditLoading(true); // 完整資料回來前擋存檔
-                    setEditing({ id:c.id, name:c.name, soul:'', voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, voice:{}, aliases:[], capabilities:[], recordingEnabled:false, imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
+                    setEditing({ id:c.id, name:c.name, soul:'', expression:[], voiceId:c.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...c.voiceSettings}, convSettings:{}, voice:{}, aliases:[], capabilities:[], recordingEnabled:false, imageStyle:'', heygenAvatarId:'', heygenAvatarUrl:'', avatar:null });
                     const r = await fetch(`/api/admin/characters/${c.id}`).then(r => r.json()).catch(()=>null);
                     if (r?.id) {
-                      setEditing({ id:r.id, name:r.name, soul:r.soul, voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, voice:r.voice||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], recordingEnabled:r.recordingEnabled===true, imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
+                      setEditing({ id:r.id, name:r.name, soul:r.soul, expression:r.expression||[], voiceId:r.voiceIdMinimax, voiceSettings:{emotion:'neutral', ...r.voiceSettings}, convSettings:r.convSettings||{}, voice:r.voice||{}, aliases:r.aliases||[], capabilities:r.capabilities||[], recordingEnabled:r.recordingEnabled===true, imageStyle:r.imageStyle||'', heygenAvatarId:r.heygenAvatarId||'', heygenAvatarUrl:r.heygenAvatarUrl||'', avatar:null });
                       setEditLoading(false);
                     } else {
                       setEditMsg('完整資料載入失敗——請關閉視窗重開，此狀態下不能儲存（避免把欄位洗成空白）');
@@ -451,6 +453,11 @@ export default function AdminCharacters() {
                     background:'transparent', color:'var(--text)', fontSize:12, cursor:'pointer' }}>
                     編輯
                   </button>
+                  <a href={`/admin/memories?characterId=${c.id}`}
+                    style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
+                      background:'transparent', color:'var(--text)', fontSize:12, textDecoration:'none' }}>
+                    記憶
+                  </a>
                   <button onClick={() => openBrandAssets(c.id, c.name)}
                     style={{ padding:'5px 10px', borderRadius:6, border:'1px solid var(--border)',
                       background:'transparent', color:'var(--accent-2)', fontSize:12, cursor:'pointer' }}>
@@ -843,6 +850,15 @@ export default function AdminCharacters() {
             <Field label="靈魂（留空不更新）">
               <textarea style={{ ...inputBase, minHeight:110, resize:'vertical', fontFamily:'inherit' }}
                 placeholder="靈魂（直接吃這個，存下去馬上生效）" value={editing.soul} onChange={e=>setEditing({...editing,soul:e.target.value})} />
+            </Field>
+            <Field label="表達層（每行一條，上限 20；慣用語/情境說法，soul 外掛，所有對話無條件注入。admin 對話中角色也會自己寫入）">
+              <textarea style={{ ...inputBase, minHeight:90, resize:'vertical', fontFamily:'inherit', fontSize:13 }}
+                placeholder={'例：\n遇到對方猶豫不決時，我慣說「先講你最怕發生什麼」\n收尾時我習慣用「就先這樣，做了再說」'}
+                value={editing.expression.join('\n')}
+                onChange={e=>setEditing({...editing, expression: e.target.value.split('\n')})} />
+              <div style={{ fontSize:11, color:'var(--muted)', marginTop:4 }}>
+                目前 {editing.expression.filter(s=>s.trim()).length} / 20 條
+              </div>
             </Field>
             <Field label="說話的樣子（Podcast 對談用；正向描述他怎麼講話，不是禁止清單。全空 = 不個人化）">
               <div style={{ display:'flex', flexDirection:'column', gap:8 }}>

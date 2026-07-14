@@ -86,6 +86,7 @@ export interface PodcastLine {
 export interface CharacterDoc {
   name: string;
   soul: string;            // 靈魂（單一真相；舊 soulCore 已於 2026-07-03 遷移合併，淘汰版備份在 soulLegacy）
+  expression?: string[];   // 表達層——soul 外掛：慣用語/情境說法，無條件全文注入（不走檢索不衰減）；admin 對話 [[EXPRESSION]] 或後台維護，上限見 expression.ts
   avatarUrl: string;
   voiceIdMinimax?: string; // 即時語音用
   voiceSettings?: VoiceSettings;

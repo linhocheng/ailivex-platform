@@ -30,6 +30,8 @@ export async function GET(req: Request) {
       characterId: m.characterId,
       content: m.content,
       tier: m.tier,
+      type: m.type ?? null,
+      status: m.status ?? null,
       importance: m.importance,
       hitCount: m.hitCount,
       source: m.source,

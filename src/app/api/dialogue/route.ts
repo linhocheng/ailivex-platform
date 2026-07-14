@@ -21,6 +21,7 @@ import { loadDiaryBlock, writeDiaryEntry } from '@/lib/diary';
 import { loadKnowledgeBlock } from '@/lib/knowledge';
 import { loadMethodologyBlock, applyMethodologySignals } from '@/lib/methodology';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
+import { buildExpressionBlock, EXPRESSION_INSTRUCTION, EXPRESSION_MAX } from '@/lib/expression';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
 import { QuotaExceededError, consumeTextQuota, refundTextQuota } from '@/lib/quota';
 import { dispatchTask } from '@/lib/task-dispatcher';
@@ -95,7 +96,10 @@ export async function POST(req: Request) {
   ]);
   const history = convCtx.history;
 
-  const system = `${soul}${memoryBlock}${diaryBlock}${knowledgeBlock}${methodologyRes.block}${TOOL_INSTRUCTIONS}
+  // 表達層：緊貼 soul 無條件注入；[[EXPRESSION]] 教學指令只給 admin（訓練師）對話，一般用戶不帶
+  const expressionBlock = buildExpressionBlock(char.expression);
+  const toolInstructions = user.role === 'admin' ? TOOL_INSTRUCTIONS + EXPRESSION_INSTRUCTION : TOOL_INSTRUCTIONS;
+  const system = `${soul}${expressionBlock}${memoryBlock}${diaryBlock}${knowledgeBlock}${methodologyRes.block}${toolInstructions}
 
 你正在跟「${user.name}」對話。用你的靈魂，自然地回應。${linkContext ? `
 
@@ -134,6 +138,21 @@ export async function POST(req: Request) {
       { methodStart: parsed.methodStart, methodNext: parsed.methodNext, methodExit: parsed.methodExit },
       convCtx.activeMethodology, methodologyRes.active,
     );
+  }
+
+  // 表達層寫入：僅 admin（訓練師）對話生效；上限硬閘，滿了誠實告知不硬塞
+  if (user.role === 'admin' && parsed.expressions.length > 0) {
+    const existing = (char.expression ?? []).map(s => s.trim()).filter(Boolean);
+    const fresh = parsed.expressions.filter(s => !existing.includes(s));
+    const room = Math.max(0, EXPRESSION_MAX - existing.length);
+    const toAdd = fresh.slice(0, room);
+    if (toAdd.length > 0) {
+      await db.collection(COL.characters).doc(characterId).update({ expression: [...existing, ...toAdd] })
+        .catch(e => console.error('[dialogue] expression write failed:', e instanceof Error ? e.message : String(e)));
+    }
+    if (fresh.length > toAdd.length) {
+      reply += `\n\n（表達層已達 ${EXPRESSION_MAX} 條上限，本次有 ${fresh.length - toAdd.length} 條未寫入；請先到後台整理再教。）`;
+    }
   }
 
   // 工具副作用（不阻斷回覆）

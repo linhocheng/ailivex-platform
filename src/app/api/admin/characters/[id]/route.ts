@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getFirebaseAdmin, getFirestore } from '@/lib/firebase-admin';
 import { COL, type CharacterDoc, type VoiceSettings, type ConvSettings, type TaskCapability, type CharacterVoiceProfile } from '@/lib/collections';
+import { EXPRESSION_MAX } from '@/lib/expression';
 
 const ALL_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generation', 'writing', 'web_search', 'script_draft', 'story_draft', 'video_generation'];
 
@@ -21,6 +22,7 @@ export async function GET(_req: Request, { params }: Params) {
     id,
     name: c.name,
     soul: c.soul || '',
+    expression: c.expression || [],
     voiceIdMinimax: c.voiceIdMinimax || '',
     voiceSettings: c.voiceSettings || {},
     convSettings: c.convSettings || {},
@@ -40,7 +42,7 @@ export async function GET(_req: Request, { params }: Params) {
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
   const body = await req.json().catch(() => null) as {
-    name?: string; soul?: string;
+    name?: string; soul?: string; expression?: string[];
     voiceIdMinimax?: string; voiceSettings?: VoiceSettings;
     convSettings?: ConvSettings; aliases?: string[];
     voice?: CharacterVoiceProfile;
@@ -67,6 +69,12 @@ export async function PATCH(req: Request, { params }: Params) {
 
   if (name) updates.name = name;
   if (soul) updates.soul = soul;
+  if (Array.isArray(body?.expression)) {
+    updates.expression = body.expression
+      .map(s => (typeof s === 'string' ? s.trim().slice(0, 300) : ''))
+      .filter(Boolean)
+      .slice(0, EXPRESSION_MAX);
+  }
   if (body?.voiceIdMinimax !== undefined) updates.voiceIdMinimax = body.voiceIdMinimax.trim();
   if (body?.voiceSettings !== undefined) updates.voiceSettings = sanitizeVoiceSettings(body.voiceSettings);
   if (body?.convSettings !== undefined) updates.convSettings = sanitizeConvSettings(body.convSettings);

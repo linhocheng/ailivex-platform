@@ -116,6 +116,7 @@ class CharacterContext:
     conv_settings: dict = field(default_factory=dict)   # 對話手感：responseSpeed/interruptSensitivity/imThreshold/interruptThreshold
     aliases: list = field(default_factory=list)         # 角色別名（v5 圓桌點名用，如 簡報王→[福哥,王永福]）；v1-v4 不讀
     capabilities: list = field(default_factory=list)    # 允許呼叫的工廠能力，v13+ 讀，缺省空陣列
+    expression: list = field(default_factory=list)      # 表達層——soul 外掛（慣用語/情境說法），缺省空=行為不變
 
 
 @dataclass
@@ -170,6 +171,7 @@ def load_character(character_id: str) -> CharacterContext:
         conv_settings=d.get("convSettings") or {},
         aliases=d.get("aliases") or [],
         capabilities=d.get("capabilities") or [],
+        expression=d.get("expression") or [],
     )
 
 
@@ -792,6 +794,12 @@ def build_system_prompt(char: CharacterContext, conv: ConversationContext, memor
 
     # 反討好天條（全局·緊貼靈魂，後台可改）
     parts.append("\n\n" + gp["antiSycophancy"])
+
+    # 表達層（soul 外掛，與 TS dialogue route 鏡像；空=零影響）
+    expr_items = [s.strip() for s in getattr(char, "expression", []) if isinstance(s, str) and s.strip()]
+    if expr_items:
+        parts.append("\n\n【你的表達習慣】\n" + "\n".join(f"- {s}" for s in expr_items)
+                     + "\n這些是你自然的說話方式，內化著用，不要逐條背誦、不要刻意展示。")
 
     STALE_DAYS = {"question": 60, "emotion": 90}
     from datetime import timezone
