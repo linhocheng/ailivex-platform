@@ -265,6 +265,7 @@ export async function writeMemory(
     importance: opts?.importance ?? 5,
     tier: opts?.tier ?? 'fresh',
     type: opts?.type ?? 'fact',
+    status: 'active',
     hitCount: 0,
     lastHitAt: null,
     source: opts?.source ?? 'conversation',
