@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '@/lib/firebase-admin';
-import { COL, VOICE_VERSIONS, type AccessDoc } from '@/lib/collections';
+import { COL, ACTIVE_VOICE_VERSIONS, type AccessDoc } from '@/lib/collections';
 
 export const runtime = 'nodejs';
 
@@ -9,7 +9,8 @@ function accessId(userId: string, characterId: string) {
   return `${userId}_${characterId}`;
 }
 
-const VALID_VERSIONS = new Set<string>(VOICE_VERSIONS.map(v => v.id));
+// standby 冷備不可指派（0 實例＝聾；agentNameForVersion 也會把殘留釘選解析回預設，雙層防禦）
+const VALID_VERSIONS = new Set<string>(ACTIVE_VOICE_VERSIONS.map(v => v.id));
 
 // 列出指派關係（可選 ?userId= 過濾）
 export async function GET(req: Request) {

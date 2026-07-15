@@ -172,9 +172,15 @@ export interface AccessDoc {
 
 /**
  * 語音 agent 版本登錄表 —— 單一真相源。
- * 只登錄「活著的服務」：登錄了就代表可以被 access.voiceVersion 指派、可以接到真實通話。
- * 退役版本一律移出登錄表（服務已降 0，LiveKit agent 降 0＝聾——指派過去就是死通話；
- * 未知版本 agentNameForVersion 會安全回落 DEFAULT）。頁面路由只有 /realtime/（2026-07-10 殼頁全清）。
+ * 只登錄「活著的服務」與「冷備」：
+ *   - 無 standby 旗標＝現役，可被 access.voiceVersion 指派、可接真實通話。
+ *   - standby: true＝冷備（服務降 0，LiveKit agent 降 0＝聾）：留在登錄表是為了回滾路徑，
+ *     但 agentNameForVersion 一律把它解析成 DEFAULT——殘留的 canary 釘選在物理上打不到聾服務。
+ *     （教訓 2026-07-15：v18 轉正沒清 v17 canary 釘選，Adam 的 tracy/Lilith 派工到 0 實例服務變死通話。
+ *     顯式狀態不隨預設值走——防禦釘在 agentNameForVersion 這個唯一咽喉，不靠人記得清資料。）
+ *     回滾 SOP：先 scale up min=1 → 拿掉 standby 旗標 → 切 DEFAULT。
+ * 退役版本一律移出登錄表（未知版本 agentNameForVersion 也安全回落 DEFAULT）。
+ * 頁面路由只有 /realtime/（2026-07-10 殼頁全清）。
  *
  * 版本迭代歷史（封存備查；服務降 0 保留在 Cloud Run，重啟需先 scale up）：
  *   base  基礎 1:1 語音對話
@@ -196,16 +202,20 @@ export interface AccessDoc {
  *   v18   打斷音量閘（重設計版：只攔 pause 不碰 commit；讓位層舊版資產在 git 4993b28）
  */
 export const VOICE_VERSIONS = [
-  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17' }, // 冷備已降 0（agent 降 0＝聾：回滾要先 scale up min=1 再切 DEFAULT）
-  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18' }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
+  { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17', standby: true },  // 冷備已降 0（聾）：只當回滾坑位，永不被派工
+  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18', standby: false }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v18';
 
-/** 版本 id → LiveKit agentName。未知/缺省 → 全域預設版本。 */
+/** 可被指派／派工的現役版本（standby 冷備排除） */
+export const ACTIVE_VOICE_VERSIONS = VOICE_VERSIONS.filter(v => !v.standby);
+
+/** 版本 id → LiveKit agentName。未知/缺省/standby 冷備 → 全域預設版本（冷備＝0 實例＝聾，派過去是死通話）。 */
 export function agentNameForVersion(version?: string): string {
   const fallback = VOICE_VERSIONS.find(v => v.id === DEFAULT_VOICE_VERSION)!;
-  return (VOICE_VERSIONS.find(v => v.id === version) || fallback).agentName;
+  const hit = VOICE_VERSIONS.find(v => v.id === version);
+  return (!hit || hit.standby) ? fallback.agentName : hit.agentName;
 }
 
 export interface ChatMessage {

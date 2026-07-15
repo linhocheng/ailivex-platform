@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { Icon, Avatar, Dot, Field } from '@/app/_components/ui';
-import { VOICE_VERSIONS, DEFAULT_VOICE_VERSION } from '@/lib/collections';
+import { VOICE_VERSIONS, ACTIVE_VOICE_VERSIONS, DEFAULT_VOICE_VERSION } from '@/lib/collections';
 
 const DEFAULT_VOICE_LABEL = VOICE_VERSIONS.find(v => v.id === DEFAULT_VOICE_VERSION)?.label || DEFAULT_VOICE_VERSION;
 
@@ -132,7 +132,7 @@ export default function AdminAccess() {
                             title="指派語音版本（用戶端看不到）"
                             style={{ ...inputStyle, width:'auto', padding:'7px 28px 7px 11px', fontSize:13 }}>
                             <option value="">預設（{DEFAULT_VOICE_LABEL}）</option>
-                            {VOICE_VERSIONS.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
+                            {ACTIVE_VOICE_VERSIONS.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
                           </select>
                           <Icon name="chevron" size={14} style={{ position:'absolute', right:9, top:'50%', transform:'translateY(-50%) rotate(90deg)', color:'var(--muted)', pointerEvents:'none' }} />
                         </div>
