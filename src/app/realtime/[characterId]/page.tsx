@@ -102,6 +102,8 @@ export default function RealtimeCallPage() {
 
   const [state, setState] = useState<CallState>('idle');
   const [agentVersion, setAgentVersion] = useState(''); // 實際派工版本（token 回傳），非頁面死標籤
+  const [gptVoice, setGptVoice] = useState(false);      // GPT Voice 線按鈕（已退役，API 恆回 false）
+  const [trainerVoice, setTrainerVoice] = useState(false); // 訓練線（共創）按鈕：admin×角色共創旗標
   const [errorMsg, setErrorMsg] = useState('');
   const [characterName, setCharacterName] = useState('');
   // 用量管制：點數用盡不是技術錯誤，用角色名下方的文案溝通，不走紅字 error
@@ -129,6 +131,11 @@ export default function RealtimeCallPage() {
   const connectStartRef = useRef(0);      // 按下撥號的時刻——首音延遲的 t0
   const connectMsRef = useRef(0);         // room.connect 完成耗時（建線段，供拆解慢在哪）
   const metricsSentRef = useRef(false);   // 每通只回報一次
+  // 回合延遲打點（Phase 0）：「用戶說完 → 角色出聲」的體感延遲，兩條語音線共用同一把尺。
+  // 「說完」= 麥克風 RMS 高於門檻的語音段，靜音持續 silenceMs 後收束（取最後高於門檻的時刻當 t0）；
+  // 「出聲」= ActiveSpeakersChanged 遠端 false→true（語意事件，不是 TrackSubscribed 傳輸事件）。
+  // 角色說話期間不累積用戶語音（外放喇叭回音防護）——代價是搶話回合不進樣本，Phase 0 只量正常輪替。
+  const turnRef = useRef({ userAboveSince: 0, userLastAbove: 0, pendingStopAt: 0, agentSpeaking: false, latencies: [] as number[] });
   const micAnalyserRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode; raf: number } | null>(null);
   const agentAnalyserRef = useRef<{ ctx: AudioContext; analyser: AnalyserNode } | null>(null);
   const micLevelRef = useRef(0);
@@ -218,6 +225,25 @@ export default function RealtimeCallPage() {
   const log = (level: DiagLog['level'], msg: string) =>
     setDiagLogs(prev => [...prev.slice(-49), { ts: Date.now(), level, msg }]);
 
+  // 回合延遲判定參數：speechRms 低於此值算靜音；minUtteranceMs 濾雜音短促峰；
+  // minLatencyMs 下限濾掉「角色本來就在講、事件抖動」的假配對。
+  const TURN = { speechRms: 0.04, silenceMs: 500, minUtteranceMs: 300, minLatencyMs: 200, maxLatencyMs: 30_000 };
+
+  const trackUserSpeech = (rms: number) => {
+    const t = turnRef.current, now = Date.now();
+    if (t.agentSpeaking) { t.userAboveSince = 0; return; }  // 回音防護：角色說話時不累積
+    if (rms > TURN.speechRms) {
+      if (!t.userAboveSince) t.userAboveSince = now;
+      t.userLastAbove = now;
+      t.pendingStopAt = 0;  // 又開口了 → 取消上一個待配對的停頓
+      return;
+    }
+    if (t.userAboveSince && now - t.userLastAbove >= TURN.silenceMs) {
+      if (t.userLastAbove - t.userAboveSince >= TURN.minUtteranceMs) t.pendingStopAt = t.userLastAbove;
+      t.userAboveSince = 0;
+    }
+  };
+
   const startMicMonitor = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -235,6 +261,7 @@ export default function RealtimeCallPage() {
         let sum = 0;
         for (let i = 0; i < buf.length; i++) { const v = (buf[i]-128)/128; sum += v*v; }
         micLevelRef.current = Math.sqrt(sum/buf.length);
+        trackUserSpeech(micLevelRef.current);
         setHealth(h => ({ ...h, micLevel: micLevelRef.current }));
         const raf = requestAnimationFrame(tick);
         if (micAnalyserRef.current) micAnalyserRef.current.raf = raf;
@@ -258,20 +285,21 @@ export default function RealtimeCallPage() {
     micLevelRef.current = 0;
   };
 
-  const handleConnect = async () => {
+  const handleConnect = async (line?: 'gpt' | 'trainer') => {
     setState('connecting'); setFlowForState('connecting');
     setErrorMsg(''); setHealth(INITIAL_HEALTH); setDiagLogs([]);
     agentIdentityRef.current = '';
     connectStartRef.current = Date.now();
     connectMsRef.current = 0;
     metricsSentRef.current = false;
+    turnRef.current = { userAboveSince: 0, userLastAbove: 0, pendingStopAt: 0, agentSpeaking: false, latencies: [] };
     log('info', `connect: ${characterId}`);
     try {
       await startMicMonitor();
 
       const tokenRes = await fetch('/api/livekit/token', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId }),
+        body: JSON.stringify({ characterId, ...(line ? { line } : {}) }),
       });
       if (!tokenRes.ok) {
         const err = await tokenRes.json().catch(() => ({}));
@@ -348,6 +376,19 @@ export default function RealtimeCallPage() {
           if (track.kind === Track.Kind.Audio) setHealth(h => ({ ...h, audio: 'absent' }));
         })
         .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+          // 回合延遲：遠端 false→true 的瞬間，跟最近一次「用戶說完」配對。
+          // 這段要在首音的 early return 之前——首音每通只跑一次，回合要跑整通。
+          const agentNow = speakers.some(s => !s.isLocal);
+          const t = turnRef.current;
+          if (agentNow && !t.agentSpeaking && t.pendingStopAt) {
+            const ms = Date.now() - t.pendingStopAt;
+            if (ms >= TURN.minLatencyMs && ms <= TURN.maxLatencyMs && t.latencies.length < 200) {
+              t.latencies.push(ms);
+              log('info', `turn latency: ${ms}ms (#${t.latencies.length})`);
+            }
+            t.pendingStopAt = 0;
+          }
+          t.agentSpeaking = agentNow;
           // 首音延遲：TrackSubscribed 只代表音軌接上（agent 一進房就發布），
           // ActiveSpeakersChanged 才是真的出聲。第一次聽到遠端聲音就回報，每通一次。
           if (metricsSentRef.current || !connectStartRef.current) return;
@@ -422,6 +463,15 @@ export default function RealtimeCallPage() {
       [JSON.stringify({ characterId, conversationId: `ailivex-voice-${characterId}-${identity}`, roomName: roomNameRef.current })],
       { type: 'application/json' }
     ));
+    // 回合延遲整通一次回報（掛斷時才有完整樣本；beacon 保證關頁也送得出）
+    const turns = turnRef.current.latencies;
+    if (turns.length && roomNameRef.current) {
+      navigator.sendBeacon('/api/voice-metrics', new Blob(
+        [JSON.stringify({ roomName: roomNameRef.current, turnLatenciesMs: turns })],
+        { type: 'application/json' }
+      ));
+      turnRef.current.latencies = [];
+    }
   }, [characterId]);
 
   const reallyDisconnect = useCallback(async () => {
@@ -487,6 +537,8 @@ export default function RealtimeCallPage() {
       .then(d => {
         if (d.name) setCharacterName(d.name);
         if (d.avatarUrl) setCharacterImage(d.avatarUrl);
+        setGptVoice(!!d.gptVoice);
+        setTrainerVoice(!!d.trainerVoice);
       })
       .catch(() => {});
   }, [characterId]);
@@ -657,9 +709,13 @@ export default function RealtimeCallPage() {
         <div style={{ display:'flex', justifyContent:'center', alignItems:'center', gap:18 }}>
           <CircleControl icon="mic-off" label={micMuted?'已靜音':'靜音'} onClick={toggleMic} active={micMuted} danger={micMuted} disabled={!inCall} />
           {canConnect
-            ? <CircleControl icon="phone" label={powerOff ? '現在無法撥號' : quotaExhausted ? '時數已用罄' : '接通'} onClick={handleConnect} big primary disabled={powerOff || quotaExhausted} />
+            ? <CircleControl icon="phone" label={powerOff ? '現在無法撥號' : quotaExhausted ? '時數已用罄' : '接通'} onClick={() => void handleConnect()} big primary disabled={powerOff || quotaExhausted} />
             : <CircleControl icon="phone-off" label="掛斷" onClick={handleDisconnect} big hangup disabled={!canDisconnect} />}
-          <div style={{ width:56 }} />
+          {canConnect && trainerVoice
+            ? <CircleControl icon="phone" label="共創" onClick={() => void handleConnect('trainer')} disabled={powerOff || quotaExhausted} />
+            : canConnect && gptVoice
+            ? <CircleControl icon="phone" label="GPT Voice" onClick={() => void handleConnect('gpt')} disabled={powerOff || quotaExhausted} />
+            : <div style={{ width:56 }} />}
         </div>
         {state === 'disconnected' && (
           <Link href={`/chat/${characterId}`}

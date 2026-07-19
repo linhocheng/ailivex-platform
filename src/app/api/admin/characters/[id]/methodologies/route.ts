@@ -35,7 +35,8 @@ export async function GET(_req: Request, { params }: Params) {
           : (m.createdAt as { toMillis(): number })?.toMillis?.() ?? null,
       };
     })
-    .filter(m => m.status === 'active')
+    // draft（角色在 admin 對話中的提案）一併帶出給後台審核；archived 不出
+    .filter(m => m.status === 'active' || m.status === 'draft')
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   return NextResponse.json({ methodologies: items });
 }

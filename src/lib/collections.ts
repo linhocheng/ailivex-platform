@@ -22,6 +22,7 @@ export const COL = {
   brandProducts: 'brand_products',
   knowledgeDocs: 'knowledge_docs',
   knowledgeChunks: 'knowledge_chunks',
+  knowledgeProposals: 'knowledge_proposals',
   methodologies: 'methodologies',
   recordings: 'recordings',
   memoryHealthRuns: 'memory_health_runs',
@@ -103,6 +104,7 @@ export interface CharacterDoc {
   // 由 admin knowledge/methodologies routes 確定性維護（增刪時 increment/遞減），不靠 LLM。
   knowledgeChunkCount?: number;   // 該角色 active 知識塊總數
   methodologyCount?: number;      // 該角色 active 方法論總數
+  methodProposalEnabled?: boolean; // 方法論共創試驗閘：開了之後 admin 對話會教角色 [[PROPOSE_METHOD]] 提案（落 draft，審核轉正才生效）
   recordingEnabled?: boolean;     // 對話錄音（LiveKit Egress 混流 → GCS；私人使用，缺省 = 關）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;
@@ -167,6 +169,7 @@ export interface AccessDoc {
   userId: string;
   characterId: string;
   voiceVersion?: string;   // 指派的語音 agent 版本（VOICE_VERSIONS.id）；缺省 = 全域預設
+  gptVoiceEnabled?: boolean;  // GPT Voice 線開關（獨立第二條通話線）；admin 恆可不看此欄
   grantedAt: FirebaseFirestore.Timestamp | Date;
 }
 
@@ -201,15 +204,42 @@ export interface AccessDoc {
  *   v17   ★ LIVE — 記憶全景圖語音道（remote 記憶塊＋掛斷日記）；v17.4 移除 3a
  *   v18   打斷音量閘（重設計版：只攔 pause 不碰 commit；讓位層舊版資產在 git 4993b28）
  */
+/**
+ * 訓練線（共創高我線）—— 第二線插座的現任使用者（前任 GPT Voice 已退役）。
+ * 定位：admin 訓練師直通角色底層的共創通話（提案方法論/知識）；永不取代 DEFAULT——
+ * 兩線長期並存，一般用戶不知道它存在。
+ * 閘門：token route 驗 admin ＋ characters.methodProposalEnabled 雙閘（UI 隱藏不是安全）。
+ * 服務費用掛在語音電源開關傘下（voice-power CANARY_VOICE_VERSIONS）。
+ */
+export const TRAINER_VOICE_LINE = {
+  id: 'trainer',
+  label: '共創',
+  agentName: 'ailivex-realtime-v19',
+} as const;
+
 export const VOICE_VERSIONS = [
   { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17', standby: true },  // 冷備已降 0（聾）：只當回滾坑位，永不被派工
   { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18', standby: false }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
+  { id: 'v19', label: '19',   agentName: 'ailivex-realtime-v19', standby: false }, // 訓練線（= v18 + propose_method/propose_knowledge）：TRAINER_VOICE_LINE 專用，不進一般派工輪替
 ] as const;
 
 export const DEFAULT_VOICE_VERSION = 'v18';
 
 /** 可被指派／派工的現役版本（standby 冷備排除） */
 export const ACTIVE_VOICE_VERSIONS = VOICE_VERSIONS.filter(v => !v.standby);
+
+/**
+ * GPT Voice 線 —— 獨立第二條通話線，不在 vN 系譜裡。
+ * 配線：gpt-realtime 聽＋想（text-only 輸出）→ MiniMax 發聲（角色聲音照舊）。
+ * 派工靠 token route 的 line:'gpt' + access.gptVoiceEnabled（admin 恆可），與 voiceVersion 互不干涉。
+ * 服務：Cloud Run ailivex-realtime-agent-gpt（agent/main_gpt.py，cloudbuild-gpt.yaml）。
+ *
+ * ★ 2026-07-16 一晚 POC 後判負退役（retired: true）：底模身份訓練輾過角色靈魂（直問即自報
+ * ChatGPT）＋VAD 幻聽。完整證據與可取之處見 docs/gpt_voice_line_retrospective_20260716.md。
+ * retired 同時關兩個閘：前台按鈕（characters/[id]）＋token 派工（服務已降 0＝聾，放行=死通話）。
+ * 復活 SOP：服務 scale up → retired 改 false → 部署 web。
+ */
+export const GPT_VOICE_LINE = { id: 'gpt', label: 'GPT', agentName: 'ailivex-realtime-gpt', retired: true } as const;
 
 /** 版本 id → LiveKit agentName。未知/缺省/standby 冷備 → 全域預設版本（冷備＝0 實例＝聾，派過去是死通話）。 */
 export function agentNameForVersion(version?: string): string {
@@ -368,6 +398,23 @@ export interface KnowledgeDocDoc {
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 
+/**
+ * 知識提案 —— 共創閘（admin×methodProposalEnabled）下角色提的入庫候選。
+ * 只是候選文字，不切塊不嵌入；審核通過（轉入庫）才走 ingestKnowledgeDoc 正式管線。
+ * 為什麼要審：知識庫是事實層，角色會幻覺（Bacha Coffee 曾被記成 1876 咖啡）——
+ * 權威度與真偽是 Adam 的編輯責任，不給角色自我入庫的直通管。
+ */
+export interface KnowledgeProposalDoc {
+  characterId: string;
+  title: string;
+  content: string;          // 提案原文（審核通過才切塊）
+  sourceNote?: string;      // 角色自述的內容來源（哪場對話/誰教的）
+  proposedBy: string;       // 收下提案的 admin userId
+  status: 'draft' | 'ingested' | 'rejected';
+  ingestedDocId?: string;   // 轉入庫後 -> knowledge_docs id
+  createdAt: FirebaseFirestore.Timestamp | Date;
+}
+
 export interface KnowledgeChunkDoc {
   characterId: string;         // 冗餘存一份，檢索免 join
   documentId: string;          // -> knowledge_docs
@@ -399,7 +446,10 @@ export interface MethodologyDoc {
   triggerEmb?: number[];    // 只嵌觸發描述
   preconditions: string[];  // 使用前提（例：用戶需先陳述目標）
   steps: MethodologyStep[];
-  status: 'active' | 'archived';
+  // draft = 角色在 admin 對話中提案、待審核（對用戶完全隱形，不計入 methodologyCount）；
+  // 審核轉正 → active 並 increment 計數。
+  status: 'active' | 'archived' | 'draft';
+  proposedBy?: string;      // 提案出身：收下提案的 admin userId（僅 draft 提案有值）
   createdAt: FirebaseFirestore.Timestamp | Date;
 }
 

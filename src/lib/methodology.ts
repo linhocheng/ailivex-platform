@@ -19,6 +19,7 @@ import {
   type MethodologyStep,
 } from '@/lib/collections';
 import { generateKnowledgeEmbedding, cosineSimilarity } from '@/lib/embeddings';
+import { parseJsonLoose } from '@/lib/safe-json';
 
 const TRIGGER_FLOOR = 0.70;  // 選招門檻：低於此不遞招（誤觸發比漏觸發傷；multilingual-002 實測觸發0.73/無關0.59-0.63）
 const MAX_METHODOLOGIES = 50;
@@ -42,6 +43,93 @@ export function sanitizeSteps(raw: unknown): MethodologyStep[] | null {
     });
   }
   return steps;
+}
+
+// ─── 方法論共創（admin 對話提案 → draft → 審核轉正）──────────────────────────
+
+/**
+ * 只在「admin 對話 × 角色開了 methodProposalEnabled」時注入——
+ * 教角色分清知識庫／方法論兩個公共器官，以及提案的格式鐵律。
+ * 一般用戶對話永遠不帶這段，角色也就不會被用戶慫恿自改手法。
+ */
+export const METHOD_PROPOSE_INSTRUCTION = `
+- 方法論共創（僅此對話開放）：對方是你的訓練師。先分清你的兩個公共器官——
+  「知識庫」是你讀過的內容，回答「是什麼／為什麼」；用戶問到相關內容時，系統會自動讓相關段落浮現給你。
+  「方法論」是你帶人的手法，回答「對方卡住了，怎麼一步步帶」；用戶陷入特定狀態時，系統會把合適的一套遞給你，由你判斷要不要出招。
+  一段觀點或素材屬於知識庫（請訓練師到後台入庫即可），不要硬做成步驟。
+  當你和訓練師把一套可反覆使用的引導方法聊成形（有名字、有步驟、有完成判準），或訓練師明確請你提出方法論時，在回覆中夾帶：
+  [[PROPOSE_METHOD]]
+  {"name":"方法名","purpose":"解決什麼問題","triggerDesc":"用戶會說出口的白話狀態描述","preconditions":["使用前提"],"steps":[{"instruction":"這一步帶對方做什麼","exitCondition":"怎麼判斷這一步完成了"}]}
+  [[/PROPOSE_METHOD]]
+  格式鐵律：
+  triggerDesc 決定系統何時把這套遞給你——只寫這套獨有的狀態簽名＋用戶會說出口的白話（例：「說話繞圈、一直說自己沒有選擇」），不寫術語、不寫泛語，寫錯這套就永遠不會在對的時機出現。
+  steps 三到七步：instruction 寫目標不寫台詞（台詞會被照念變木頭），exitCondition 要具體可判（「說得出具體最壞結果」而不是「他理解了」）。
+  提案不會立即生效：訓練師在後台審核轉正後，才成為你對所有人的正式手法。標記不會顯示給對方，一般聊天不發。`;
+
+/**
+ * 共創語境用：角色現有 active 方法論清單塊。
+ * 平常對話不注入（方法論是狀態觸發才遞，角色沒有庫存清單可背）；
+ * 只在共創指令（admin×旗標）後面附上，訓練師問「你有哪些」才答得出。
+ */
+export function buildMethodInventoryNote(methods: MethodologyWithId[]): string {
+  if (methods.length === 0) {
+    return '\n  你目前還沒有任何正式方法論——這正是共創的起點，訓練師問起時如實說。';
+  }
+  return `\n  你現有的正式方法論（訓練師問起時照這份答；平常對用戶由系統在對的時機遞給你）：\n${
+    methods.map(m => `  - 《${m.name}》：${m.purpose}`).join('\n')}`;
+}
+
+export type ProposalResult =
+  | { ok: true; id: string; name: string }
+  | { ok: false; error: string };
+
+/**
+ * 收下角色的方法論提案：確定性 parse（parseJsonLoose，不 re-ask 模型修）→ 驗證 →
+ * 嵌 triggerEmb → 落 status='draft'。draft 不動 methodologyCount（相容開關語意 = active 數），
+ * 對一般用戶完全隱形；審核轉正走 admin methodologies route。
+ */
+export async function saveMethodologyProposal(
+  db: Firestore,
+  characterId: string,
+  rawJson: string,
+  proposedBy: string,
+): Promise<ProposalResult> {
+  const parsed = parseJsonLoose<Record<string, unknown>>(rawJson);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: '提案內容不是可解析的 JSON' };
+  }
+  const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+  const purpose = typeof parsed.purpose === 'string' ? parsed.purpose.trim() : '';
+  const triggerDesc = typeof parsed.triggerDesc === 'string' ? parsed.triggerDesc.trim() : '';
+  if (!name || !purpose || !triggerDesc) {
+    return { ok: false, error: 'name / purpose / triggerDesc 缺漏' };
+  }
+  const steps = sanitizeSteps(parsed.steps);
+  if (!steps) {
+    return { ok: false, error: `steps 需為 1-${MAX_STEPS} 步、每步含 instruction` };
+  }
+  // 同名冪等：同角色已有同名（不論狀態）就不重複收，避免同一場對話反覆提案灌爆待審區
+  const dup = await db.collection(COL.methodologies)
+    .where('characterId', '==', characterId).where('name', '==', name).limit(1).get();
+  if (!dup.empty) {
+    return { ok: false, error: `已有同名方法論《${name}》（可能已提過或已在庫）` };
+  }
+  const triggerEmb = await generateKnowledgeEmbedding(triggerDesc, 'document').catch(() => null);
+  const doc: MethodologyDoc = {
+    characterId,
+    name,
+    purpose,
+    triggerDesc,
+    ...(triggerEmb ? { triggerEmb } : {}),
+    preconditions: (Array.isArray(parsed.preconditions) ? parsed.preconditions : [])
+      .filter((s): s is string => typeof s === 'string' && !!s.trim()).map(s => s.trim()),
+    steps,
+    status: 'draft',
+    proposedBy,
+    createdAt: new Date(),
+  };
+  const ref = await db.collection(COL.methodologies).add(doc);
+  return { ok: true, id: ref.id, name };
 }
 
 // ─── 讀 ──────────────────────────────────────────────────────────────────────

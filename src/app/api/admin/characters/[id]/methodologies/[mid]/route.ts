@@ -16,7 +16,7 @@ export async function PATCH(req: Request, { params }: Params) {
   const { id, mid } = await params;
   const body = await req.json().catch(() => null) as {
     name?: string; purpose?: string; triggerDesc?: string;
-    preconditions?: string[]; steps?: unknown;
+    preconditions?: string[]; steps?: unknown; action?: string;
   } | null;
 
   const db = getFirestore();
@@ -25,6 +25,26 @@ export async function PATCH(req: Request, { params }: Params) {
   if (!snap.exists) return NextResponse.json({ error: '方法論不存在' }, { status: 404 });
   const existing = snap.data() as MethodologyDoc;
   if (existing.characterId !== id) return NextResponse.json({ error: '方法論不屬於此角色' }, { status: 400 });
+
+  // 轉正：draft → active，此刻才 increment 計數（相容開關語意 = active 數）。
+  // 語音線（v19 propose_method）落的 draft 沒有 triggerEmb（Python 端無 multilingual embedding）
+  // → 在這個唯一咽喉補嵌；嵌不到就不轉正（沒 triggerEmb 的 active 永遠不會被遞招＝假轉正）。
+  if (body?.action === 'approve') {
+    if (existing.status !== 'draft') {
+      return NextResponse.json({ error: '只有待審提案可以轉正' }, { status: 400 });
+    }
+    const approveUpdates: Record<string, unknown> = { status: 'active' };
+    if (!Array.isArray(existing.triggerEmb) || existing.triggerEmb.length === 0) {
+      const emb = await generateKnowledgeEmbedding(existing.triggerDesc, 'document').catch(() => null);
+      if (!emb) return NextResponse.json({ error: 'triggerEmb 生成失敗，請重試（不嵌入的方法論永遠不會被觸發）' }, { status: 500 });
+      approveUpdates.triggerEmb = emb;
+    }
+    await ref.update(approveUpdates);
+    const { FieldValue } = await import('firebase-admin/firestore');
+    await db.collection(COL.characters).doc(id)
+      .update({ methodologyCount: FieldValue.increment(1) });
+    return NextResponse.json({ ok: true });
+  }
 
   const updates: Partial<MethodologyDoc> = {};
   if (body?.name?.trim()) updates.name = body.name.trim();
@@ -55,15 +75,19 @@ export async function DELETE(_req: Request, { params }: Params) {
   const ref = db.collection(COL.methodologies).doc(mid);
   const snap = await ref.get();
   if (!snap.exists) return NextResponse.json({ error: '方法論不存在' }, { status: 404 });
-  if ((snap.data() as MethodologyDoc).characterId !== id) {
+  const doc = snap.data() as MethodologyDoc;
+  if (doc.characterId !== id) {
     return NextResponse.json({ error: '方法論不屬於此角色' }, { status: 400 });
   }
 
   await ref.delete();
-  const { FieldValue } = await import('firebase-admin/firestore');
-  await db.collection(COL.characters).doc(id)
-    .update({ methodologyCount: FieldValue.increment(-1) })
-    .catch(() => {});
+  // draft 從未計入 methodologyCount（提案落庫不加、轉正才加）→ 刪 draft 不遞減，否則計數被扣壞
+  if ((doc.status ?? 'active') === 'active') {
+    const { FieldValue } = await import('firebase-admin/firestore');
+    await db.collection(COL.characters).doc(id)
+      .update({ methodologyCount: FieldValue.increment(-1) })
+      .catch(() => {});
+  }
 
   return NextResponse.json({ ok: true });
 }

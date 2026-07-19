@@ -356,3 +356,53 @@ ${lines.map(l => `- ${l}`).join('\n')}
     return '';
   }
 }
+
+// ── 知識提案（共創閘）────────────────────────────────────────────────────────
+// 角色不能自我入庫（會幻覺——Bacha Coffee 曾被記成 1876 咖啡）：
+// 提案只落 knowledge_proposals 候選區，admin 審核「轉入庫」才走 ingestKnowledgeDoc 正式管線。
+
+export const KNOWLEDGE_PROPOSAL_MAX_CHARS = 50_000;
+
+/** 只在 admin×共創閘對話注入（與 METHOD_PROPOSE_INSTRUCTION 同閘）。 */
+export const KNOWLEDGE_PROPOSE_INSTRUCTION = `
+- 知識提案（僅此對話開放）：當訓練師教了你一段值得進知識庫的內容（方法、案例、事實、原文），或明確要你把某段內容提進知識庫時，在回覆中夾帶：
+  [[PROPOSE_KNOWLEDGE title="標題"]] 完整內容 [[/PROPOSE_KNOWLEDGE]]
+  鐵律：只提「這場對話裡真實出現過的內容」，盡量保留訓練師的原話；不要憑印象補充你不確定的事實、數字、年份、品牌名。
+  提案不會立即入庫：訓練師審核通過後才成為你的知識。標記不會顯示給對方，一般聊天不發。`;
+
+export type KnowledgeProposalResult =
+  | { ok: true; id: string; title: string }
+  | { ok: false; error: string };
+
+export async function saveKnowledgeProposal(
+  db: Firestore,
+  characterId: string,
+  title: string,
+  content: string,
+  proposedBy: string,
+  sourceNote?: string,
+): Promise<KnowledgeProposalResult> {
+  const t = (title || '').trim();
+  const c = (content || '').trim();
+  if (!t || !c) return { ok: false, error: 'title / content 缺漏' };
+  if (c.length > KNOWLEDGE_PROPOSAL_MAX_CHARS) {
+    return { ok: false, error: `內容超過 ${KNOWLEDGE_PROPOSAL_MAX_CHARS} 字上限` };
+  }
+  // 同標題冪等（僅對未處理的 draft）：同場對話反覆提不灌爆待審區
+  const dup = await db.collection(COL.knowledgeProposals)
+    .where('characterId', '==', characterId)
+    .where('title', '==', t)
+    .where('status', '==', 'draft')
+    .limit(1).get();
+  if (!dup.empty) return { ok: false, error: `已有同標題的待審提案《${t}》` };
+  const ref = await db.collection(COL.knowledgeProposals).add({
+    characterId,
+    title: t,
+    content: c,
+    ...(sourceNote?.trim() ? { sourceNote: sourceNote.trim() } : {}),
+    proposedBy,
+    status: 'draft',
+    createdAt: new Date(),
+  });
+  return { ok: true, id: ref.id, title: t };
+}

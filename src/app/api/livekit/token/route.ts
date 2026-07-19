@@ -12,7 +12,7 @@ import { RoomConfiguration, RoomAgentDispatch } from '@livekit/protocol';
 import { buildRoomEgress, recordingFilepath, livekitHttpUrl } from '@/lib/recording';
 import { getFirestore } from '@/lib/firebase-admin';
 import { getCurrentUser } from '@/lib/session';
-import { COL, agentNameForVersion, VOICE_VERSIONS, DEFAULT_VOICE_VERSION, type CharacterDoc, type AccessDoc } from '@/lib/collections';
+import { COL, agentNameForVersion, VOICE_VERSIONS, DEFAULT_VOICE_VERSION, GPT_VOICE_LINE, TRAINER_VOICE_LINE, type CharacterDoc, type AccessDoc } from '@/lib/collections';
 import { checkVoiceQuota, QuotaExceededError } from '@/lib/quota';
 import { touchLastCallAt } from '@/lib/voice-power';
 import { openVoiceSession } from '@/lib/ops-event';
@@ -32,9 +32,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'LIVEKIT_* env 未設定' }, { status: 500 });
   }
 
-  const body = await req.json().catch(() => null) as { characterId?: string } | null;
+  const body = await req.json().catch(() => null) as { characterId?: string; line?: string } | null;
   const characterId = body?.characterId?.trim();
   if (!characterId) return NextResponse.json({ error: 'characterId 必填' }, { status: 400 });
+  const wantGptLine = body?.line === GPT_VOICE_LINE.id;  // GPT Voice 線（獨立按鈕，已退役）
+  const wantTrainerLine = body?.line === TRAINER_VOICE_LINE.id;  // 訓練線（共創按鈕，admin 限定）
 
   const db = getFirestore();
   const userId = user.uid;
@@ -49,11 +51,13 @@ export async function POST(req: Request) {
   // 版本決策：前台只有一個入口，一律走 DEFAULT_VOICE_VERSION（現值見 collections.ts，別在這裡寫死版本號）。
   // 一般用戶需有 access doc；admin 免 access doc 直接進。
   let voiceVersion: string | undefined;
+  let gptVoiceEnabled = false;
   let voiceSecondsRemaining: number | null = null;  // null = 不限
   if (user.role !== 'admin') {
     const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
     if (!accessSnap.exists) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     voiceVersion = (accessSnap.data() as AccessDoc).voiceVersion;
+    gptVoiceEnabled = !!(accessSnap.data() as AccessDoc).gptVoiceEnabled;
 
     // 用量閘：語音總時數用完 → 不發 token（admin 免管制）
     try {
@@ -70,12 +74,32 @@ export async function POST(req: Request) {
     // admin 免 access doc；但若有（canary 版本指派），voiceVersion 照讀——否則 admin 永遠測不到新版本
     const accessSnap = await db.collection(COL.access).doc(`${userId}_${characterId}`).get();
     if (accessSnap.exists) voiceVersion = (accessSnap.data() as AccessDoc).voiceVersion;
+    gptVoiceEnabled = true;  // admin 恆可測 GPT 線
   }
-  const agentName = agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION
+  // GPT Voice 線：明確要求 + 有權限才分流；沒權限回 403 不靜默降級（避免「以為在測 GPT 其實打到 v18」的假象）
+  // 退役閘（2026-07-16 判負）：服務已降 0＝聾，派過去是死通話——防禦釘在派工咽喉，不只藏按鈕
+  if (wantGptLine && GPT_VOICE_LINE.retired) {
+    return NextResponse.json({ error: 'gpt_voice_retired', message: 'GPT Voice 線已退役' }, { status: 403 });
+  }
+  if (wantGptLine && !gptVoiceEnabled) {
+    return NextResponse.json({ error: 'gpt_voice_not_enabled', message: 'GPT Voice 未開通' }, { status: 403 });
+  }
+  let agentName = wantGptLine ? GPT_VOICE_LINE.agentName : agentNameForVersion(voiceVersion); // 缺省 = DEFAULT_VOICE_VERSION
 
   const charSnap = await db.collection(COL.characters).doc(characterId).get();
   if (!charSnap.exists) return NextResponse.json({ error: '角色不存在' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
+
+  // 訓練線：admin＋角色共創旗標雙閘，沒過回 403 不靜默降級（避免「以為在共創其實打到 v18」）
+  if (wantTrainerLine) {
+    if (user.role !== 'admin') {
+      return NextResponse.json({ error: 'trainer_line_admin_only', message: '訓練線僅限管理員' }, { status: 403 });
+    }
+    if (!char.methodProposalEnabled) {
+      return NextResponse.json({ error: 'trainer_line_not_enabled', message: '此角色未開放共創' }, { status: 403 });
+    }
+    agentName = TRAINER_VOICE_LINE.agentName;
+  }
 
   const ts = Date.now();
   const convId = `ailivex-voice-${characterId}-${userId}`;
@@ -127,7 +151,9 @@ export async function POST(req: Request) {
   const token = await at.toJwt();
   touchLastCallAt(); // auto-off cron 以此判定「還有人在用」
   // 實際派工版本（畫面左上角顯示真值——頁面標籤是死的，派工才是真相）
-  const resolvedVersion = VOICE_VERSIONS.find(v => v.agentName === agentName)?.id ?? DEFAULT_VOICE_VERSION;
+  const resolvedVersion = wantGptLine
+    ? GPT_VOICE_LINE.id
+    : (VOICE_VERSIONS.find(v => v.agentName === agentName)?.id ?? DEFAULT_VOICE_VERSION);
   openVoiceSession(roomName, userId, characterId, resolvedVersion); // 監控 session 開盤（fire-and-forget）
   // 水位調節器升檔檢查：發 token=有人要打電話（領先指標），水位 ≥70% 先暖下一台。
   // after() 保證回應後執行完（Vercel void-write 凍結雷），不拖慢 token 發放。

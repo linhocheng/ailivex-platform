@@ -9,9 +9,9 @@ import { GoogleAuth } from 'google-auth-library';
 import { getFirestore } from '@/lib/firebase-admin';
 import { DEFAULT_VOICE_VERSION } from '@/lib/collections';
 
-// canary 版本也掛在同一個電源開關＋自動關機傘下（天條：常駐必配開關＋自動關機）。
+// canary／訓練線版本也掛在同一個電源開關＋自動關機傘下（天條：常駐必配開關＋自動關機）。
 // canary 收案（升 DEFAULT 或退役）時從這裡拔掉。
-const CANARY_VOICE_VERSIONS: string[] = [];  // 目前無 canary；v17 已降 0 冷備（在名單裡會被 power-on 復活成 min=1）
+const CANARY_VOICE_VERSIONS: string[] = ['v19'];  // v19=訓練線（共創），與 v18 同開同關；v17 冷備不在名單（在名單會被 power-on 復活成 min=1）
 
 const REGION = 'asia-east1';
 export const AUTO_OFF_HOURS_DEFAULT = 3;

@@ -6,6 +6,8 @@
  *   [[REMEMBER]] 要記住的事 [[/REMEMBER]]
  *   [[DOCUMENT title="標題"]] 文件大綱/要求 [[/DOCUMENT]]
  *   [[DISPATCH type="image_generation" intent="..." params='{"prompt":"..."}' ]][[/DISPATCH]]
+ *   [[PROPOSE_METHOD]] 方法論提案 JSON [[/PROPOSE_METHOD]]（僅 admin＋角色開共創旗標時收，閘門在 dialogue route）
+ *   [[PROPOSE_KNOWLEDGE title="標題"]] 知識提案內容 [[/PROPOSE_KNOWLEDGE]]（同上共創閘）
  *
  * 回傳剝離標記後的 visible 文字 + 解析出的工具呼叫。
  */
@@ -22,6 +24,8 @@ export interface ParsedTools {
   visible: string;
   remembers: string[];
   expressions: string[];  // [[EXPRESSION]] 表達層條目（僅 admin 對話會寫入，閘門在 dialogue route）
+  methodProposals: string[];  // [[PROPOSE_METHOD]] 方法論提案原文（JSON 字串，解析驗證在 methodology.ts）
+  knowledgeProposals: Array<{ title: string; content: string }>;  // [[PROPOSE_KNOWLEDGE]] 知識提案（落 draft，審核轉入庫在 knowledge.ts）
   documents: Array<{ title: string; brief: string }>;
   dispatches: DispatchCall[];
   // 方法論狀態機信號（角色只發信號，狀態推進在 methodology.ts 程式做）
@@ -32,6 +36,8 @@ export interface ParsedTools {
 
 const REMEMBER_RE = /\[\[REMEMBER\]\]([\s\S]*?)\[\[\/REMEMBER\]\]/g;
 const EXPRESSION_RE = /\[\[EXPRESSION\]\]([\s\S]*?)\[\[\/EXPRESSION\]\]/g;
+const PROPOSE_METHOD_RE = /\[\[PROPOSE_METHOD\]\]([\s\S]*?)\[\[\/PROPOSE_METHOD\]\]/g;
+const PROPOSE_KNOWLEDGE_RE = /\[\[PROPOSE_KNOWLEDGE(?:\s+title="([^"]*)")?\]\]([\s\S]*?)\[\[\/PROPOSE_KNOWLEDGE\]\]/g;
 const DOCUMENT_RE = /\[\[DOCUMENT(?:\s+title="([^"]*)")?\]\]([\s\S]*?)\[\[\/DOCUMENT\]\]/g;
 const DISPATCH_RE = /\[\[DISPATCH(?:\s+([^[\]]*))?\]\][\s\S]*?\[\[\/DISPATCH\]\]/g;
 const METHOD_START_RE = /\[\[METHOD_START\s+id=(?:"([^"]*)"|'([^']*)')\s*\]\]/g;
@@ -52,6 +58,8 @@ const VALID_CAPABILITIES: TaskCapability[] = ['image_generation', 'audio_generat
 export function parseToolTags(raw: string): ParsedTools {
   const remembers: string[] = [];
   const expressions: string[] = [];
+  const methodProposals: string[] = [];
+  const knowledgeProposals: Array<{ title: string; content: string }> = [];
   const documents: Array<{ title: string; brief: string }> = [];
   const dispatches: DispatchCall[] = [];
 
@@ -67,6 +75,19 @@ export function parseToolTags(raw: string): ParsedTools {
   while ((m = EXPRESSION_RE.exec(raw)) !== null) {
     const c = m[1].trim();
     if (c) expressions.push(c);
+  }
+
+  PROPOSE_METHOD_RE.lastIndex = 0;
+  while ((m = PROPOSE_METHOD_RE.exec(raw)) !== null) {
+    const c = m[1].trim();
+    if (c) methodProposals.push(c);
+  }
+
+  PROPOSE_KNOWLEDGE_RE.lastIndex = 0;
+  while ((m = PROPOSE_KNOWLEDGE_RE.exec(raw)) !== null) {
+    const title = (m[1] || '').trim() || '未命名知識提案';
+    const content = m[2].trim();
+    if (content) knowledgeProposals.push({ title, content });
   }
 
   DOCUMENT_RE.lastIndex = 0;
@@ -107,6 +128,8 @@ export function parseToolTags(raw: string): ParsedTools {
   const visible = raw
     .replace(REMEMBER_RE, '')
     .replace(EXPRESSION_RE, '')
+    .replace(PROPOSE_METHOD_RE, '')
+    .replace(PROPOSE_KNOWLEDGE_RE, '')
     .replace(DOCUMENT_RE, '')
     .replace(DISPATCH_RE, '')
     .replace(METHOD_START_RE, '')
@@ -115,7 +138,7 @@ export function parseToolTags(raw: string): ParsedTools {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-  return { visible, remembers, expressions, documents, dispatches, methodStart, methodNext, methodExit };
+  return { visible, remembers, expressions, methodProposals, knowledgeProposals, documents, dispatches, methodStart, methodNext, methodExit };
 }
 
 export const TOOL_INSTRUCTIONS = `

@@ -13,9 +13,11 @@ interface KDocItem {
   sourceRef: string; chunkCount: number; createdAt: number | null;
 }
 interface StepItem { instruction: string; exitCondition: string; }
+interface KProposalItem { id: string; title: string; content: string; sourceNote: string; createdAt: number | null; }
 interface MethodItem {
   id: string; name: string; purpose: string; triggerDesc: string;
   preconditions: string[]; steps: Array<{ order: number; instruction: string; exitCondition?: string }>;
+  status: string;  // 'active' | 'draft'（draft = 角色共創提案，待審）
   createdAt: number | null;
 }
 
@@ -46,6 +48,7 @@ export default function AdminKnowledge() {
   const [chars, setChars] = useState<CharItem[]>([]);
   const [charId, setCharId] = useState('');
   const [kdocs, setKdocs] = useState<KDocItem[]>([]);
+  const [kProposals, setKProposals] = useState<KProposalItem[]>([]);
   const [methods, setMethods] = useState<MethodItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -74,13 +77,15 @@ export default function AdminKnowledge() {
   }, []);
 
   const load = useCallback(async () => {
-    if (!charId) { setKdocs([]); setMethods([]); return; }
+    if (!charId) { setKdocs([]); setKProposals([]); setMethods([]); return; }
     setLoading(true);
-    const [k, m] = await Promise.all([
+    const [k, kp, m] = await Promise.all([
       fetch(`/api/admin/characters/${charId}/knowledge`).then(r => r.json()).catch(() => ({ docs: [] })),
+      fetch(`/api/admin/characters/${charId}/knowledge-proposals`).then(r => r.json()).catch(() => ({ proposals: [] })),
       fetch(`/api/admin/characters/${charId}/methodologies`).then(r => r.json()).catch(() => ({ methodologies: [] })),
     ]);
     setKdocs(k.docs || []);
+    setKProposals(kp.proposals || []);
     setMethods(m.methodologies || []);
     setLoading(false);
   }, [charId]);
@@ -105,6 +110,23 @@ export default function AdminKnowledge() {
   async function deleteKnowledge(docId: string, title: string) {
     if (!confirm(`確定刪除「${title}」？連同其所有知識塊一併刪除。`)) return;
     await fetch(`/api/admin/characters/${charId}/knowledge/${docId}`, { method: 'DELETE' });
+    load();
+  }
+
+  async function approveKProposal(pid: string, title: string) {
+    if (!confirm(`轉入庫「${title}」？將以「整理」權威度切塊入庫，之後對話會被檢索。`)) return;
+    setKMsg('轉入庫中…（切塊＋大意索引要跑一陣子）');
+    const r = await fetch(`/api/admin/characters/${charId}/knowledge-proposals/${pid}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve' }),
+    }).then(r => r.json()).catch(() => null);
+    setKMsg(r?.ok ? `已轉入庫：${r.chunkCount} 塊` : r?.error || '轉入庫失敗');
+    load();
+  }
+
+  async function deleteKProposal(pid: string, title: string) {
+    if (!confirm(`退回並刪除提案「${title}」？`)) return;
+    await fetch(`/api/admin/characters/${charId}/knowledge-proposals/${pid}`, { method: 'DELETE' });
     load();
   }
 
@@ -151,6 +173,16 @@ export default function AdminKnowledge() {
     load();
   }
 
+  async function approveMethod(mid: string, name: string) {
+    if (!confirm(`轉正提案「${name}」？轉正後立即成為角色對所有用戶的正式手法。`)) return;
+    const r = await fetch(`/api/admin/characters/${charId}/methodologies/${mid}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve' }),
+    }).then(r => r.json()).catch(() => null);
+    if (!r?.ok) setMMsg(r?.error || '轉正失敗');
+    load();
+  }
+
   function setStep(i: number, patch: Partial<StepItem>) {
     setMSteps(prev => prev.map((s, j) => j === i ? { ...s, ...patch } : s));
   }
@@ -183,6 +215,35 @@ export default function AdminKnowledge() {
               <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>對話時依語義檢索，撈不到就不注入</span>
             </div>
 
+            {!loading && kProposals.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>
+                  待審知識提案（角色在共創對話中提出，轉入庫後才會被檢索）
+                </div>
+                {kProposals.map(p => (
+                  <div key={p.id} style={{ padding: '10px 12px', borderRadius: 8, border: '1px dashed var(--accent)', background: 'var(--panel-2)' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>
+                          {p.title}
+                          <Tag color="var(--accent)">待審</Tag>
+                          <span style={{ color: 'var(--muted)', fontWeight: 400, marginLeft: 8, fontSize: 12 }}>{p.content.length} 字{p.sourceNote ? ` · ${p.sourceNote}` : ''}</span>
+                        </div>
+                        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 6, maxHeight: 180, overflowY: 'auto', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{p.content}</div>
+                      </div>
+                      <button onClick={() => approveKProposal(p.id, p.title)} title="轉入庫"
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: '1px solid var(--accent)', borderRadius: 7, padding: '5px 10px', color: 'var(--accent)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                        <Icon name="check" size={13} />轉入庫
+                      </button>
+                      <button onClick={() => deleteKProposal(p.id, p.title)} title="退回刪除"
+                        style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
+                        <Icon name="close" size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {loading ? <p style={{ color: 'var(--muted)', fontSize: 14 }}>載入中…</p> : kdocs.length === 0 ? (
               <p style={{ color: 'var(--muted)', fontSize: 14, margin: '4px 0 18px' }}>尚無知識文件。</p>
             ) : (
@@ -248,31 +309,76 @@ export default function AdminKnowledge() {
               <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>觸發匹配才遞招，進入後照步驟走</span>
             </div>
 
-            {loading ? <p style={{ color: 'var(--muted)', fontSize: 14 }}>載入中…</p> : methods.length === 0 ? (
-              <p style={{ color: 'var(--muted)', fontSize: 14, margin: '4px 0 18px' }}>尚無方法論。</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-                {methods.map(m => (
-                  <div key={m.id} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>{m.name}<span style={{ color: 'var(--muted)', fontWeight: 400, marginLeft: 8, fontSize: 12.5 }}>{m.steps.length} 步</span></div>
-                        <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{m.purpose}</div>
-                        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>觸發：{m.triggerDesc}</div>
-                      </div>
-                      <button onClick={() => editMethod(m)} title="編輯"
-                        style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
-                        <Icon name="edit" size={15} />
-                      </button>
-                      <button onClick={() => deleteMethod(m.id, m.name)} title="刪除"
-                        style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
-                        <Icon name="close" size={15} />
-                      </button>
+            {loading ? <p style={{ color: 'var(--muted)', fontSize: 14 }}>載入中…</p> : (() => {
+              const drafts = methods.filter(m => m.status === 'draft');
+              const actives = methods.filter(m => m.status !== 'draft');
+              if (methods.length === 0) {
+                return <p style={{ color: 'var(--muted)', fontSize: 14, margin: '4px 0 18px' }}>尚無方法論。</p>;
+              }
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+                  {drafts.length > 0 && (
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>
+                      待審提案（角色在共創對話中提出，轉正後才對所有用戶生效）
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  )}
+                  {drafts.map(m => (
+                    <div key={m.id} style={{ padding: '10px 12px', borderRadius: 8, border: '1px dashed var(--accent)', background: 'var(--panel-2)' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>
+                            {m.name}
+                            <Tag color="var(--accent)">待審</Tag>
+                            <span style={{ color: 'var(--muted)', fontWeight: 400, marginLeft: 8, fontSize: 12.5 }}>{m.steps.length} 步</span>
+                          </div>
+                          <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{m.purpose}</div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>觸發：{m.triggerDesc}</div>
+                          {m.preconditions.length > 0 && (
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>前提：{m.preconditions.join('；')}</div>
+                          )}
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {m.steps.map(s => (
+                              <div key={s.order}>{s.order}. {s.instruction}{s.exitCondition ? `（完成判準：${s.exitCondition}）` : ''}</div>
+                            ))}
+                          </div>
+                        </div>
+                        <button onClick={() => approveMethod(m.id, m.name)} title="轉正"
+                          style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: '1px solid var(--accent)', borderRadius: 7, padding: '5px 10px', color: 'var(--accent)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          <Icon name="check" size={13} />轉正
+                        </button>
+                        <button onClick={() => editMethod(m)} title="編輯"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
+                          <Icon name="edit" size={15} />
+                        </button>
+                        <button onClick={() => deleteMethod(m.id, m.name)} title="退回刪除"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
+                          <Icon name="close" size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {actives.map(m => (
+                    <div key={m.id} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{m.name}<span style={{ color: 'var(--muted)', fontWeight: 400, marginLeft: 8, fontSize: 12.5 }}>{m.steps.length} 步</span></div>
+                          <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 3 }}>{m.purpose}</div>
+                          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>觸發：{m.triggerDesc}</div>
+                        </div>
+                        <button onClick={() => editMethod(m)} title="編輯"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
+                          <Icon name="edit" size={15} />
+                        </button>
+                        <button onClick={() => deleteMethod(m.id, m.name)} title="刪除"
+                          style={{ background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 6 }}>
+                          <Icon name="close" size={15} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600 }}>{editingId ? '編輯方法論' : '新增方法論'}</div>

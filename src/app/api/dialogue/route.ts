@@ -18,8 +18,8 @@ import { COL, type CharacterDoc, type ChatMessage } from '@/lib/collections';
 import { loadConversationContext, appendMessages } from '@/lib/conversation';
 import { loadMemoryBlock, writeMemory, extractAndSaveMemories } from '@/lib/memory';
 import { loadDiaryBlock, writeDiaryEntry } from '@/lib/diary';
-import { loadKnowledgeBlock } from '@/lib/knowledge';
-import { loadMethodologyBlock, applyMethodologySignals } from '@/lib/methodology';
+import { loadKnowledgeBlock, saveKnowledgeProposal, KNOWLEDGE_PROPOSE_INSTRUCTION } from '@/lib/knowledge';
+import { loadMethodologyBlock, applyMethodologySignals, saveMethodologyProposal, loadActiveMethodologies, buildMethodInventoryNote, METHOD_PROPOSE_INSTRUCTION } from '@/lib/methodology';
 import { parseToolTags, TOOL_INSTRUCTIONS } from '@/lib/tool-tags';
 import { buildExpressionBlock, EXPRESSION_INSTRUCTION, EXPRESSION_MAX } from '@/lib/expression';
 import { createDocumentJob, dispatchDocumentJob } from '@/lib/documents';
@@ -97,8 +97,18 @@ export async function POST(req: Request) {
   const history = convCtx.history;
 
   // 表達層：緊貼 soul 無條件注入；[[EXPRESSION]] 教學指令只給 admin（訓練師）對話，一般用戶不帶
+  // 方法論共創指令：再多一道角色旗標閘（methodProposalEnabled，試驗場逐角色開）
+  // 共創語境附現有方法論清單——沒有清單訓練師問「你有哪些」角色只能誠實說沒有（2026-07-19 實測）
   const expressionBlock = buildExpressionBlock(char.expression);
-  const toolInstructions = user.role === 'admin' ? TOOL_INSTRUCTIONS + EXPRESSION_INSTRUCTION : TOOL_INSTRUCTIONS;
+  let proposeInstruction = '';
+  if (user.role === 'admin' && char.methodProposalEnabled) {
+    const inventory = await loadActiveMethodologies(db, characterId).catch(() => []);
+    proposeInstruction = METHOD_PROPOSE_INSTRUCTION + buildMethodInventoryNote(inventory)
+      + KNOWLEDGE_PROPOSE_INSTRUCTION;
+  }
+  const toolInstructions = user.role === 'admin'
+    ? TOOL_INSTRUCTIONS + EXPRESSION_INSTRUCTION + proposeInstruction
+    : TOOL_INSTRUCTIONS;
   const system = `${soul}${expressionBlock}${memoryBlock}${diaryBlock}${knowledgeBlock}${methodologyRes.block}${toolInstructions}
 
 你正在跟「${user.name}」對話。用你的靈魂，自然地回應。${linkContext ? `
@@ -152,6 +162,29 @@ export async function POST(req: Request) {
     }
     if (fresh.length > toAdd.length) {
       reply += `\n\n（表達層已達 ${EXPRESSION_MAX} 條上限，本次有 ${fresh.length - toAdd.length} 條未寫入；請先到後台整理再教。）`;
+    }
+  }
+
+  // 方法論提案：同 admin＋旗標雙閘（非 admin 或旗標關 → 標記已被 parse 剝掉，不落任何庫）。
+  // 落 draft 不動 methodologyCount；成敗都在回覆裡誠實告知訓練師，不靜默蒸發。
+  if (user.role === 'admin' && char.methodProposalEnabled && parsed.methodProposals.length > 0) {
+    for (const rawProposal of parsed.methodProposals) {
+      const r = await saveMethodologyProposal(db, characterId, rawProposal, user.uid)
+        .catch(e => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
+      reply += r.ok
+        ? `\n\n（方法論提案《${r.name}》已收進待審區——到後台「知識與方法」審核轉正後，才對所有用戶生效。）`
+        : `\n\n（方法論提案未能收下：${r.error}。可請角色修正後重新提出。）`;
+    }
+  }
+
+  // 知識提案：同一道共創閘；draft 不入庫（角色會幻覺——審核通過才走 ingest 正式管線）
+  if (user.role === 'admin' && char.methodProposalEnabled && parsed.knowledgeProposals.length > 0) {
+    for (const kp of parsed.knowledgeProposals) {
+      const r = await saveKnowledgeProposal(db, characterId, kp.title, kp.content, user.uid, '文字共創對話')
+        .catch(e => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
+      reply += r.ok
+        ? `\n\n（知識提案《${r.title}》已收進待審區——到後台「知識與方法」審核轉入庫後，才成為角色知識。）`
+        : `\n\n（知識提案未能收下：${r.error}。）`;
     }
   }
 
