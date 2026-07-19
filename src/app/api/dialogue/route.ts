@@ -97,11 +97,11 @@ export async function POST(req: Request) {
   const history = convCtx.history;
 
   // 表達層：緊貼 soul 無條件注入；[[EXPRESSION]] 教學指令只給 admin（訓練師）對話，一般用戶不帶
-  // 方法論共創指令：再多一道角色旗標閘（methodProposalEnabled，試驗場逐角色開）
+  // 方法論/知識共創指令：admin 對所有角色恆有（2026-07-19 起 per-character 旗標退役）
   // 共創語境附現有方法論清單——沒有清單訓練師問「你有哪些」角色只能誠實說沒有（2026-07-19 實測）
   const expressionBlock = buildExpressionBlock(char.expression);
   let proposeInstruction = '';
-  if (user.role === 'admin' && char.methodProposalEnabled) {
+  if (user.role === 'admin') {
     const inventory = await loadActiveMethodologies(db, characterId).catch(() => []);
     proposeInstruction = METHOD_PROPOSE_INSTRUCTION + buildMethodInventoryNote(inventory)
       + KNOWLEDGE_PROPOSE_INSTRUCTION;
@@ -165,9 +165,9 @@ export async function POST(req: Request) {
     }
   }
 
-  // 方法論提案：同 admin＋旗標雙閘（非 admin 或旗標關 → 標記已被 parse 剝掉，不落任何庫）。
+  // 方法論提案：admin 限定（非 admin → 標記已被 parse 剝掉，不落任何庫）。
   // 落 draft 不動 methodologyCount；成敗都在回覆裡誠實告知訓練師，不靜默蒸發。
-  if (user.role === 'admin' && char.methodProposalEnabled && parsed.methodProposals.length > 0) {
+  if (user.role === 'admin' && parsed.methodProposals.length > 0) {
     for (const rawProposal of parsed.methodProposals) {
       const r = await saveMethodologyProposal(db, characterId, rawProposal, user.uid)
         .catch(e => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
@@ -177,8 +177,8 @@ export async function POST(req: Request) {
     }
   }
 
-  // 知識提案：同一道共創閘；draft 不入庫（角色會幻覺——審核通過才走 ingest 正式管線）
-  if (user.role === 'admin' && char.methodProposalEnabled && parsed.knowledgeProposals.length > 0) {
+  // 知識提案：同一道 admin 閘；draft 不入庫（角色會幻覺——審核通過才走 ingest 正式管線）
+  if (user.role === 'admin' && parsed.knowledgeProposals.length > 0) {
     for (const kp of parsed.knowledgeProposals) {
       const r = await saveKnowledgeProposal(db, characterId, kp.title, kp.content, user.uid, '文字共創對話')
         .catch(e => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));

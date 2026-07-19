@@ -90,13 +90,10 @@ export async function POST(req: Request) {
   if (!charSnap.exists) return NextResponse.json({ error: '角色不存在' }, { status: 404 });
   const char = charSnap.data() as CharacterDoc;
 
-  // 訓練線：admin＋角色共創旗標雙閘，沒過回 403 不靜默降級（避免「以為在共創其實打到 v18」）
+  // 訓練線：admin 限定（所有角色通用，2026-07-19 起 per-character 旗標退役），沒過回 403 不靜默降級
   if (wantTrainerLine) {
     if (user.role !== 'admin') {
       return NextResponse.json({ error: 'trainer_line_admin_only', message: '訓練線僅限管理員' }, { status: 403 });
-    }
-    if (!char.methodProposalEnabled) {
-      return NextResponse.json({ error: 'trainer_line_not_enabled', message: '此角色未開放共創' }, { status: 403 });
     }
     agentName = TRAINER_VOICE_LINE.agentName;
   }

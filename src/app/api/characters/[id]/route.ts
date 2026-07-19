@@ -33,8 +33,8 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   const c = snap.data() as CharacterDoc;
-  // 訓練線（共創）按鈕：admin＋角色共創旗標；一般用戶永遠看不到（token route 會再驗）
-  const trainerVoice = user.role === 'admin' && !!c.methodProposalEnabled;
+  // 訓練線（共創）按鈕：admin 對所有角色恆有（2026-07-19 Adam 定案，per-character 旗標退役）；一般用戶永遠看不到
+  const trainerVoice = user.role === 'admin';
   return NextResponse.json({
     id,
     name: c.name || '',

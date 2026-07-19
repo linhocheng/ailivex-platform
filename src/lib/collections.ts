@@ -104,7 +104,7 @@ export interface CharacterDoc {
   // 由 admin knowledge/methodologies routes 確定性維護（增刪時 increment/遞減），不靠 LLM。
   knowledgeChunkCount?: number;   // 該角色 active 知識塊總數
   methodologyCount?: number;      // 該角色 active 方法論總數
-  methodProposalEnabled?: boolean; // 方法論共創試驗閘：開了之後 admin 對話會教角色 [[PROPOSE_METHOD]] 提案（落 draft，審核轉正才生效）
+  methodProposalEnabled?: boolean; // 【已退役 2026-07-19】共創改為 admin 對所有角色恆開（Adam 定案），此旗標不再被任何路徑讀取；欄位留著不清（A.Two doc 有殘值，無害）
   recordingEnabled?: boolean;     // 對話錄音（LiveKit Egress 混流 → GCS；私人使用，缺省 = 關）
   status: CharacterStatus;
   createdAt: FirebaseFirestore.Timestamp | Date;

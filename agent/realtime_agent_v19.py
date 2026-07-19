@@ -1,8 +1,8 @@
 """
 ailivex-realtime-agent v19 — LiveKit Agent 核心邏輯（= v18 + 方法論共創提案工具）
 
-v18 差異：只加一個 propose_method 原生 function tool——
-訓練師（admin）×角色 methodProposalEnabled 雙閘都過，才注入共創指令＋掛工具；
+v18 差異：只加 propose_method / propose_knowledge 原生 function tool——
+訓練師（admin）閘過才注入共創指令＋掛工具（2026-07-19 起 admin 對所有角色恆開，角色旗標退役）；
 提案落 methodologies status='draft'（不嵌 triggerEmb——轉正時後台補嵌；不動 methodologyCount）。
 一般用戶通話與 v18 行為完全一致（閘不過＝指令不注入、工具不掛）。
 
@@ -163,16 +163,14 @@ class SanitizingAgent(Agent):
 # ── v19 方法論共創（語音提案管道）────────────────────────────────────────────
 
 def check_method_proposal_gate(user_id: str, character_id: str) -> bool:
-    """雙閘：users/{uid}.role=='admin' 且 characters/{cid}.methodProposalEnabled。任一不過＝False。"""
+    """共創閘：users/{uid}.role=='admin' 即通過（2026-07-19 Adam 定案：admin 對所有角色恆開，
+    per-character methodProposalEnabled 旗標退役不再讀）。"""
     from agent.firestore_loader import _ensure_init
     from firebase_admin import firestore
     _ensure_init()
     db = firestore.client()
     u = db.collection("users").document(user_id).get()
-    if not u.exists or (u.to_dict() or {}).get("role") != "admin":
-        return False
-    c = db.collection("characters").document(character_id).get()
-    return bool(c.exists and (c.to_dict() or {}).get("methodProposalEnabled"))
+    return bool(u.exists and (u.to_dict() or {}).get("role") == "admin")
 
 
 def load_method_inventory(character_id: str) -> list:
