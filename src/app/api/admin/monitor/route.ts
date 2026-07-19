@@ -198,13 +198,23 @@ export async function GET(req: Request) {
     failures.push({ at: toMs(e.at), feature: `副作用·${e.sideEffect || '?'}`, userId: e.userId || '', characterId: e.characterId || '', error: e.error || '', kind: 'fail' });
   }
   // 語音 session 漏斗：closed=成功、abandoned=清掃收案的中斷、open 超過 3h=中斷（清掃前的空窗）、open 新鮮=通話中
-  type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number; firstAudioMs?: number };
+  type Sess = { userId?: string; characterId?: string; status?: string; startedAt?: unknown; durationS?: number; firstAudioMs?: number; turnLatenciesMs?: number[]; voiceVersion?: string };
   const sessById = new Map<string, Sess>();
   for (const d of [...sessionsSnap.docs, ...openSessionsSnap.docs]) sessById.set(d.id, d.data() as Sess);
   const ABANDON_MS = 3 * 3600_000;
   const firstAudioSamples: number[] = [];
+  const turnSamples: number[] = [];
+  const turnByLine = new Map<string, number[]>();  // voiceVersion（v18/gpt/…）→ 樣本；GPT Voice 對照組same-ruler 拆列
   for (const [id, s] of sessById) {
     if (typeof s.firstAudioMs === 'number' && s.firstAudioMs > 0) firstAudioSamples.push(s.firstAudioMs);
+    if (Array.isArray(s.turnLatenciesMs)) {
+      const vals = s.turnLatenciesMs.filter(v => typeof v === 'number' && v > 0);
+      turnSamples.push(...vals);
+      if (vals.length) {
+        const line = s.voiceVersion || '?';
+        turnByLine.set(line, [...(turnByLine.get(line) || []), ...vals]);
+      }
+    }
     if (s.status === 'closed') bump('語音通話', 'ok');
     else if (s.status === 'abandoned') {
       bump('語音通話', 'stuck');
@@ -223,6 +233,19 @@ export async function GET(req: Request) {
     p95: pct(0.95),
     max: firstAudioSamples.length ? firstAudioSamples[firstAudioSamples.length - 1] : null,
     windowNote: `48h 內 ${firstAudioSamples.length} 通有量測`,
+  };
+  // 回合延遲（用戶說完→角色出聲，通話中的每一輪）：GPT Voice 線上線後的對照基準
+  const pctOf = (arr: number[]) => {
+    const a = [...arr].sort((x, y) => x - y);
+    const at = (p: number) => a.length ? a[Math.min(a.length - 1, Math.floor(a.length * p))] : null;
+    return { count: a.length, p50: at(0.5), p95: at(0.95), max: a.length ? a[a.length - 1] : null };
+  };
+  const turnLatency = {
+    ...pctOf(turnSamples),
+    windowNote: `48h 內 ${turnSamples.length} 個回合樣本`,
+    // 兩條線並排（v18 vs gpt）——同一把尺量出來的對照數字
+    lines: [...turnByLine.entries()].map(([line, vals]) => ({ line, ...pctOf(vals) }))
+      .sort((a, b) => a.line.localeCompare(b.line)),
   };
 
   // 第三方呼叫聚合
@@ -405,5 +428,6 @@ export async function GET(req: Request) {
     series,
     billing,
     voiceLatency,
+    turnLatency,
   });
 }

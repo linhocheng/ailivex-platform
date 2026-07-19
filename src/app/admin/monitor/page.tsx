@@ -19,6 +19,8 @@ interface Monitor {
   funnel: Funnel[]; failures: Failure[]; providers: Provider[];
   series: SeriesPoint[]; billing: BillingRow[] | null;
   voiceLatency: { count: number; p50: number | null; p95: number | null; max: number | null; windowNote: string };
+  turnLatency: { count: number; p50: number | null; p95: number | null; max: number | null; windowNote: string;
+    lines: { line: string; count: number; p50: number | null; p95: number | null; max: number | null }[] };
 }
 
 const DOT: Record<Light['status'], string> = {
@@ -134,7 +136,7 @@ export default function MonitorPage() {
         </Section>
 
         {/* ② 在線用戶 */}
-        <Section title="在線用戶" note="語音＝LiveKit 房間現場（不是鏡子）· 文字＝近 15 分鐘有對話更新 · 首音＝按撥號到角色真的出聲">
+        <Section title="在線用戶" note="語音＝LiveKit 房間現場（不是鏡子）· 文字＝近 15 分鐘有對話更新 · 首音＝按撥號到角色真的出聲 · 回合＝用戶說完到角色出聲">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px,1fr))', gap: 14, marginBottom: 14 }}>
             <Stat k="語音通話中" v={data.online.voiceCount} unit="人" hot={data.online.voiceCount > 0} live />
             <Stat k="活躍（15 分內）" v={data.online.textActive15m} unit="人" />
@@ -142,7 +144,18 @@ export default function MonitorPage() {
             <Stat k="本週活躍" v={data.online.weekActive} unit="人" />
             <Stat k={`首音 p50（${data.voiceLatency.count} 通）`} v={data.voiceLatency.p50 != null ? Math.round(data.voiceLatency.p50 / 100) / 10 : 0} unit={data.voiceLatency.p50 != null ? '秒' : '無樣本'} />
             <Stat k="首音 p95" v={data.voiceLatency.p95 != null ? Math.round(data.voiceLatency.p95 / 100) / 10 : 0} unit={data.voiceLatency.p95 != null ? '秒' : '無樣本'} hot={(data.voiceLatency.p95 || 0) > 15000} />
+            <Stat k={`回合 p50（${data.turnLatency.count} 輪）`} v={data.turnLatency.p50 != null ? Math.round(data.turnLatency.p50 / 100) / 10 : 0} unit={data.turnLatency.p50 != null ? '秒' : '無樣本'} />
+            <Stat k="回合 p95" v={data.turnLatency.p95 != null ? Math.round(data.turnLatency.p95 / 100) / 10 : 0} unit={data.turnLatency.p95 != null ? '秒' : '無樣本'} hot={(data.turnLatency.p95 || 0) > 8000} />
           </div>
+          {(data.turnLatency.lines?.length || 0) > 1 && (
+            <Table head={['語音線', '回合數', 'p50', 'p95', '最慢']}
+              rows={data.turnLatency.lines.map(l => [
+                l.line, String(l.count),
+                l.p50 != null ? `${Math.round(l.p50 / 100) / 10} 秒` : '—',
+                l.p95 != null ? `${Math.round(l.p95 / 100) / 10} 秒` : '—',
+                l.max != null ? `${Math.round(l.max / 100) / 10} 秒` : '—',
+              ])} />
+          )}
           {data.online.voiceRooms.length > 0 && (
             <Table head={['通話中用戶', '角色', '已通話', '房內人數']}
               rows={data.online.voiceRooms.map(r => [r.userId, r.characterId, r.durationMin != null ? `${r.durationMin} 分` : '—', String(r.participants)])} />

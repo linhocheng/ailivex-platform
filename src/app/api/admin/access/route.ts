@@ -22,27 +22,34 @@ export async function GET(req: Request) {
   const snap = await q.get();
   const access = snap.docs.map(d => {
     const a = d.data() as AccessDoc;
-    return { id: d.id, userId: a.userId, characterId: a.characterId, voiceVersion: a.voiceVersion || '' };
+    return { id: d.id, userId: a.userId, characterId: a.characterId, voiceVersion: a.voiceVersion || '', gptVoiceEnabled: !!a.gptVoiceEnabled };
   });
   return NextResponse.json({ access });
 }
 
-// 變更指派的語音版本（用戶端看不到，後台說了算）
+// 變更指派的語音版本 / GPT Voice 線開關（用戶端看不到，後台說了算）
 export async function PATCH(req: Request) {
-  const body = await req.json().catch(() => null) as { userId?: string; characterId?: string; voiceVersion?: string } | null;
+  const body = await req.json().catch(() => null) as { userId?: string; characterId?: string; voiceVersion?: string; gptVoiceEnabled?: boolean } | null;
   const userId = body?.userId?.trim();
   const characterId = body?.characterId?.trim();
-  const voiceVersion = body?.voiceVersion?.trim() || '';
   if (!userId || !characterId) {
     return NextResponse.json({ error: 'userId 與 characterId 必填' }, { status: 400 });
-  }
-  if (voiceVersion && !VALID_VERSIONS.has(voiceVersion)) {
-    return NextResponse.json({ error: '未知的語音版本' }, { status: 400 });
   }
   const db = getFirestore();
   const ref = db.collection(COL.access).doc(accessId(userId, characterId));
   const snap = await ref.get();
-  if (!snap.exists) return NextResponse.json({ error: '尚未開通，無法設定版本' }, { status: 404 });
+  if (!snap.exists) return NextResponse.json({ error: '尚未開通，無法設定' }, { status: 404 });
+
+  // GPT Voice 線開關（獨立第二條線，與 voiceVersion 互不干涉）
+  if (typeof body?.gptVoiceEnabled === 'boolean') {
+    await ref.set({ gptVoiceEnabled: body.gptVoiceEnabled ? true : FieldValue.delete() }, { merge: true });
+    return NextResponse.json({ ok: true, gptVoiceEnabled: body.gptVoiceEnabled });
+  }
+
+  const voiceVersion = body?.voiceVersion?.trim() || '';
+  if (voiceVersion && !VALID_VERSIONS.has(voiceVersion)) {
+    return NextResponse.json({ error: '未知的語音版本' }, { status: 400 });
+  }
   // 空字串 = 回到全域預設（清掉欄位）
   await ref.set({ voiceVersion: voiceVersion || FieldValue.delete() }, { merge: true });
   return NextResponse.json({ ok: true, voiceVersion });

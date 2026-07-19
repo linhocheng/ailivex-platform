@@ -5,6 +5,7 @@ livekit-agents==1.5.1
 livekit-plugins-silero==1.5.1
 livekit-plugins-anthropic==1.5.1
 livekit-plugins-soniox==1.5.1
+livekit-plugins-openai==1.5.1   # GPT Voice 線（realtime_agent_gpt）；共享 image，vN 不 import 不受影響
 
 # MiniMax 自訂 wrapper（官方 plugin 不相容 1.5.x）
 aiohttp>=3.9.0

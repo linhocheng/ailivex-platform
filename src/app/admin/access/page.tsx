@@ -21,6 +21,7 @@ export default function AdminAccess() {
   const [selUser, setSelUser] = useState('');
   const [granted, setGranted] = useState<Set<string>>(new Set());
   const [versions, setVersions] = useState<Record<string, string>>({}); // characterId → voiceVersion（''=全域預設）
+  const [gptLines, setGptLines] = useState<Record<string, boolean>>({}); // characterId → GPT Voice 線開關
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
@@ -29,11 +30,12 @@ export default function AdminAccess() {
   }, []);
 
   const loadAccess = useCallback(async (userId: string) => {
-    if (!userId) { setGranted(new Set()); setVersions({}); return; }
+    if (!userId) { setGranted(new Set()); setVersions({}); setGptLines({}); return; }
     const r = await fetch(`/api/admin/access?userId=${encodeURIComponent(userId)}`).then(r => r.json()).catch(() => ({ access:[] }));
-    const rows = (r.access || []) as { characterId: string; voiceVersion?: string }[];
+    const rows = (r.access || []) as { characterId: string; voiceVersion?: string; gptVoiceEnabled?: boolean }[];
     setGranted(new Set(rows.map(a => a.characterId)));
     setVersions(Object.fromEntries(rows.map(a => [a.characterId, a.voiceVersion || ''])));
+    setGptLines(Object.fromEntries(rows.map(a => [a.characterId, !!a.gptVoiceEnabled])));
   }, []);
 
   useEffect(() => { loadAccess(selUser); }, [selUser, loadAccess]);
@@ -49,6 +51,19 @@ export default function AdminAccess() {
       body: JSON.stringify({ userId: selUser, characterId, voiceVersion }),
     }).then(r => r.json()).catch(() => null);
     if (!r?.ok) { setVersions(v => ({ ...v, [characterId]: prev })); setMsg('版本設定失敗'); }
+  }
+
+  async function setGptLine(characterId: string, enabled: boolean) {
+    if (!selUser) return;
+    setMsg('');
+    const prev = !!gptLines[characterId];
+    setGptLines(g => ({ ...g, [characterId]: enabled }));
+    const r = await fetch('/api/admin/access', {
+      method: 'PATCH',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ userId: selUser, characterId, gptVoiceEnabled: enabled }),
+    }).then(r => r.json()).catch(() => null);
+    if (!r?.ok) { setGptLines(g => ({ ...g, [characterId]: prev })); setMsg('GPT Voice 設定失敗'); }
   }
 
   async function toggle(characterId: string) {
@@ -136,6 +151,17 @@ export default function AdminAccess() {
                           </select>
                           <Icon name="chevron" size={14} style={{ position:'absolute', right:9, top:'50%', transform:'translateY(-50%) rotate(90deg)', color:'var(--muted)', pointerEvents:'none' }} />
                         </div>
+                      )}
+                      {on && c.hasVoice && (
+                        <button onClick={() => setGptLine(c.id, !gptLines[c.id])}
+                          title="GPT Voice 線（獨立第二條通話線：gpt-realtime 聽想＋MiniMax 發聲）"
+                          style={{ flexShrink:0, fontSize:12.5, fontWeight:600, padding:'6px 11px', borderRadius:7,
+                            cursor:'pointer', transition:'all .18s', border:'1px solid',
+                            borderColor: gptLines[c.id] ? 'color-mix(in oklab, var(--accent) 55%, var(--border))' : 'var(--border-strong)',
+                            background: gptLines[c.id] ? 'color-mix(in oklab, var(--accent) 14%, transparent)' : 'transparent',
+                            color: gptLines[c.id] ? 'var(--accent)' : 'var(--muted)' }}>
+                          GPT Voice
+                        </button>
                       )}
                       <div style={{ width:26, height:26, borderRadius:8, display:'grid', placeItems:'center', flexShrink:0,
                         border:'1px solid', borderColor: on ? 'var(--accent)' : 'var(--border-strong)',
