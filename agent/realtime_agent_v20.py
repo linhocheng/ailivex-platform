@@ -1,10 +1,11 @@
 """
-ailivex-realtime-agent v19 — LiveKit Agent 核心邏輯（= v18 + 方法論共創提案工具）
+ailivex-realtime-agent v20 — LiveKit Agent 核心邏輯（= v18 + 知識檢索/方法論遞招運行時）
 
-v18 差異：只加一個 propose_method 原生 function tool——
-訓練師（admin）×角色 methodProposalEnabled 雙閘都過，才注入共創指令＋掛工具；
-提案落 methodologies status='draft'（不嵌 triggerEmb——轉正時後台補嵌；不動 methodologyCount）。
-一般用戶通話與 v18 行為完全一致（閘不過＝指令不注入、工具不掛）。
+v18 差異：接上知識檢索＋方法論遞招運行時（2026-07-19 v19.1 於訓練線驗收通過後轉正）：
+每輪用戶語句背景做 multilingual-002 query 嵌入 → 知識塊 top3(τ=0.68) 注入＋
+方法論最佳單選(τ=0.70) 遞招；走步狀態機在程式（method_start/next/exit 原生工具，
+LLM 只發信號）；exit/走完有 120s 同套冷卻。沒設知識庫/方法論的角色兩條路徑全不走＝行為同 v18。
+訓練師提案工具（propose_*）不在此版——那是 v19 訓練線專屬。
 
 v17.4 差異：session.output.audio 外包一層 GatedPauseOutput——音量沒提高的聲音
 （咳嗽/應和/背景音）不再暫停角色語音，零死空氣；音量提高＝真搶話企圖照常暫停；
@@ -162,36 +163,6 @@ class SanitizingAgent(Agent):
 
 # ── v19 方法論共創（語音提案管道）────────────────────────────────────────────
 
-def check_method_proposal_gate(user_id: str, character_id: str) -> bool:
-    """雙閘：users/{uid}.role=='admin' 且 characters/{cid}.methodProposalEnabled。任一不過＝False。"""
-    from agent.firestore_loader import _ensure_init
-    from firebase_admin import firestore
-    _ensure_init()
-    db = firestore.client()
-    u = db.collection("users").document(user_id).get()
-    if not u.exists or (u.to_dict() or {}).get("role") != "admin":
-        return False
-    c = db.collection("characters").document(character_id).get()
-    return bool(c.exists and (c.to_dict() or {}).get("methodProposalEnabled"))
-
-
-def load_method_inventory(character_id: str) -> list:
-    """共創語境用：角色現有 active 方法論清單（名字＋目的）。
-    平常通話不載入——遞招不在語音線（2026-07-19 現況），這份清單只給訓練師對話。"""
-    from agent.firestore_loader import _ensure_init
-    from firebase_admin import firestore
-    _ensure_init()
-    db = firestore.client()
-    snap = (db.collection("methodologies")
-            .where("characterId", "==", character_id).limit(50).get())
-    out = []
-    for d in snap:
-        m = d.to_dict() or {}
-        if (m.get("status") or "active") == "active":
-            out.append({"name": m.get("name", ""), "purpose": m.get("purpose", "")})
-    return out
-
-
 def generate_query_embedding_multilingual(text: str) -> list | None:
     """用戶語句 → multilingual-002 query 向量（與 TS generateKnowledgeEmbedding(text,'query') 對等）。
     知識塊/方法論 trigger 都是這顆嵌的（記憶池的 004 不互通——004 對中文短句 cosine 坍縮）。"""
@@ -255,109 +226,6 @@ def load_methodology_defs(character_id: str) -> list:
                     "preconditions": m.get("preconditions") or [],
                     "steps": m.get("steps") or [], "triggerEmb": emb})
     return out
-
-
-def _s2t_converter():
-    """語音 LLM 輸出慣性是簡體 → 落庫前確定性轉繁。s2tw 不用 s2twp（詞組改寫會修壞已繁體文本）。"""
-    try:
-        from opencc import OpenCC
-        return OpenCC("s2tw").convert
-    except Exception:
-        return lambda x: x  # opencc 不可用時不阻斷（寧可簡體落庫，後台可編）
-
-
-def write_knowledge_proposal(character_id: str, proposed_by: str, title: str,
-                             content: str, source_note: str = "") -> str:
-    """知識提案落 draft（knowledge_proposals）：不切塊不嵌入——
-    角色會幻覺（Bacha Coffee 曾被記成 1876 咖啡），審核轉入庫才走 ingest 正式管線。"""
-    from agent.firestore_loader import _ensure_init
-    from firebase_admin import firestore
-    from datetime import datetime, timezone
-    _ensure_init()
-    db = firestore.client()
-    _s2t = _s2t_converter()
-    title = _s2t((title or "").strip())
-    content = _s2t((content or "").strip())
-    source_note = _s2t((source_note or "").strip())
-    if not (title and content):
-        raise ValueError("title / content 缺漏")
-    if len(content) > 50_000:
-        raise ValueError("內容超過 50000 字上限")
-    dup = (db.collection("knowledge_proposals")
-           .where("characterId", "==", character_id)
-           .where("title", "==", title)
-           .where("status", "==", "draft").limit(1).get())
-    if len(list(dup)) > 0:
-        raise ValueError(f"已有同標題的待審提案《{title}》")
-    doc = {
-        "characterId": character_id,
-        "title": title,
-        "content": content,
-        "proposedBy": proposed_by,
-        "status": "draft",
-        "createdAt": datetime.now(timezone.utc),
-    }
-    if source_note:
-        doc["sourceNote"] = source_note
-    _, ref = db.collection("knowledge_proposals").add(doc)
-    return ref.id
-
-
-def write_method_proposal(character_id: str, proposed_by: str, name: str, purpose: str,
-                          trigger_desc: str, preconditions: list, steps: list) -> str:
-    """提案落 draft（確定性驗證，對齊 TS saveMethodologyProposal）：
-    不嵌 triggerEmb（語音端無 multilingual embedding——轉正時後台 approve route 補嵌，收斂點唯一）；
-    不動 methodologyCount（相容開關語意 = active 數，轉正才 +1）。"""
-    from agent.firestore_loader import _ensure_init
-    from firebase_admin import firestore
-    from datetime import datetime, timezone
-    _ensure_init()
-    db = firestore.client()
-    # 語音 LLM 輸出慣性是簡體（2026-07-19 首例《品牌故事解构法》全簡落庫）→ 落庫前確定性轉繁
-    _s2t = _s2t_converter()
-    name = _s2t((name or "").strip())
-    purpose = _s2t((purpose or "").strip())
-    trigger_desc = _s2t((trigger_desc or "").strip())
-    preconditions = [_s2t(str(p)) for p in (preconditions or [])]
-    steps = [
-        {**s, "instruction": _s2t(str(s.get("instruction", ""))),
-         **({"exitCondition": _s2t(str(s["exitCondition"]))} if s.get("exitCondition") else {})}
-        if isinstance(s, dict) else s
-        for s in (steps or [])
-    ]
-    if not (name and purpose and trigger_desc):
-        raise ValueError("name / purpose / trigger_desc 缺漏")
-    clean_steps = []
-    for i, s in enumerate(steps or []):
-        if not isinstance(s, dict):
-            raise ValueError("steps 每一步都要是物件（{instruction, exitCondition}）")
-        instruction = str(s.get("instruction", "") or "").strip()
-        if not instruction:
-            raise ValueError(f"第 {i + 1} 步缺 instruction")
-        step = {"order": i + 1, "instruction": instruction}
-        exit_cond = str(s.get("exitCondition", "") or "").strip()
-        if exit_cond:
-            step["exitCondition"] = exit_cond
-        clean_steps.append(step)
-    if not clean_steps or len(clean_steps) > 20:
-        raise ValueError("steps 需為 1-20 步")
-    dup = (db.collection("methodologies")
-           .where("characterId", "==", character_id)
-           .where("name", "==", name).limit(1).get())
-    if len(list(dup)) > 0:
-        raise ValueError(f"已有同名方法論《{name}》（可能已提過或已在庫）")
-    _, ref = db.collection("methodologies").add({
-        "characterId": character_id,
-        "name": name,
-        "purpose": purpose,
-        "triggerDesc": trigger_desc,
-        "preconditions": [str(p).strip() for p in (preconditions or []) if str(p).strip()],
-        "steps": clean_steps,
-        "status": "draft",
-        "proposedBy": proposed_by,
-        "createdAt": datetime.now(timezone.utc),
-    })
-    return ref.id
 
 
 async def entrypoint(ctx: JobContext):
@@ -504,21 +372,6 @@ async def entrypoint(ctx: JobContext):
         emotion=emotion,
     )
 
-    # v19 共創閘：雙閘（admin×角色旗標）都過才掛提案工具；查失敗＝閘關（fails-safe）
-    _proposal_enabled = False
-    _method_inventory: list = []
-    if user_id and character_id:
-        try:
-            _proposal_enabled = await asyncio.to_thread(
-                check_method_proposal_gate, user_id, character_id)
-        except Exception as e:
-            logger.warning(f"[v19] proposal gate check failed（閘保持關）: {e}")
-    if _proposal_enabled:
-        try:
-            _method_inventory = await asyncio.to_thread(load_method_inventory, character_id)
-        except Exception as e:
-            logger.warning(f"[v19] load_method_inventory failed: {e}")
-
     # ── v19.1 語音知識檢索＋遞招：開場載庫進 RAM（每輪只做本地 cosine）──────
     KNOW_FLOOR = 0.68    # 與文字線 KNOWLEDGE_FLOOR 同值（multilingual-002 量過的門檻，不另調）
     KNOW_TOP_K = 3
@@ -531,9 +384,9 @@ async def entrypoint(ctx: JobContext):
                 asyncio.to_thread(load_knowledge_chunks, character_id),
                 asyncio.to_thread(load_methodology_defs, character_id))
             if _kchunks or _mdefs:
-                logger.info(f"[v19.1] loaded knowledge={len(_kchunks)} chunks, methodologies={len(_mdefs)}")
+                logger.info(f"[v20] loaded knowledge={len(_kchunks)} chunks, methodologies={len(_mdefs)}")
         except Exception as e:
-            logger.warning(f"[v19.1] library load failed（本通無檢索/遞招）: {e}")
+            logger.warning(f"[v20] library load failed（本通無檢索/遞招）: {e}")
     # 走步狀態：通話進程內（掛斷即清，不與文字線的 conversation.activeMethodology 搶狀態）
     METHOD_REOFFER_COOLDOWN = 120.0  # exit/走完後同套冷卻秒數——剛收掉的招不馬上再遞（2026-07-19 實測發現）
     _mstate: dict = {"active": None, "step": 0, "offer_block": ""}
@@ -573,66 +426,6 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"create_document_job failed: {e}")
             return "文件建立失敗，請稍後再試。"
 
-    # v19：方法論提案（只在共創閘開時掛載；描述本身就是教學——工具不掛，模型就不知道有這回事）
-    @function_tool(
-        name="propose_method",
-        description=(
-            "把你和訓練師共創成形的引導方法論提案送進待審區（訓練師後台審核轉正後，才對所有用戶生效）。"
-            "先分清楚：一段觀點或內容屬於知識庫（請訓練師去後台入庫），不要提成方法論；"
-            "方法論是「對方卡住時你怎麼一步一步帶他」的可重複手法。"
-            "trigger_desc 用「用戶會說出口的白話」描述觸發狀態，只寫這套獨有的簽名，不寫術語不寫泛語。"
-            "steps_json 是 JSON 陣列字串，3-7 步，每步格式 "
-            '{"instruction": "這一步帶對方做什麼（寫目標不寫台詞）", "exitCondition": "怎麼判斷這一步完成了（要具體可判）"}。'
-            "preconditions_json 是 JSON 字串陣列（使用前提，可給 []）。"
-            "只在訓練師明確同意提案時呼叫，一般聊天不呼叫。"
-        ),
-    )
-    async def propose_method_tool(name: str, purpose: str, trigger_desc: str,
-                                  steps_json: str, preconditions_json: str = "[]") -> str:
-        if not (user_id and character_id):
-            return "無法提案（缺少 userId/characterId）"
-        try:
-            steps = json.loads(steps_json)
-            preconditions = json.loads(preconditions_json) if preconditions_json else []
-        except Exception:
-            return "steps_json 或 preconditions_json 不是合法 JSON，請修正格式後再呼叫一次"
-        try:
-            pid = await asyncio.to_thread(
-                write_method_proposal, character_id, user_id, name, purpose,
-                trigger_desc, preconditions, steps)
-            logger.info(f"[v19] method proposal saved: {pid} name={name!r}")
-            return f"方法論提案《{name}》已送進待審區，請訓練師到後台「知識與方法」審核轉正。"
-        except ValueError as e:
-            return f"提案未能收下：{e}"
-        except Exception as e:
-            logger.error(f"[v19] write_method_proposal failed: {e}")
-            return "提案儲存失敗，請稍後再試。"
-
-    # v19：知識提案（共創閘限定）——落待審區，審核轉入庫才成為知識
-    @function_tool(
-        name="propose_knowledge",
-        description=(
-            "把訓練師教你的一段內容提案進知識庫待審區（訓練師審核轉入庫後，才成為你的正式知識、對話會被檢索）。"
-            "鐵律：只提「本通對話裡真實出現過的內容」，content 盡量完整保留訓練師的原話；"
-            "不要憑印象補充你不確定的事實、數字、年份、品牌名。"
-            "title 是這份知識的標題；source_note 一句話說明來源（例：訓練師本通口授）。"
-            "只在訓練師明確同意提案時呼叫。"
-        ),
-    )
-    async def propose_knowledge_tool(title: str, content: str, source_note: str = "") -> str:
-        if not (user_id and character_id):
-            return "無法提案（缺少 userId/characterId）"
-        try:
-            pid = await asyncio.to_thread(
-                write_knowledge_proposal, character_id, user_id, title, content, source_note)
-            logger.info(f"[v19] knowledge proposal saved: {pid} title={title!r} chars={len(content)}")
-            return f"知識提案《{title}》已送進待審區，請訓練師到後台「知識與方法」審核轉入庫。"
-        except ValueError as e:
-            return f"提案未能收下：{e}"
-        except Exception as e:
-            logger.error(f"[v19] write_knowledge_proposal failed: {e}")
-            return "提案儲存失敗，請稍後再試。"
-
     # ── v19.1 方法論走步工具（狀態推進是確定性程式，LLM 只發信號——同文字線天條）──
     @function_tool(
         name="method_start",
@@ -648,7 +441,7 @@ async def entrypoint(ctx: JobContext):
         _mstate["step"] = 1
         _mstate["offer_block"] = ""
         await _apply_dynamic_blocks()
-        logger.info(f"[v19.1] method start: {m['name']}")
+        logger.info(f"[v20] method start: {m['name']}")
         return f"已進入《{m['name']}》第 1 步，照步驟提示自然引導，不要宣布在跑流程"
 
     @function_tool(
@@ -664,11 +457,11 @@ async def entrypoint(ctx: JobContext):
             _mstate["step"] = 0
             _mcooldown[m["id"]] = time.time() + METHOD_REOFFER_COOLDOWN
             await _apply_dynamic_blocks()
-            logger.info(f"[v19.1] method completed: {m['name']}")
+            logger.info(f"[v20] method completed: {m['name']}")
             return f"《{m['name']}》已走完，自然收尾"
         _mstate["step"] += 1
         await _apply_dynamic_blocks()
-        logger.info(f"[v19.1] method advance: {m['name']} → step {_mstate['step']}")
+        logger.info(f"[v20] method advance: {m['name']} → step {_mstate['step']}")
         return f"進入第 {_mstate['step']} 步，照新的步驟提示引導"
 
     @function_tool(
@@ -683,7 +476,7 @@ async def entrypoint(ctx: JobContext):
         _mstate["step"] = 0
         _mcooldown[m["id"]] = time.time() + METHOD_REOFFER_COOLDOWN
         await _apply_dynamic_blocks()
-        logger.info(f"[v19.1] method exit: {m['name']}")
+        logger.info(f"[v20] method exit: {m['name']}")
         return "已收掉，回到自然對話"
 
     # v14 新增：派發背景任務（生圖 / 生音檔）
@@ -772,31 +565,10 @@ async def entrypoint(ctx: JobContext):
     tools = [remember_tool, write_document_tool]
     if char_capabilities:
         tools.append(dispatch_task_tool)
-    # v19：共創閘開 → 注入共創指令＋現有方法論清單＋掛提案工具（閘不過＝與 v18 完全一致）
-    if _proposal_enabled:
-        if _method_inventory:
-            _inv_lines = "\n".join(
-                f"- 《{m['name']}》：{m['purpose']}" for m in _method_inventory)
-            _inv_block = f"\n你現有的正式方法論（訓練師問起時照這份答；平常對用戶由系統在對的時機遞給你）：\n{_inv_lines}"
-        else:
-            _inv_block = "\n你目前還沒有任何正式方法論——這正是這次共創的起點，訓練師問起時如實說。"
-        system_prompt += (
-            "\n\n【方法論共創（本通對話開放）】"
-            "對方是你的訓練師。你有兩個公共器官：知識庫（你讀過的內容，回答「是什麼、為什麼」，"
-            "用戶問到相關內容時系統會自動讓段落浮現）和方法論庫（你帶人的手法，回答「對方卡住了怎麼一步步帶」）。"
-            "當你和訓練師把一套可重複的引導方法聊成形、且訓練師同意提案時，呼叫 propose_method 工具送進待審區；"
-            "訓練師教了你一段值得進知識庫的內容（方法、案例、事實、原文）並同意提案時，呼叫 propose_knowledge 工具。"
-            "分類判準：手法（怎麼帶人）→ propose_method；內容（是什麼/為什麼）→ propose_knowledge。"
-            "兩種提案都不會立即生效，訓練師後台審核後才成為你對所有人的正式部分。"
-            + _inv_block
-        )
-        tools.append(propose_method_tool)
-        tools.append(propose_knowledge_tool)
-        logger.info(f"[v19] method proposal enabled (admin trainer × char flag), inventory={len(_method_inventory)}")
     # v19.1：角色有 active 方法論才掛走步工具（沒有＝工具不存在，模型不會幻想呼叫）
     if _mdefs:
         tools += [method_start_tool, method_next_tool, method_exit_tool]
-        logger.info(f"[v19.1] method runtime tools attached ({len(_mdefs)} defs)")
+        logger.info(f"[v20] method runtime tools attached ({len(_mdefs)} defs)")
     agent = SanitizingAgent(instructions=system_prompt, tools=tools)
     agent._volume_gate = VolumeGate()   # v18 音量閘：stt_node tap 餵資料
     logger.info(f"Agent initialized, soul={len(system_prompt)} chars")
@@ -897,7 +669,7 @@ async def entrypoint(ctx: JobContext):
                     for _, c in picked:
                         _kinjected.add(c["id"])
                     changed = True
-                    logger.info(f"[v19.1] knowledge inject {len(picked)} (top={picked[0][0]:.2f}): {picked[0][1]['content'][:40]!r}")
+                    logger.info(f"[v20] knowledge inject {len(picked)} (top={picked[0][0]:.2f}): {picked[0][1]['content'][:40]!r}")
             # 遞招：最佳單選 ≥ 0.70；已有進行中方法就不遞（同文字線語意）
             if _mdefs and not _mstate["active"]:
                 best = None
@@ -917,11 +689,11 @@ async def entrypoint(ctx: JobContext):
                         f'（如果你判斷對方此刻真的需要被這樣帶——且前提成立——呼叫 method_start 工具，method_id="{m["id"]}"，'
                         f"然後從第一步自然開始，不要宣布「我們來跑流程」。只是話題擦到邊、對方沒有求助的意思，就忽略這個提示，正常聊。）")
                     changed = True
-                    logger.info(f"[v19.1] method offered: {m['name']} score={best[0]:.2f}")
+                    logger.info(f"[v20] method offered: {m['name']} score={best[0]:.2f}")
             if changed:
                 await _apply_dynamic_blocks()
         except Exception as e:
-            logger.warning(f"[v19.1] lookup failed: {e}")
+            logger.warning(f"[v20] lookup failed: {e}")
         finally:
             _lookup_busy["on"] = False
 

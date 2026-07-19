@@ -1,0 +1,37 @@
+"""
+ailivex-realtime-agent-v19 — 即時語音 20.0 啟動入口（= v18 + 知識檢索/方法論遞招運行時）
+
+v17.4 差異：只加一層 GatedPauseOutput——音量沒提高的聲音不再暫停角色語音
+（咳嗽/應和零死空氣）；真打斷 commit 直通，體感與 v17 一致。見 agent/interrupt_gate.py。
+
+與其他版本完全隔離：不同 agent_name（ailivex-realtime-v20）+ 獨立 Cloud Run 服務。
+同一 image，啟動命令 override 成：python -m agent.main_v20 start
+
+用法：
+  python -m agent.main_v20 dev    # 本地開發
+  python -m agent.main_v20 start  # 正式環境（Cloud Run）
+"""
+import os
+from livekit.agents import cli, JobProcess, WorkerOptions
+from agent.realtime_agent_v20 import entrypoint, load_vad
+
+
+def prewarm(proc: JobProcess):
+    # 子行程起來就把 VAD 載好，每通電話省掉模型載入（v16 延遲優化其一）
+    proc.userdata["vad"] = load_vad()
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    cli.run_app(WorkerOptions(
+        entrypoint_fnc=entrypoint,
+        prewarm_fnc=prewarm,
+        agent_name="ailivex-realtime-v20",
+        port=port,
+        initialize_process_timeout=60.0,
+        num_idle_processes=1,   # v16: 常備一個已 prewarm 的熱行程接新通話
+        drain_timeout=30,
+        # 掛斷後 job 子行程的關閉寬限：要容得下記憶收尾（快存逐字稿 + 兩通 bridge 提煉）。
+        # 預設 10s 會把提煉中途 SIGKILL → lastSession/記憶寫不進去（2026-06-11 撥測抓到）。
+        shutdown_process_timeout=90.0,
+    ))

@@ -219,11 +219,12 @@ export const TRAINER_VOICE_LINE = {
 
 export const VOICE_VERSIONS = [
   { id: 'v17', label: '17',   agentName: 'ailivex-realtime-v17', standby: true },  // 冷備已降 0（聾）：只當回滾坑位，永不被派工
-  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18', standby: false }, // ★ LIVE — 打斷音量閘（提聲才暫停，應和零死空氣；commit 直通）
-  { id: 'v19', label: '19',   agentName: 'ailivex-realtime-v19', standby: false }, // 訓練線（= v18 + propose_method/propose_knowledge）：TRAINER_VOICE_LINE 專用，不進一般派工輪替
+  { id: 'v18', label: '18',   agentName: 'ailivex-realtime-v18', standby: false }, // 熱回滾坑位（min=1 保留數日；穩定後降 0 掛 standby）——打斷音量閘版
+  { id: 'v19', label: '19',   agentName: 'ailivex-realtime-v19', standby: false }, // 訓練線（= v18 + propose_* 提案工具 + 檢索/遞招運行時）：TRAINER_VOICE_LINE 專用，不進一般派工輪替
+  { id: 'v20', label: '20',   agentName: 'ailivex-realtime-v20', standby: false }, // ★ LIVE — 知識檢索＋方法論遞招運行時（v19.1 訓練線驗收→canary→2026-07-19 轉正；無提案工具）
 ] as const;
 
-export const DEFAULT_VOICE_VERSION = 'v18';
+export const DEFAULT_VOICE_VERSION = 'v20';  // 2026-07-19 轉正：知識檢索＋遞招運行時（canary 實測過）；v18 留熱回滾（min=1，觀察幾天後降冷備）
 
 /** 可被指派／派工的現役版本（standby 冷備排除） */
 export const ACTIVE_VOICE_VERSIONS = VOICE_VERSIONS.filter(v => !v.standby);
