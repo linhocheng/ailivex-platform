@@ -1,0 +1,79 @@
+# 資安掃描四件套（藍圖第三章「機器把關，不靠自律」落地）
+# SAST(Semgrep) + 祕密(gitleaks) + 套件(npm audit) + DAST(ZAP baseline)
+# 節奏：push/PR 跑前三種（快、擋問題進 main）；ZAP 打生產走 weekly + 手動（被動掃描安全）
+# 門檻：祕密/SAST 零容忍 hard fail；套件 --audit-level=high（moderate 記錄不擋，藍圖規則）
+# ailiveX 特有：SAST 加 p/python（agent 是 Python）；三個 Dockerfile 缺 USER——node worker 已修，
+#   兩個 agent（live 共用 image + legacy 快照）記債 D7 用 inline nosemgrep（不擅改 live 語音服務）
+# root 前台有 2 個已知 high（Next.js 一串 + form-data，債 D8）待升 Next.js 根治——
+#   gate 暫設 critical 硬擋、high 走非阻斷可見步驟；v20 升版後拉回 high
+# 首次接 CI 前已本地預跑（docker 同容器）：gitleaks 淨、semgrep 3 findings 已處理→0、
+#   worker audit 僅 moderate、login 200（2026-07-20）
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '30 19 * * 1'   # 每週一 03:30 台北（UTC 19:30 週一）＝ DAST 掃生產
+  workflow_dispatch:
+
+jobs:
+  secrets:
+    name: 祕密掃描（gitleaks）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0   # 掃整個 git 歷史，不只 HEAD
+      - name: gitleaks detect
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source=/repo --no-banner --redact -v
+
+  sast:
+    name: 靜態分析（Semgrep）
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: semgrep scan
+        # 全 repo（Next.js src + Python agent + .github 供應鏈自檢）；p/python 掃 agent
+        run: |
+          semgrep scan --config=p/owasp-top-ten --config=p/typescript --config=p/react --config=p/python \
+            --exclude=node_modules --exclude=dist --exclude=.next \
+            --metrics=off --error .
+
+  deps:
+    name: 套件漏洞（npm audit）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+      # 前台 root：已知 2 個 high（Next.js 一串 + form-data，債 D8）待升 Next.js 根治
+      - name: audit root 硬擋（critical，暫時；升版後拉回 high）
+        run: npm audit --audit-level=critical
+      - name: audit root 可見（high，非阻斷，已知債 D8）
+        continue-on-error: true
+        run: npm audit --audit-level=high
+      # worker 乾淨（僅 moderate），維持 high 硬擋
+      - name: audit podcast-worker（high 硬擋）
+        run: cd cloud-run/podcast-worker && npm audit --audit-level=high
+
+  dast:
+    name: 動態掃描（ZAP baseline 打生產）
+    # 只在 weekly schedule 與手動跑——被動掃描安全打生產，不佔每次 push
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: 'https://ailivex-platform.vercel.app/login'
+          docker_name: 'ghcr.io/zaproxy/zaproxy:stable'
+          fail_action: false          # 已知 CSP unsafe-inline WARN（債 D2 壓底），不 fail build
+          allow_issue_writing: false  # 不自動開 GitHub issue

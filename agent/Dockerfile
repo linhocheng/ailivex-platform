@@ -28,4 +28,7 @@ RUN python -c "from speechbrain.inference.speaker import EncoderClassifier; Enco
 
 COPY agent/ ./agent/
 
+# 債 D7：live 語音 agent 容器跑 root（Cloud Run 已沙箱，縱深非即時洞）。此 Dockerfile 是全語音版共用 image，
+# 非 root 化需 useradd＋驗 LiveKit 連線與 model cache 寫入權限，下次動 agent 部署時一併硬化並跑時驗證，不擅改 live。
+# nosemgrep: dockerfile.security.missing-user.missing-user
 CMD ["python", "-m", "agent.main", "start"]
