@@ -20,9 +20,8 @@ const nextConfig: NextConfig = {
     },
   },
   // 全站安全標頭（audit MEDIUM）。麥克風是語音通話必需，Permissions-Policy 只放行 self
-  // CSP 用保守版：只設防護性指令（frame-ancestors/object-src/base-uri/form-action），
-  // 不設 default-src/script-src——那會擋掉 Next.js 的 inline hydration script 打爛網站。
-  // 消 ZAP「CSP Header Not Set」Medium，且零打爛風險（2026-07-19 ZAP 掃描後補）。
+  // CSP 已於 2026-07-21 搬到 src/middleware.ts 改 per-request nonce 版（債 D6 清）——
+  // 這裡不再設 CSP，避免雙 CSP header 打架（瀏覽器取交集，語意混亂）。其餘 6 個是靜態 header，留這。
   async headers() {
     return [{
       source: '/(.*)',
@@ -32,7 +31,6 @@ const nextConfig: NextConfig = {
         { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
         { key: 'Permissions-Policy', value: 'microphone=(self), camera=(), geolocation=()' },
-        { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" },
         { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
       ],
     }];
