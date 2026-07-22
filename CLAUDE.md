@@ -93,15 +93,19 @@ This is the most important thing to understand before touching voice code.
   **twice** (the `run deploy` step AND the revision-cleanup bash step) — update both; the shared
   image path is version-less, don't rename it.
 
-**Current production = v18** (`DEFAULT_VOICE_VERSION`); v17 is the cold-standby (scaled to 0 —
-scale up min=1 BEFORE routing traffic back, a 0-instance LiveKit agent is deaf). The full lineage
-(base → v18, no v7) lives in the comment block above `VOICE_VERSIONS` in `src/lib/collections.ts` —
-that registry is the single source of truth; retired versions are removed from it. Highlights:
-v6 dual-brain (判斷腦 Haiku / 開口腦 Sonnet) · v10 multi-party hardening (回音過濾/講者名冊) ·
-v13-v14 task dispatch (image/audio/script_draft/story_draft) · v15 memory parity + in-call recall ·
-v16 latency (VAD prewarm/TTS first-chunk flush) · v17 記憶全景圖 voice path (remote memory blocks +
-hang-up diary; 3a proactive speech retired in v17.4) · v18 interrupt volume gate (only louder speech
-pauses the agent — backchannel 應和 no longer causes dead air).
+**Current production = v20** (`DEFAULT_VOICE_VERSION`, 轉正 2026-07-19; 觀察期 2026-07-22 結案).
+**v19** is the live 訓練線 (共創 methodology; under the power umbrella, not in normal dispatch).
+**v18 and v17 are cold-standby** (scaled to 0 — scale up min=1 BEFORE routing traffic back, a
+0-instance LiveKit agent is deaf). The power umbrella (min=1 when voice power is on) is
+`DEFAULT_VOICE_VERSION` + `CANARY_VOICE_VERSIONS` in `src/lib/voice-power.ts` — cold versions are NOT
+in that list. The full lineage lives in the comment block above `VOICE_VERSIONS` in
+`src/lib/collections.ts` — that registry is the single source of truth; retired versions are removed
+from it. Highlights: v6 dual-brain (判斷腦 Haiku / 開口腦 Sonnet) · v10 multi-party hardening
+(回音過濾/講者名冊) · v13-v14 task dispatch (image/audio/script_draft/story_draft) · v15 memory
+parity + in-call recall · v16 latency (VAD prewarm/TTS first-chunk flush) · v17 記憶全景圖 voice path
+(remote memory blocks + hang-up diary; 3a proactive speech retired in v17.4) · v18 interrupt volume
+gate (only louder speech pauses the agent) · v19 訓練線 (propose_* tools + 檢索/遞招 runtime) ·
+v20 知識檢索＋方法論遞招 runtime (no propose tools).
 
 ---
 

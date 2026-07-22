@@ -61,11 +61,11 @@ pinning test 在 `tests/test_load_bearing.py`（9 個，離線可跑，不需 Fi
 |---|---|---|---|---|
 | ~~D1 掃描四件套未接 CI（SAST/SCA/祕密/DAST）~~ | ~~壓底~~ | — | 2026-07-19 | ✅ 已清（v18.19 security.yml：gitleaks/Semgrep+p/python/npm audit 每 push＋ZAP baseline weekly；actions pin SHA；CI 首綠已驗） |
 | D7 三 Dockerfile 跑 root（Semgrep 首掃抓到） | 低利 | 下次動 agent 部署時一併非 root 化並跑時驗證 | 2026-07-20 | worker（node）源碼已修 USER＋build 驗過（live 下次部署生效）；agent live 共用 image＋legacy 快照＝inline nosemgrep 記債不擅改（改壞 image 打爛全語音版，Cloud Run 已沙箱） |
-| D8 root 前台 2 個 npm high（Next.js 一串 CSRF/smuggling/DoS＋form-data CRLF） | 壓底 | 升 Next.js 根治（撞 v20 平行 session 的 package.json，v20 落地後做）；届時 deps gate 拉回 --audit-level=high | 2026-07-20 | 顯式養著（gate 暫 critical 硬擋＋high 非阻斷可見；highs 在 CI log 看得到不藏地毯；升版後拉回 high） |
+| D8 root 前台 2 個 npm high（Next.js 一串 CSRF/smuggling/DoS＋form-data CRLF） | 壓底 | 升 Next.js 根治；届時 deps gate 拉回 --audit-level=high | 2026-07-20 | **🔓 觸發條件已滿足（2026-07-22 v20 觀察期結案，原「v20 落地後做」已達成）→ 可動工，排下一個地基窗口**（獨立工程，非本次收尾範圍）。現況：gate 暫 critical 硬擋＋high 非阻斷可見，highs 在 CI log 看得到不藏地毯；升版後拉回 high |
 | ~~D6 CSP 為保守版（無 script-src，ZAP 仍列 unsafe-inline×3）~~ | ~~壓底~~ | — | 2026-07-19 | ✅ 已清（2026-07-21 v18.20 CSP nonce 化）：CSP 併進既有 src/middleware.ts（保留 session＋admin 雙層 auth）改 per-request nonce＋strict-dynamic script-src；不設 default-src（保 LiveKit WebRTC/wss、外部圖音——語音 connect 不能受限）；style-src 放行 fonts.googleapis.com（globals.css @import 外部字型，playwright 實測不放行會掉 fallback 字型）；dev 補 unsafe-eval。root layout 釘 force-dynamic（Next 16 靜態頁無 nonce 會死白頁）。playwright headless 六頁驗（forge admin session）：0 CSP violation、13-14/14 script nonce'd、router 活、含 admin 全軟導航 OK。已部署 production（Vercel，/login 線上驗 13/13 nonce＋per-request）＋**真人語音通話實測 OK**（WebRTC/麥克風正常，CSP 無 connect-src 不影響，2026-07-21 Adam 驗） |
 | D2 用戶級資料刪除無連帶（刪角色留記憶/對話孤兒） | 低利 | 需要真的刪一個角色/用戶時 | 2026-07-19 | 顯式養著 |
 | D3 手刻 auth（scrypt+HMAC，非 Clerk/Supabase Auth 託管） | 低利 | 對外開放註冊、或出現 auth 相關事故時重估 | 2026-07-19 | 顯式養著（能跑、無事故，雙向保護：不順手換、不挖深） |
-| D4 v19 min=1 第二台常駐雙付 | 壓底 | v19 語音實測收案後二選一（轉正/降0） | 2026-07-18 | 待清 |
+| ~~D4 v19 min=1 第二台常駐雙付~~ | ~~壓底~~ | — | 2026-07-18 | ✅ 已清（2026-07-22 v20 觀察期結案）：v20 三天前已是 DEFAULT，Adam 體感確認良好→觀察期結案。**v19 訓練線轉正為常設**（共創方法論在用，留電源傘下開機 min=1）；**v18 熱回滾坑位降冷備**（拔出 `voice-power.ts` CANARY_VOICE_VERSIONS＋collections `standby:true`，回滾坑位保留、需要時改 DEFAULT 回 v18 並先 scale min=1）。動手前查 Firestore：34 個 access 全 unset→走 DEFAULT，零人釘 v18，退冷備零風險。開機時語音側常駐從三台（v20+v19+v18）降為兩台（v20+v19） |
 | D5 global prompts 雙份（Python+TS）易漂移 | 低利 | 下次改 default 時順手收斂或加同步測試 | 2026-07-19 | 顯式養著 |
 
 利率：活血=立刻清｜壓底=動工前清｜低利=順手清或顯式養著。
@@ -75,6 +75,7 @@ pinning test 在 `tests/test_load_bearing.py`（9 個，離線可跑，不需 Fi
 ---
 
 ## 變動記錄
+- 2026-07-22 v20 觀察期結案（Adam 體感確認）→ 語音版退役紀律收尾：D4 清（v19 訓練線轉常設／v18 熱回滾降冷備，開機常駐三台降兩台）；D8 觸發條件達成標解鎖（升 Next.js 另排）。改 `voice-power.ts`（拔 v18 出 CANARY）＋`collections.ts`（v18 standby:true＋DEFAULT 註解）＋CLAUDE.md（修 stale「production=v18」→v20）。動手前 Firestore 驗 34 access 全走 DEFAULT 零人釘 v18
 - 2026-07-21 CSP nonce 化上線（v18.20，債 D6 清）：CSP 併進既有 middleware 雙層 auth 改 per-request nonce＋strict-dynamic；三站同模板但 ailiveX 特有兩調整——style-src 放行 googleapis（外部字型 @import）、force-dynamic 解 Next 16 靜態頁死白頁雷。playwright headless 六頁驗全綠（真 LiveKit 通話待真人）。**尚未部署**（Vercel `npx vercel --prod`，待點頭）
 - 2026-07-19 建帳（回溯）：承重牆帳＋pinning test 9 個上線；災難還原地基補灌（PITR+export+drill）
 - 2026-07-19 ZAP baseline 掃描（FAIL-NEW 0，60 PASS）→ 補全站 security headers（CSP 保守版/COOP/HSTS/nosniff/frame DENY/Referrer/Permissions），curl 驗 7 header 全生效

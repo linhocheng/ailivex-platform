@@ -11,7 +11,7 @@ import { DEFAULT_VOICE_VERSION } from '@/lib/collections';
 
 // canary／訓練線版本也掛在同一個電源開關＋自動關機傘下（天條：常駐必配開關＋自動關機）。
 // canary 收案（升 DEFAULT 或退役）時從這裡拔掉。
-const CANARY_VOICE_VERSIONS: string[] = ['v19', 'v18'];  // v19=訓練線（共創）；v18=熱回滾坑位（降冷備時拔掉）；v20 已是 DEFAULT 天然在傘下；v17 冷備不在名單（在名單會被 power-on 復活成 min=1）
+const CANARY_VOICE_VERSIONS: string[] = ['v19'];  // v19=訓練線（共創，2026-07-22 轉正為常設）；v20 已是 DEFAULT 天然在傘下；v18/v17 冷備不在名單（在名單會被 power-on 復活成 min=1）——v18 於 2026-07-22 v20 觀察期結案後降冷備（回滾坑位保留，需要時改 DEFAULT 回 v18 並先 scale min=1）
 
 const REGION = 'asia-east1';
 export const AUTO_OFF_HOURS_DEFAULT = 3;
