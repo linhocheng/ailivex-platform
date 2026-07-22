@@ -157,16 +157,28 @@ export async function ingestKnowledgeDoc(
     authority: KnowledgeAuthority;
     sourceRef?: string;
     content: string;
+    /** 可選：預寫檢索索引（時機地址——「這塊在什麼時刻該浮出來」的編輯決策）。
+     *  長度必須 === chunkText(content).length（呼叫端先用 chunkText 對齊）；
+     *  null 元素該塊 fallback 原文嵌入。不傳則維持原行為（client 自動生成內容大意）。 */
+    gists?: (string | null)[];
   },
   client?: LLMClient,  // 有 client 才做白話大意索引；沒有直接嵌原文（向下相容）
 ): Promise<{ documentId: string; chunkCount: number }> {
   const chunks = chunkText(input.content);
   if (chunks.length === 0) throw new Error('內容切塊後為空');
 
-  // 白話大意（失敗的塊 fallback 嵌原文，不擋入庫）
-  const gists: (string | null)[] = client
-    ? await generateGists(chunks, client)
-    : new Array(chunks.length).fill(null);
+  // 索引解析順序：預寫 gists → client 自動生成 → 無（嵌原文）。
+  // 預寫長度錯位寧可炸不靜默——錯位的索引比沒有索引更毒（撈到不相干的塊）。
+  let gists: (string | null)[];
+  if (input.gists) {
+    if (input.gists.length !== chunks.length) {
+      throw new Error(`gists 長度 ${input.gists.length} ≠ 切塊數 ${chunks.length}（先用 chunkText(content) 對齊再入庫）`);
+    }
+    gists = input.gists.map(g => (g && g.trim() ? g.trim().slice(0, 200) : null));
+  } else {
+    // 白話大意（失敗的塊 fallback 原文嵌入，不擋入庫）
+    gists = client ? await generateGists(chunks, client) : new Array(chunks.length).fill(null);
+  }
 
   // embedding 併發 4（有大意嵌大意，同語域才對得上白話 query；失敗的塊照存）
   const embeddings: (number[] | null)[] = new Array(chunks.length).fill(null);
